@@ -511,22 +511,20 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         # If there is a transiting planet...
         if planet!='':
             
-            # Get the transmission spectrum at the given wavelength at t=t0
-            T = np.interp(wavelength, planet[0], planet[1])
-            
             # Set the wavelength dependent orbital parameters
             params.limb_dark = ld_profile
             params.u = ld_coeffs
             
             # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
-            params.rp = np.sqrt(np.interp(wavelength, planet[0], planet[1]))
+            T = np.interp(wavelength, planet[0], planet[1])
+            params.rp = np.sqrt(T)
             
             # Generate the light curve for this pixel
             m = batman.TransitModel(params, t) 
             LC = m.light_curve(params)
             
-            # Multiply by the star+planet flux given T = (Rp/R*)**2
-            F -= F*LC*np.sqrt(T)
+            # Scale the flux with the lightcurve
+            F *= LC
             
         # Convert the flux into counts
         F /= response
@@ -693,11 +691,14 @@ class TSO(object):
             col = [col]
         
         for c in col:
-            # ld = self.ldc[c*self.tso.shape[1]]
+            ld = self.ldc[c*self.tso.shape[1]]
             w = np.mean(self.wave[0], axis=0)[c]
             f = np.nansum(self.tso[:,:,c], axis=1)
             f *= 1./np.nanmax(f)
-            plt.plot(self.time, f, label='Col {}'.format(c))
+            plt.plot(self.time, f, label='Col {}'.format(c), marker='.', ls='None')
+            
+        # Plot whitelight curve too
+        # plt.plot(self.time)
             
         plt.legend(loc=0, frameon=False)
 
