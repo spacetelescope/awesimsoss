@@ -15,6 +15,8 @@ from astropy.io import fits
 from scipy.optimize import curve_fit
 from functools import partial
 
+from sklearn.externals import joblib
+
 FILTERS = svo.filters()
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -316,8 +318,8 @@ def soss_polynomials(plot=False):
     ''' LEGACY CODE '''
     # Load the trace masks
     path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
-    mask1 = np.load(path+'order1_mask.npy').swapaxes(-1,-2)
-    mask2 = np.load(path+'order2_mask.npy').swapaxes(-1,-2)
+    mask1 = joblib.load(path+'order1_mask.save').swapaxes(-1,-2)
+    mask2 = joblib.load(path+'order2_mask.save').swapaxes(-1,-2)
     spec1 = np.ma.array(np.ones(mask1.shape), mask=mask1)
     spec2 = np.ma.array(np.ones(mask2.shape), mask=mask2)
     
@@ -395,10 +397,10 @@ def distance_map(trace='', generate=False, order=1, plot=False):
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        np.save('AWESim_SOSS/order_{}_distance_map.npy'.format(order), d_map)
+        joblib.dump('AWESim_SOSS/order_{}_distance_map.save'.format(order), d_map)
         
     else:
-        d_map = np.load('AWESim_SOSS/distance_map.npy'.format(order))
+        d_map = joblib.load('AWESim_SOSS/distance_map.save'.format(order))
         
     
     if plot:
@@ -556,12 +558,39 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         
     return F
 
+def wave_solutions(subarr, directory=dir_path+'/refs/soss_wavelengths_fullframe.fits'):
+    """
+    Get the wavelength maps for SOSS orders 1, 2, and 3
+    This will be obsolete once the apply_wcs step of the JWST pipeline
+    is in place.
+     
+    Parameters
+    ==========
+    subarr: str
+        The subarray to return, accepts '96', '256', or 'full'
+    directory: str
+        The directory containing the wavelength FITS files
+        
+    Returns
+    =======
+    np.ndarray
+        An array of the wavelength solutions for orders 1, 2, and 3
+    """
+    try:
+        idx = int(subarr)
+    except:
+        idx = None
+    
+    wave = fits.getdata(directory).swapaxes(-2,-1)[:,:idx]
+    
+    return wave
+
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
 
-    def __init__(self, t, star, planet='', params='', ld_coeffs='', ld_profile='quadratic', trace_radius=50, SNR=700, extend=25):
+    def __init__(self, time, star, **kwargs):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -582,72 +611,124 @@ class TSO(object):
         trace_radius: int
             The radius of the trace
         """
+        
+        # Assign local to class values
+        self.nwaves      = 2048
+        
+        defaults = dict(planet='', params='', ld_coeffs='', ld_profile='quadratic', \
+                             trace_radius=50, SNR=700, extend=25, subsize=256)
+        
+        # nArgs = 2
+        # while len(args) < nArgs:
+        #     args += kwargs.popitem()
+        #     super(TSO, self).__init__(*args[:2], **kwargs)
+        
+        self.time = time#kwargs['time'] if 'time' in kwargs.keys() else args[0]
+        self.star = star#kwargs['star'] if 'star' in kwargs.keys() else args[1]
+        
+        for key in defaults:
+            if key in kwargs.keys():
+                exec("self." + key + " = kwargs['" + key + "']")
+            else:
+                exec("self." + key + " = defaults['" + key + "']")
+        
         # Save some attributes
-        self.wave = wave_solutions('256')
-        self.time = t
-        self.ldc = ld_coeffs
-        for p in [i for i in dir(params) if not i.startswith('_')]:
-            setattr(self, p, getattr(params, p))
-            
-        # FIRST ORDER ==========================================================================================
+        self.wave = wave_solutions(str(self.subsize))
         
+        for p in [i for i in dir(self.params) if not i.startswith('_')]:
+            setattr(self, p, getattr(self.params, p))
+        
+        self.tso = np.zeros((self.subsize, self.nwaves))
+    
+    def compute_light_curve_order(self, orders=[1,2], nOrders=2):
         # Flatten the wavelength and distance maps
-        wave = self.wave[0].flatten()
-        distance = distance_map(order=1).flatten()
         
-        # Get relative spectral response to convert flux to counts
-        scaling = ADUtoFlux(1)
-        response = np.interp(wave, scaling[0], scaling[1])
+        local_ld_coeffs = np.zeros((self.subsize*self.nwaves, 2))
+        if isinstance(self.planet,str):
+            if self.ld_profile == 'linear':
+                raise ValueError("ld_profile == 'linear' has not been implemented yet! :(")
+                print('Why are you setting the linear LDC to zero?')
+                local_ld_coeffs = np.zeros((self.subsize*self.nwaves, 1))
+            elif self.ld_profile == 'quadratic':
+                print('Why are you setting the quadratic LDCs to zero?')
+                local_ld_coeffs = np.zeros((self.subsize*self.nwaves, 2))
+            else:
+                raise ValueError("`limb_dark` must be either `'linear'` or `'quadratic'`")
         
-        # Required for multiprocessing...
-        if isinstance(planet,str):
-            ld_coeffs = np.zeros((524288, 2))
+        if isinstance(orders,int) or isinstance(orders,float):
+            orders = [int(orders)]
+        
+        if not isinstance(orders, list):
+            raise TypeError('order must be either an int, float, or list thereof; i.e. [1,2]')
+        
+        # only use valid and unique values of [1,2]
+        order = []
+        for o in orders:
+            if o in [1,2]: # exclude non
+                order.append(o)
+            else:
+                print('{} is not a valid choice of `orders`'.format(o))
+        
+        orders = list(set(order)) # only keep unique values of [1,2]
+        
+        for order in orders:
+            local_wave      = self.wave[order%nOrders].flatten()
+            local_distance  = distance_map(order=order).flatten()
             
-        # Run multiprocessing
-        print('Calculating order 1 light curves...')
-        processes = 8
-        start = time.time()
-        pool = multiprocessing.Pool(processes)
-        func = partial(lambda_lightcurve, ld_profile=ld_profile, star=star, planet=planet, t=t, params=params, trace_radius=trace_radius, SNR=SNR, extend=extend)
-        lightcurves = pool.starmap(func, zip(wave, response, distance, ld_coeffs))
-        pool.close()
-        pool.join()
+            # Get relative spectral response to convert flux to counts
+            local_scaling   = ADUtoFlux(order)
+            
+            # Get relative spectral response to convert flux to counts
+            # ===============================================================================
+            # ======================== HERE BE DRAGONS!!!! ==================================
+            # ===============================================================================
+            # Order 2 scaling too bright! Fix factor of 50 below!
+            # ===============================================================================
+            dragons = [1,50]
+            
+            local_response  = np.interp(local_wave, \
+                                        local_scaling[0], \
+                                        local_scaling[1])/dragons[order%nOrders]
+            
+            # Required for multiprocessing...
+            # Run multiprocessing
+            print('Calculating order {} light curves...'.format(order))
+            processes = 8
+            start = time.time()
+            pool = multiprocessing.Pool(processes)
         
-        # Clean up and time of execution
-        tso_order1 = np.asarray(lightcurves).swapaxes(0,1).reshape([len(t),256,2048])
-        print('Order 1 light curves finished: ', time.time()-start)
+            func = partial(lambda_lightcurve, 
+                    ld_profile  = self.ld_profile, 
+                    star        = self.star, 
+                    planet      = self.planet, \
+                    t           = self. time, 
+                    params      = self.params, 
+                    trace_radius= self.trace_radius, 
+                    SNR         = self.SNR, 
+                    extend      = self.extend)
+            
+            lightcurves = pool.starmap(func, zip(local_wave, 
+                                                 local_response, 
+                                                 local_distance, 
+                                                 local_ld_coeffs)
+                                      )
+            pool.close()
+            pool.join()
+            
+            # Clean up and time of execution
+            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([len(self. time),
+                                                                           self.subsize,
+                                                                           self.nwaves])
+            
+            print('Order {} light curves finished: '.format(order), time.time()-start)
+            
+            self.tso = np.abs(self.tso+tso_order)
         
-        self.tso = np.abs(tso_order1)
-        
-        # SECOND ORDER ============================================================================================
-        
-        # Flatten the wavelength and distance maps
-        wave = self.wave[1].flatten()
-        distance = distance_map(order=2).flatten()
-        
-        # Get relative spectral response to convert flux to counts
-        # ===============================================================================
-        # ======================== HERE BE DRAGONS!!!! ==================================
-        # ===============================================================================
-        # Order 2 scaling too bright! Fix factor of 50 below!
-        # ===============================================================================
-        scaling = ADUtoFlux(2)
-        response = np.interp(wave, scaling[0], scaling[1])/50
-        
-        # Run multiprocessing
-        print('Calculating order 2 light curves...')
-        start = time.time()
-        pool = multiprocessing.Pool(processes)
-        lightcurves = pool.starmap(func, zip(wave, response, distance, ld_coeffs))
-        pool.close()
-        pool.join()
-        
-        # Clean up and time of execution
-        tso_order2 = np.asarray(lightcurves).swapaxes(0,1).reshape([len(t),256,2048])
-        print('Order 2 light curves finished: ', time.time()-start)
-        
-        self.tso = np.abs(tso_order1+tso_order2-np.random.normal(loc=1, scale=1, size=tso_order1.shape))
-        
+        print('Why are you subtracting Gaussian noise -- centered at 1 -- \
+                    instead of adding it -- centered at 0?')
+        noise    = np.random.normal(loc=1, scale=1, size=self.tso.shape)
+        self.tso = np.abs(self.tso - noise)
+    
     def plot_frame(self, frame='', scale='log'):
         """
         Plot a frame of the TSO
@@ -661,9 +742,11 @@ class TSO(object):
         
         plt.figure(figsize=(13,2))
         if scale=='log':
-            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax)
+            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', \
+                interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax)
         else:
-            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax)
+            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', \
+                interpolation='none', vmin=1, vmax=vmax)
         plt.colorbar()
         plt.title('Injected Spectrum')
         
@@ -716,30 +799,13 @@ class TSO(object):
         # plt.plot(self.time)
             
         plt.legend(loc=0, frameon=False)
-
-def wave_solutions(subarr, directory=dir_path+'/refs/soss_wavelengths_fullframe.fits'):
-    """
-    Get the wavelength maps for SOSS orders 1, 2, and 3
-    This will be obsolete once the apply_wcs step of the JWST pipeline
-    is in place.
-     
-    Parameters
-    ==========
-    subarr: str
-        The subarray to return, accepts '96', '256', or 'full'
-    directory: str
-        The directory containing the wavelength FITS files
-        
-    Returns
-    =======
-    np.ndarray
-        An array of the wavelength solutions for orders 1, 2, and 3
-    """
-    try:
-        idx = int(subarr)
-    except:
-        idx = None
     
-    wave = fits.getdata(directory).swapaxes(-2,-1)[:,:idx]
+    def save_tso(self, filename='dummy.save'):
+        joblib.dump(self.__dict__, filename)
     
-    return wave
+    def load_tso(self, filename):
+        load_dict = joblib.load(filename)
+        # for p in [i for i in dir(load_dict)]:
+        #     setattr(self, p, getattr(params, p))
+        for key in load_dict.keys():
+            exec("self." + key + " = load_dict['" + key + "']")
