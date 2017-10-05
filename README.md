@@ -27,9 +27,9 @@ TSO.plot_frame()
 
 Here is the input spectrum and one frame of the output data cube:
 
-![input](img/1D_spec.png "The input spectrum")
+![input](AWESim_SOSSimg/1D_spec.png "The input spectrum")
 
-![output](img/2D_spec.png "The output trace")
+![output](AWESim_SOSSimg/2D_spec.png "The output trace")
 
 The example above was for an isolated star though. To include a planetary transit we must additionally provide:
 
@@ -43,7 +43,7 @@ Here is a sample transmission spectrum generated with PANDEXO:
 WASP107b = np.genfromtxt('data/WASP107b_pandexo_input_spectrum.dat', unpack=True)
 ````
 
-![planet](img/1D_planet.png "Planet")
+![planet](AWESim_SOSS/img/1D_planet.png "Planet")
 
 And here are some orbital parameters for WASP-107:
 
@@ -70,4 +70,4 @@ We can verify that the lightcurves are wavelength dependent by plotting a few di
 TSO.plot_lightcurve([15,150,300])
 ```
 
-![lightcurves](img/lc.png "lightcurves")
+![lightcurves](AWESim_SOSS/img/lc.png "lightcurves")
