@@ -311,11 +311,6 @@ def ld_coefficients(wave_map, lookup):
     print('All coefficients calculated.')
     
     return ld_coeffs
-    
-    
-    
-    
-    
 
 def soss_polynomials(plot=False):
     # Load the trace masks
@@ -399,10 +394,10 @@ def distance_map(trace='', generate=False, order=1, plot=False):
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        np.save('order_{}_distance_map.npy'.format(order), d_map)
+        np.save('distance_map.npy'.format(order), d_map)
         
     else:
-        d_map = np.load('order_{}_distance_map.npy'.format(order))
+        d_map = np.load('distance_map.npy'.format(order))
         
     if plot:
         plt.figure(figsize=(13,2))
