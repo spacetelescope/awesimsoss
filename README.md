@@ -2,7 +2,7 @@
 
 ### Analyzing Webb Exoplanet Simulations with SOSS
 
-Author: Joe Filippazzo
+Authors: Joe Filippazzo and Jonathan Fraine
 
 This pure Python module produces simulated data for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope.
 
