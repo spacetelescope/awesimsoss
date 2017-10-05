@@ -34,7 +34,7 @@ def ADUtoFlux(order):
         Arrays to convert the given order trace from ADUs to units of flux
     """
     ADU2mJy, mJy2erg = 7.586031e-05, 2.680489e-15
-    scaling = np.genfromtxt(dir_path+'/AWESim_SOSS/refs/GR700XD_{}.txt'.format(order), unpack=True)
+    scaling = np.genfromtxt(dir_path+'/refs/GR700XD_{}.txt'.format(order), unpack=True)
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling
@@ -717,7 +717,7 @@ class TSO(object):
             
         plt.legend(loc=0, frameon=False)
 
-def wave_solutions(subarr, directory=dir_path+'/AWESim_SOSS/refs/soss_wavelengths_fullframe.fits'):
+def wave_solutions(subarr, directory=dir_path+'/refs/soss_wavelengths_fullframe.fits'):
     """
     Get the wavelength maps for SOSS orders 1, 2, and 3
     This will be obsolete once the apply_wcs step of the JWST pipeline
