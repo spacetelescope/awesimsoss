@@ -21,8 +21,8 @@ import numpy as np
 from AWESim_SOSS import awesim
 t = np.linspace(-0.2, 0.2, 200)
 spec = np.genfromtxt('data/m4v_combined_template.txt', unpack=True)
-TSO2 = awesim.TSO(t, spec)
-TSO2.plot_frame()
+TSO = awesim.TSO(t, spec)
+TSO.plot_frame()
 ```
 
 Here is the input spectrum and one frame of the output data cube:
@@ -53,3 +53,17 @@ params.inc = 89.8                             # orbital inclination (in degrees)
 params.ecc = 0.                               # eccentricity
 params.w = 90.                                # longitude of periastron (in degrees)
 ```
+
+Now the code to create 200 integrations which contain a planetary transit might look like:
+
+```
+TSO = awesim.TSO(bjd, WASP107, WASP107b, params, ld_coeffs)
+```
+
+We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
+
+```
+TSO.plot_lightcurve([15,150,300])
+```
+
+![lightcurves](img/lc.png "lightcurves")
