@@ -20,7 +20,7 @@ Given a time axis and a 1D spectrum of a target, this module produces a 2D SOSS 
 import numpy as np
 from AWESim_SOSS import awesim
 t = np.linspace(-0.2, 0.2, 200)
-WASP107 = np.genfromtxt('data/WASP107.txt', unpack=True)
+WASP107 = np.genfromtxt('AWESim_SOSS/data/WASP107.txt', unpack=True)
 TSO = awesim.TSO(t, WASP107)
 TSO.plot_frame()
 ```
@@ -40,7 +40,7 @@ The example above was for an isolated star though. To include a planetary transi
 Here is a sample transmission spectrum generated with PANDEXO:
 
 ```
-WASP107b = np.genfromtxt('data/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+WASP107b = np.genfromtxt('AWESim_SOSS/data/WASP107b_pandexo_input_spectrum.dat', unpack=True)
 ````
 
 ![planet](AWESim_SOSS/img/1D_planet.png "Planet")
