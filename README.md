@@ -40,3 +40,16 @@ The example above was for an isolated star though. To include a planetary transi
 Here is a sample transmission spectrum generated with PANDEXO:
 
 ![planet](img/1D_planet.png "Planet")
+
+And here are some orbital parameters for WASP-107:
+
+```
+import batman
+params = batman.TransitParams()
+params.t0 = 0.                                # time of inferior conjunction
+params.per = 5.7214742                        # orbital period
+params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+params.inc = 89.8                             # orbital inclination (in degrees)
+params.ecc = 0.                               # eccentricity
+params.w = 90.                                # longitude of periastron (in degrees)
+```
