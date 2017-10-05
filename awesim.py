@@ -412,12 +412,14 @@ def distance_map(trace='', generate=False, order=1, plot=False):
     
     return d_map
 
-def psf_position(distance, plot=False):
+def psf_position(distance, extend=25, plot=False):
     """
     Scale the flux based on the pixel's distance from the center of the cross dispersed psf
     """
     # Get the LPSF
-    lpsf = np.array([4.929265102315838E-006,  9.714837387708730E-006,  5.671904909021475E-006, \
+    lpsf = np.array([7.701976722368496E-008,  1.540395344473699E-007,  3.080790688947398E-007, \
+                     6.161581377894797E-007,  1.232316275578959E-006,  2.464632551157919E-006, \
+                     4.929265102315838E-006,  9.714837387708730E-006,  5.671904909021475E-006, \
                      4.548023730510664E-006,  1.022713226439542E-005,  6.886893882507295E-006, \
                      8.177790144225927E-006,  1.357109057534278E-005,  8.916710340478584E-006, \
                      1.239566539967818E-005,  2.781745489985332E-005,  2.509716449416999E-005, \
@@ -438,6 +440,17 @@ def psf_position(distance, plot=False):
                      7.623564329893584E-006,  7.990429056435600E-006,  4.048852234816991E-006, \
                      6.761537376720472E-006])
                      
+    # Function to extend wings
+    def add_wings(a, pts):
+        w = min(a)*(np.arange(pts)/pts)*50
+        a = np.concatenate([np.abs(np.random.normal(w,w)),a,np.abs(np.random.normal(w[::-1],w[::-1]))])
+        
+        return a
+        
+    # Extend the wings for a nice wide PSF that tapers off rather than ending sharply for bright targets
+    if extend:
+        lpsf = add_wings(lpsf.copy(), extend)
+        
     # Scale the transmission to 1
     psf = lpsf/np.trapz(lpsf)
     
@@ -445,17 +458,13 @@ def psf_position(distance, plot=False):
     p0 = len(psf)//2
     val = np.interp(distance, range(len(psf[p0:])), psf[p0:])
     
-    # Add some noise
-    # val += np.random.normal(scale=val/50.)
-    
     if plot:
-        plt.figure()
         plt.plot(range(len(psf[p0:])), psf[p0:])
         plt.scatter(distance, val, c='r', zorder=5)
         
     return val
 
-def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet, t, params, trace_radius=25, SNR=100, floor=2, plot=False):
+def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet, t, params, trace_radius=25, SNR=100, floor=2, extend=25, plot=False):
     """
     Generate a lightcurve for a given wavelength
     
@@ -485,6 +494,8 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         The signal-to-noise for the observations
     floor: int
         The noise floor in counts
+    extend: int
+        The number of points to extend the lpsf wings by
     plot: bool
         Plot the lightcurve
     
@@ -494,7 +505,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         A 1D array of the lightcurve with the same length as *t* 
     """
     # If it's a background pixel, it's just noise
-    if distance>trace_radius \
+    if distance>trace_radius+extend \
     or wavelength>np.nanmax(star[0].value) \
     or wavelength<np.nanmin(star[0].value):
         
@@ -509,7 +520,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         F = np.abs(np.random.normal(loc=F0, scale=F0/SNR, size=len(t)))
         
         # If there is a transiting planet...
-        if planet!='':
+        if not isinstance(planet,str):
             
             # Set the wavelength dependent orbital parameters
             params.limb_dark = ld_profile
@@ -530,9 +541,9 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         F /= response
         
         # Scale pixel based on distance from the center of the cross-dispersed psf
-        F *= psf_position(distance, plot=False)
+        F *= psf_position(distance, extend=extend)
         
-        # Correct lighcurve for the given noise floor
+        # Replace very low signal pixels with noise floor
         F[F<floor] += np.random.normal(loc=floor, scale=1, size=len(F[F<floor]))
         
         # Plot
@@ -548,7 +559,7 @@ class TSO(object):
     Generate NIRISS SOSS time series observations
     """
 
-    def __init__(self, t, star, planet='', params='', ld_coeffs='', ld_profile='quadratic', trace_radius=25, SNR=700):
+    def __init__(self, t, star, planet='', params='', ld_coeffs='', ld_profile='quadratic', trace_radius=50, SNR=700, extend=25):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -587,7 +598,7 @@ class TSO(object):
         response = np.interp(wave, scaling[0], scaling[1])
         
         # Required for multiprocessing...
-        if planet=='':
+        if isinstance(planet,str):
             ld_coeffs = np.zeros((524288, 2))
             
         # Run multiprocessing
@@ -595,7 +606,7 @@ class TSO(object):
         processes = 8
         start = time.time()
         pool = multiprocessing.Pool(processes)
-        func = partial(lambda_lightcurve, ld_profile=ld_profile, star=star, planet=planet, t=t, params=params, trace_radius=20, SNR=SNR)
+        func = partial(lambda_lightcurve, ld_profile=ld_profile, star=star, planet=planet, t=t, params=params, trace_radius=trace_radius, SNR=SNR, extend=extend)
         lightcurves = pool.starmap(func, zip(wave, response, distance, ld_coeffs))
         pool.close()
         pool.join()
@@ -630,7 +641,7 @@ class TSO(object):
         
         self.tso = np.abs(tso_order1+tso_order2-np.random.normal(loc=1, scale=1, size=tso_order1.shape))
         
-    def plot_frame(self, frame=''):
+    def plot_frame(self, frame='', scale='log'):
         """
         Plot a frame of the TSO
         
@@ -642,15 +653,12 @@ class TSO(object):
         vmax = int(np.nanmax(self.tso))
         
         plt.figure(figsize=(13,2))
-        plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax)
+        if scale=='log':
+            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax)
+        else:
+            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax)
         plt.colorbar()
         plt.title('Injected Spectrum')
-        
-        # if self.smooth:
-        #     plt.figure(figsize=(13,2))
-        #     plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax)
-        #     plt.colorbar()
-        #     plt.title('Final Spectrum')
         
     def plot_slice(self, col, trace='tso', frame=0, **kwargs):
         """
@@ -691,7 +699,7 @@ class TSO(object):
             col = [col]
         
         for c in col:
-            ld = self.ldc[c*self.tso.shape[1]]
+            # ld = self.ldc[c*self.tso.shape[1]]
             w = np.mean(self.wave[0], axis=0)[c]
             f = np.nansum(self.tso[:,:,c], axis=1)
             f *= 1./np.nanmax(f)
