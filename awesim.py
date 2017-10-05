@@ -399,10 +399,10 @@ def distance_map(trace='', generate=False, order=1, plot=False):
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        np.save('/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/order_{}_distance_map.npy'.format(order), d_map)
+        np.save('order_{}_distance_map.npy'.format(order), d_map)
         
     else:
-        d_map = np.load('/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/order_{}_distance_map.npy'.format(order))
+        d_map = np.load('order_{}_distance_map.npy'.format(order))
         
     if plot:
         plt.figure(figsize=(13,2))
