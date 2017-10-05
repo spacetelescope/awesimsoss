@@ -29,7 +29,7 @@ Here is the input spectrum and one frame of the output data cube:
 
 ![input](img/1D_spec.png "The input spectrum")
 
-![output](2D_spec.png "The output trace")
+![output](img/2D_spec.png "The output trace")
 
 The example above was for an isolated star though. To include a planetary transit we must additionally provide:
 
