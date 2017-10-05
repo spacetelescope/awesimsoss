@@ -14,14 +14,14 @@ The following packages are needed to run `AWESim_SOSS`:
 
 ### Usage
 
-Given a time axis and a 1D spectrum of a target, this module produces a 2D SOSS slope image for each point on the time axis. For example, if I want to produce 200 integrations of an M4 dwarf as seen through SOSS, my code might look like:
+Given a time axis and a 1D spectrum of a target, this module produces a 2D SOSS slope image for each point on the time axis. For example, if I want to produce 200 integrations of WASP-107 (no planet) as seen through SOSS, my code might look like:
 
 ```
 import numpy as np
 from AWESim_SOSS import awesim
 t = np.linspace(-0.2, 0.2, 200)
-spec = np.genfromtxt('data/m4v_combined_template.txt', unpack=True)
-TSO = awesim.TSO(t, spec)
+WASP107 = np.genfromtxt('data/WASP107.txt', unpack=True)
+TSO = awesim.TSO(t, WASP107)
 TSO.plot_frame()
 ```
 
@@ -38,6 +38,10 @@ The example above was for an isolated star though. To include a planetary transi
 - The orbital parameters of the planet
 
 Here is a sample transmission spectrum generated with PANDEXO:
+
+```
+WASP107b = np.genfromtxt('data/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+````
 
 ![planet](img/1D_planet.png "Planet")
 
@@ -57,7 +61,7 @@ params.w = 90.                                # longitude of periastron (in degr
 Now the code to create 200 integrations which contain a planetary transit might look like:
 
 ```
-TSO = awesim.TSO(bjd, WASP107, WASP107b, params, ld_coeffs)
+TSO = awesim.TSO(t, WASP107, WASP107b, params, ld_coeffs)
 ```
 
 We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
