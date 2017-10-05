@@ -27,9 +27,9 @@ TSO.plot_frame()
 
 Here is the input spectrum and one frame of the output data cube:
 
-![input](AWESim_SOSSimg/1D_spec.png "The input spectrum")
+![input](AWESim_SOSS/img/1D_spec.png "The input spectrum")
 
-![output](AWESim_SOSSimg/2D_spec.png "The output trace")
+![output](AWESim_SOSS/img/2D_spec.png "The output trace")
 
 The example above was for an isolated star though. To include a planetary transit we must additionally provide:
 
