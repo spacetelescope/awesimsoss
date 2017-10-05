@@ -624,6 +624,11 @@ class TSO(object):
         distance = distance_map(order=2).flatten()
         
         # Get relative spectral response to convert flux to counts
+        # ===============================================================================
+        # ======================== HERE BE DRAGONS!!!! ==================================
+        # ===============================================================================
+        # Order 2 scaling too bright! Fix factor of 50 below!
+        # ===============================================================================
         scaling = ADUtoFlux(2)
         response = np.interp(wave, scaling[0], scaling[1])/50
         
