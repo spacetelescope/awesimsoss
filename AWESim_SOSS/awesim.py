@@ -341,7 +341,7 @@ def trace_polynomial(trace, start=4, end=2040, order=4):
     # Make a scatter plot where the pixels in each column are offset by a small amount
     x, y = [], []
     for n,col in enumerate(trace.T):
-        vals = np.where(~col.mask)
+        vals = np.where(~col)
         if vals:
             v = list(vals[0])
             y += v
@@ -355,14 +355,12 @@ def trace_polynomial(trace, start=4, end=2040, order=4):
     
     return X, Y
 
-def distance_map(trace='', generate=False, order=1, plot=False):
+def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False):
     """
     Generate a map where each pixel is the distance from the trace polynomial
     
     Parameters
     ----------
-    trace: np.ma.array
-        The masked data containing the trace
     plot: bool
         Plot the distance map
     
@@ -371,26 +369,25 @@ def distance_map(trace='', generate=False, order=1, plot=False):
     np.ndarray
         An array the same shape as masked_data
     
-    Example
-    -------
-    file = open('/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/trace_mask.p', 'rb')
-    trace = pickle.load(file, encoding='latin1')[::-1,::-1]
-    d_map = spec2D.distance_map(trace, generate=True, plot=True)
     """   
     # If missing, generate it
     if generate:
         
         print('Generating distance map...')
         
+        path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
+        mask = np.load(path+'order{}_mask.npy'.format(order)).swapaxes(-1,-2)
+        
         # Get the trace polynomial
-        X, Y = trace_polynomial(trace, start, end, p_order)
+        X, Y = trace_polynomial(mask, start, end, p_order)
         
         # Get the distance from the pixel to the polynomial
         def dist(p0, Poly):
             return min(np.sqrt((p0[0]-Poly[0])**2 + (p0[1]-Poly[1])**2))
             
         # Make a map of pixel locations
-        d_map = np.zeros(trace.shape)
+        height, length = mask.shape
+        d_map = np.zeros(mask.shape)
         for i in range(length):
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
@@ -398,7 +395,7 @@ def distance_map(trace='', generate=False, order=1, plot=False):
         np.save('AWESim_SOSS/order_{}_distance_map.npy'.format(order), d_map)
         
     else:
-        d_map = np.load('AWESim_SOSS/distance_map.npy'.format(order))
+        d_map = np.load('AWESim_SOSS/order_{}_distance_map.npy'.format(order))
         
     
     if plot:
@@ -589,7 +586,7 @@ class TSO(object):
         for p in [i for i in dir(params) if not i.startswith('_')]:
             setattr(self, p, getattr(params, p))
             
-        # FIRST ORDER ==========================================================================================
+        # FIRST ORDER ====================================================================================
         
         # Flatten the wavelength and distance maps
         wave = self.wave[0].flatten()
@@ -619,20 +616,15 @@ class TSO(object):
         
         self.tso = np.abs(tso_order1)
         
-        # SECOND ORDER ============================================================================================
+        # SECOND ORDER ==================================================================================
         
         # Flatten the wavelength and distance maps
         wave = self.wave[1].flatten()
         distance = distance_map(order=2).flatten()
         
         # Get relative spectral response to convert flux to counts
-        # ===============================================================================
-        # ======================== HERE BE DRAGONS!!!! ==================================
-        # ===============================================================================
-        # Order 2 scaling too bright! Fix factor of 50 below!
-        # ===============================================================================
         scaling = ADUtoFlux(2)
-        response = np.interp(wave, scaling[0], scaling[1])/50
+        response = np.interp(wave, scaling[0], scaling[1])/50.
         
         # Run multiprocessing
         print('Calculating order 2 light curves...')
