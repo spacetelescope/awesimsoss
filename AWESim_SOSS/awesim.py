@@ -672,7 +672,7 @@ class TSO(object):
         orders = list(set(order)) # only keep unique values of [1,2]
         
         for order in orders:
-            local_wave      = self.wave[order%nOrders].flatten()
+            local_wave      = self.wave[order-1].flatten()
             local_distance  = distance_map(order=order).flatten()
             
             # Get relative spectral response to convert flux to counts
@@ -688,7 +688,7 @@ class TSO(object):
             
             local_response  = np.interp(local_wave, \
                                         local_scaling[0], \
-                                        local_scaling[1])/dragons[order%nOrders]
+                                        local_scaling[1])/dragons[order-1]
             
             # Required for multiprocessing...
             # Run multiprocessing
