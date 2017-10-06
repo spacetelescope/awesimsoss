@@ -624,7 +624,7 @@ class TSO(object):
         
         # Get relative spectral response to convert flux to counts
         scaling = ADUtoFlux(2)
-        response = np.interp(wave, scaling[0], scaling[1])/50.
+        response = np.interp(wave, scaling[0], scaling[1])
         
         # Run multiprocessing
         print('Calculating order 2 light curves...')
