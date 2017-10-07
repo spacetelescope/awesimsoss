@@ -15,6 +15,8 @@ from astropy.io import fits
 from scipy.optimize import curve_fit
 from functools import partial
 
+from sklearn.externals import joblib
+
 FILTERS = svo.filters()
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -316,8 +318,8 @@ def soss_polynomials(plot=False):
     ''' LEGACY CODE '''
     # Load the trace masks
     path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
-    mask1 = np.load(path+'order1_mask.npy').swapaxes(-1,-2)
-    mask2 = np.load(path+'order2_mask.npy').swapaxes(-1,-2)
+    mask1 = joblib.load(path+'order1_mask.save').swapaxes(-1,-2)
+    mask2 = joblib.load(path+'order2_mask.save').swapaxes(-1,-2)
     spec1 = np.ma.array(np.ones(mask1.shape), mask=mask1)
     spec2 = np.ma.array(np.ones(mask2.shape), mask=mask2)
     
@@ -376,7 +378,7 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
         print('Generating distance map...')
         
         path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
-        mask = np.load(path+'order{}_mask.npy'.format(order)).swapaxes(-1,-2)
+        mask = joblib.load(path+'order{}_mask.save'.format(order)).swapaxes(-1,-2)
         
         # Get the trace polynomial
         X, Y = trace_polynomial(mask, start, end, p_order)
@@ -392,10 +394,10 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        np.save('AWESim_SOSS/order_{}_distance_map.npy'.format(order), d_map)
+        joblib.dump(d_map, 'AWESim_SOSS/order_{}_distance_map.save'.format(order))
         
     else:
-        d_map = np.load('AWESim_SOSS/order_{}_distance_map.npy'.format(order))
+        d_map = joblib.load('AWESim_SOSS/order_{}_distance_map.save'.format(order))
         
     
     if plot:
@@ -711,11 +713,11 @@ class TSO(object):
             # ===============================================================================
             # Order 2 scaling too bright! Fix factor of 50 below!
             # ===============================================================================
-            dragons = [1,500] # remove the dragons
+            dragons = [1,50] # remove the dragons
             
             local_response  = np.interp(local_wave, \
                                         local_scaling[0], \
-                                        local_scaling[1])*dragons[order-1]
+                                        local_scaling[1])/dragons[order-1]
             
             # Required for multiprocessing...
             # Run multiprocessing
