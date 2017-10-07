@@ -468,7 +468,9 @@ def psf_position(distance, extend=25, plot=False):
         
     return val
 
-def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet, t, params, trace_radius=25, SNR=100, floor=2, extend=25, plot=False):
+def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet  , \
+                        time, params, trace_radius=25, SNR=100, floor=2, scale=1, extend=25, \
+                        plot=False):
     """
     Generate a lightcurve for a given wavelength
     
@@ -513,50 +515,51 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
     or wavelength>np.nanmax(star[0].value) \
     or wavelength<np.nanmin(star[0].value):
         
-        F = np.abs(np.random.normal(loc=floor, scale=1, size=len(t)))
+        flux = np.abs(np.random.normal(loc=floor, scale=1, size=len(time)))
         
     else:
         
         # Get the stellar flux at the given wavelength at t=t0
-        F0 = np.interp(wavelength, star[0], star[1])
+        flux0 = np.interp(wavelength, star[0], star[1])
         
         # Expand to shape of time axis and add noise
-        F = np.abs(np.random.normal(loc=F0, scale=F0/SNR, size=len(t)))
+        flux = np.abs(np.random.normal(loc=flux0, scale=flux0/SNR, size=len(time)))
         
         # If there is a transiting planet...
         if not isinstance(planet,str):
             
             # Set the wavelength dependent orbital parameters
             params.limb_dark = ld_profile
-            params.u = ld_coeffs
+            params.u         = ld_coeffs
             
             # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
-            T = np.interp(wavelength, planet[0], planet[1])
-            params.rp = np.sqrt(T)
+            tdepth    = np.interp(wavelength, planet[0], planet[1])
+            params.rp = np.sqrt(tdepth)
             
             # Generate the light curve for this pixel
-            m = batman.TransitModel(params, t) 
-            LC = m.light_curve(params)
+            model      = batman.TransitModel(params, time) 
+            lightcurve = model.light_curve(params)
             
             # Scale the flux with the lightcurve
-            F *= LC
+            flux *= lightcurve
             
         # Convert the flux into counts
-        F /= response
+        flux /= response
         
         # Scale pixel based on distance from the center of the cross-dispersed psf
-        F *= psf_position(distance, extend=extend)
+        flux *= psf_position(distance, extend=extend)
         
         # Replace very low signal pixels with noise floor
-        F[F<floor] += np.random.normal(loc=floor, scale=1, size=len(F[F<floor]))
+        flux[flux<floor] += np.random.normal(loc=floor, scale=scale, \
+                                            size=len(flux[flux<floor]))
         
         # Plot
         if plot:
-            plt.plot(t, F)
+            plt.plot(t, flux)
             plt.xlabel("Time from central transit")
             plt.ylabel("Flux [erg/s/cm2/A]")
         
-    return F
+    return flux
 
 def wave_solutions(subarr, directory=dir_path+'/refs/soss_wavelengths_fullframe.fits'):
     """
@@ -590,7 +593,15 @@ class TSO(object):
     Generate NIRISS SOSS time series observations
     """
 
-    def __init__(self, time, star, **kwargs):
+    def __init__(self, time, star, 
+                        planet      = '', 
+                        params      = '', 
+                        ld_coeffs   = '', 
+                        ld_profile  = 'quadratic',
+                        trace_radius= 50, 
+                        SNR         = 700, 
+                        extend      = 25, 
+                        subsize     = 256):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -611,26 +622,48 @@ class TSO(object):
         trace_radius: int
             The radius of the trace
         """
+        #super(TSO, self).__init__(time, star, **kwargs)
+        
+        defaults = dict(planet      = '', 
+                        params      = '', 
+                        ld_coeffs   = '', 
+                        ld_profile  = 'quadratic',
+                        trace_radius= 50, 
+                        SNR         = 700, 
+                        extend      = 25, 
+                        subsize     = 256)
+        
+        # nArgs     = len(args)
+        # usedKeys  = np.array(list(defaults.keys()))[:nArgs]
+        # for k, key in enumerate(usedKeys):
+        #     print("self." + key + " = args[{}]".format(k))
+        #     exec( "self.__dict__['" + key + "'] = args[{}]".format(k), self.__dict__)
+        #     # setattr(self, key, arg)
+        
+        # while len(args) < nArgs:
+        #     args += kwargs.popitem()
+        #     super(TSO, self).__init__(*args[:nArgs], **kwargs)
         
         # Assign local to class values
         self.nwaves      = 2048
         
-        defaults = dict(planet='', params='', ld_coeffs='', ld_profile='quadratic', \
-                             trace_radius=50, SNR=700, extend=25, subsize=256)
-        
-        # nArgs = 2
-        # while len(args) < nArgs:
-        #     args += kwargs.popitem()
-        #     super(TSO, self).__init__(*args[:2], **kwargs)
-        
         self.time = time#kwargs['time'] if 'time' in kwargs.keys() else args[0]
         self.star = star#kwargs['star'] if 'star' in kwargs.keys() else args[1]
         
-        for key in defaults:
-            if key in kwargs.keys():
-                exec("self." + key + " = kwargs['" + key + "']")
-            else:
-                exec("self." + key + " = defaults['" + key + "']")
+        self.ntimes      = len(self.time)
+        self.planet      = planet
+        self.params      = params
+        self.ld_coeffs   = ld_coeffs
+        self.ld_profile  = ld_profile
+        self.trace_radius= trace_radius
+        self.SNR         = SNR
+        self.extend      = extend
+        self.subsize     = subsize
+        # for key in defaults:
+        #     if key not in usedKeys and key in kwargs.keys():
+        #         exec("self." + key + " = kwargs['" + key + "']")
+        #     else:
+        #         exec("self." + key + " = defaults['" + key + "']")
         
         # Save some attributes
         self.wave = wave_solutions(str(self.subsize))
@@ -638,12 +671,11 @@ class TSO(object):
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
             setattr(self, p, getattr(self.params, p))
         
-        self.tso = np.zeros((self.subsize, self.nwaves))
+        self.tso = np.zeros((self.ntimes, self.subsize, self.nwaves))
     
     def compute_light_curve_order(self, orders=[1,2], nOrders=2):
         # Flatten the wavelength and distance maps
         
-        local_ld_coeffs = np.zeros((self.subsize*self.nwaves, 2))
         if isinstance(self.planet,str):
             if self.ld_profile == 'linear':
                 raise ValueError("ld_profile == 'linear' has not been implemented yet! :(")
@@ -654,6 +686,8 @@ class TSO(object):
                 local_ld_coeffs = np.zeros((self.subsize*self.nwaves, 2))
             else:
                 raise ValueError("`limb_dark` must be either `'linear'` or `'quadratic'`")
+        else:
+            local_ld_coeffs = self.ld_coeffs.copy()
         
         if isinstance(orders,int) or isinstance(orders,float):
             orders = [int(orders)]
@@ -667,7 +701,8 @@ class TSO(object):
             if o in [1,2]: # exclude non
                 order.append(o)
             else:
-                print('{} is not a valid choice of `orders`'.format(o))
+                print('{} is not a valid choice of `orders`; \
+                            must be either [1,2] or both'.format(o))
         
         orders = list(set(order)) # only keep unique values of [1,2]
         
@@ -684,15 +719,16 @@ class TSO(object):
             # ===============================================================================
             # Order 2 scaling too bright! Fix factor of 50 below!
             # ===============================================================================
-            dragons = [1,50]
+            dragons = [1,1]#[1,50] # remove the dragons
             
             local_response  = np.interp(local_wave, \
                                         local_scaling[0], \
-                                        local_scaling[1])/dragons[order-1]
+                                        local_scaling[1])*dragons[order-1]
             
             # Required for multiprocessing...
             # Run multiprocessing
             print('Calculating order {} light curves...'.format(order))
+            
             processes = 8
             start = time.time()
             pool = multiprocessing.Pool(processes)
@@ -701,7 +737,7 @@ class TSO(object):
                     ld_profile  = self.ld_profile, 
                     star        = self.star, 
                     planet      = self.planet, \
-                    t           = self. time, 
+                    time        = self.time, 
                     params      = self.params, 
                     trace_radius= self.trace_radius, 
                     SNR         = self.SNR, 
@@ -714,9 +750,8 @@ class TSO(object):
                                       )
             pool.close()
             pool.join()
-            
             # Clean up and time of execution
-            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([len(self. time),
+            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([len(self.time),
                                                                            self.subsize,
                                                                            self.nwaves])
             
