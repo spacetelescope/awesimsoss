@@ -719,7 +719,7 @@ class TSO(object):
             # ===============================================================================
             # Order 2 scaling too bright! Fix factor of 50 below!
             # ===============================================================================
-            dragons = [1,1]#[1,50] # remove the dragons
+            dragons = [1,500] # remove the dragons
             
             local_response  = np.interp(local_wave, \
                                         local_scaling[0], \
@@ -836,9 +836,11 @@ class TSO(object):
         plt.legend(loc=0, frameon=False)
     
     def save_tso(self, filename='dummy.save'):
+        print('Saving TSO class dict to {}'.format(filename))
         joblib.dump(self.__dict__, filename)
     
     def load_tso(self, filename):
+        print('Loading TSO class dict to {}'.format(filename))
         load_dict = joblib.load(filename)
         # for p in [i for i in dir(load_dict)]:
         #     setattr(self, p, getattr(params, p))
