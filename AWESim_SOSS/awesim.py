@@ -15,8 +15,6 @@ from astropy.io import fits
 from scipy.optimize import curve_fit
 from functools import partial
 
-from sklearn.externals import joblib
-
 FILTERS = svo.filters()
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -318,8 +316,8 @@ def soss_polynomials(plot=False):
     ''' LEGACY CODE '''
     # Load the trace masks
     path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
-    mask1 = joblib.load(path+'order1_mask.save').swapaxes(-1,-2)
-    mask2 = joblib.load(path+'order2_mask.save').swapaxes(-1,-2)
+    mask1 = np.load(path+'order1_mask.npy').swapaxes(-1,-2)
+    mask2 = np.load(path+'order2_mask.npy').swapaxes(-1,-2)
     spec1 = np.ma.array(np.ones(mask1.shape), mask=mask1)
     spec2 = np.ma.array(np.ones(mask2.shape), mask=mask2)
     
@@ -343,7 +341,7 @@ def trace_polynomial(trace, start=4, end=2040, order=4):
     # Make a scatter plot where the pixels in each column are offset by a small amount
     x, y = [], []
     for n,col in enumerate(trace.T):
-        vals = np.where(~col.mask)
+        vals = np.where(~col)
         if vals:
             v = list(vals[0])
             y += v
@@ -357,14 +355,12 @@ def trace_polynomial(trace, start=4, end=2040, order=4):
     
     return X, Y
 
-def distance_map(trace='', generate=False, order=1, plot=False):
+def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False):
     """
     Generate a map where each pixel is the distance from the trace polynomial
     
     Parameters
     ----------
-    trace: np.ma.array
-        The masked data containing the trace
     plot: bool
         Plot the distance map
     
@@ -373,34 +369,33 @@ def distance_map(trace='', generate=False, order=1, plot=False):
     np.ndarray
         An array the same shape as masked_data
     
-    Example
-    -------
-    file = open('/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/trace_mask.p', 'rb')
-    trace = pickle.load(file, encoding='latin1')[::-1,::-1]
-    d_map = spec2D.distance_map(trace, generate=True, plot=True)
     """   
     # If missing, generate it
     if generate:
         
         print('Generating distance map...')
         
+        path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
+        mask = np.load(path+'order{}_mask.npy'.format(order)).swapaxes(-1,-2)
+        
         # Get the trace polynomial
-        X, Y = trace_polynomial(trace, start, end, p_order)
+        X, Y = trace_polynomial(mask, start, end, p_order)
         
         # Get the distance from the pixel to the polynomial
         def dist(p0, Poly):
             return min(np.sqrt((p0[0]-Poly[0])**2 + (p0[1]-Poly[1])**2))
             
         # Make a map of pixel locations
-        d_map = np.zeros(trace.shape)
+        height, length = mask.shape
+        d_map = np.zeros(mask.shape)
         for i in range(length):
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        joblib.dump('AWESim_SOSS/order_{}_distance_map.save'.format(order), d_map)
+        np.save('AWESim_SOSS/order_{}_distance_map.npy'.format(order), d_map)
         
     else:
-        d_map = joblib.load('AWESim_SOSS/distance_map.save'.format(order))
+        d_map = np.load('AWESim_SOSS/order_{}_distance_map.npy'.format(order))
         
     
     if plot:
@@ -468,9 +463,7 @@ def psf_position(distance, extend=25, plot=False):
         
     return val
 
-def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet  , \
-                        time, params, trace_radius=25, SNR=100, floor=2, scale=1, extend=25, \
-                        plot=False):
+def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet, time, params, trace_radius=25, SNR=100, floor=2, extend=25, plot=False):
     """
     Generate a lightcurve for a given wavelength
     
@@ -512,8 +505,8 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
     """
     # If it's a background pixel, it's just noise
     if distance>trace_radius+extend \
-    or wavelength>np.nanmax(star[0].value) \
-    or wavelength<np.nanmin(star[0].value):
+        or wavelength>np.nanmax(star[0].value) \
+        or wavelength<np.nanmin(star[0].value):
         
         flux = np.abs(np.random.normal(loc=floor, scale=1, size=len(time)))
         
@@ -550,8 +543,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         flux *= psf_position(distance, extend=extend)
         
         # Replace very low signal pixels with noise floor
-        flux[flux<floor] += np.random.normal(loc=floor, scale=scale, \
-                                            size=len(flux[flux<floor]))
+        flux[flux<floor] += np.random.normal(loc=floor, scale=1, size=len(flux[flux<floor]))
         
         # Plot
         if plot:
@@ -761,8 +753,9 @@ class TSO(object):
         
         print('Why are you subtracting Gaussian noise -- centered at 1 -- \
                     instead of adding it -- centered at 0?')
-        noise    = np.random.normal(loc=1, scale=1, size=self.tso.shape)
-        self.tso = np.abs(self.tso - noise)
+        # noise    = np.random.normal(loc=1, scale=1, size=self.tso.shape)
+        # self.tso = np.abs(self.tso - noise)
+        self.tso = np.abs(self.tso)
     
     def plot_frame(self, frame='', scale='log'):
         """
@@ -777,11 +770,9 @@ class TSO(object):
         
         plt.figure(figsize=(13,2))
         if scale=='log':
-            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', \
-                interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax)
+            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax)
         else:
-            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', \
-                interpolation='none', vmin=1, vmax=vmax)
+            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax)
         plt.colorbar()
         plt.title('Injected Spectrum')
         
