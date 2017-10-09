@@ -681,6 +681,7 @@ class TSO(object):
             else:
                 raise ValueError("`limb_dark` must be either `'linear'` or `'quadratic'`")
         else:
+            print('Using Injected Limb Darkenging Coefficients')
             local_ld_coeffs = self.ld_coeffs.copy()
         
         if isinstance(orders,int) or isinstance(orders,float):
@@ -755,9 +756,10 @@ class TSO(object):
         
         print('Why are you subtracting Gaussian noise -- centered at 1 -- \
                     instead of adding it -- centered at 0?')
-        # noise    = np.random.normal(loc=1, scale=1, size=self.tso.shape)
-        # self.tso = np.abs(self.tso - noise)
-        self.tso = np.abs(self.tso)
+        
+        # self.noise = np.random.normal(loc=1, scale=1, size=self.tso.shape)
+        # self.tso  = np.abs(self.tso - noise)
+        self.tso  = np.abs(self.tso)
     
     def plot_frame(self, frame='', scale='log', cmap=cm.jet):
         """
