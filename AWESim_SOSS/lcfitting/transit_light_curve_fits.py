@@ -23,7 +23,90 @@ def batman_wrapper_lmfit(period, tcenter, inc, aprs, rprs, ecc, omega, u1, u2,
     
     return m_eclipse.light_curve(bm_params) * OoT_curvature
 
-def default_init_params():
+def default_init_params(planetName, planetParams={}):
+    import lmfit
+    # planetParams = {'rprs':      (0.147   , True, 0.0, 0.2),
+    #                 'period':    (5.721490, False         ),
+    #                 'tcenter':   (0., True, -0.1, 0.1     ),
+    #                 'inc':       (89.7    , True, 80., 90.),
+    #                 'aprs':      (18.2    , True, 15., 20.),
+    #                 'ecc':       (0.0     , False         ),
+    #                 'omega':     (90.     , False         ),
+    #                 'u1':        (0.284   , True, 0., 1.  ),
+    #                 'u2':        (0.208   , True, 0., 1.  ),
+    #                 'offset':    (1.0     , True, 0.0     ),
+    #                 'slope':     (0.0     , False         ),
+    #                 'curvature': (0.0     , False         )
+    #                }
+    
+    if not len(planetParams):
+        from exoparams import PlanetParams
+        params  = PlanetParams(planetName)
+    try:
+        rprs      = planetParams['rprs'][0]
+        rprsFit   = planetParams['rprs'][1]
+        if len(planetParams['rprs']) > 2:
+            rprsMin   = planetParams['rprs'][2]
+            rprsMax   = planetParams['rprs'][3]
+    except:
+        rprs      = np.sqrt(params.depth)
+        rprsFit   = False
+    try:
+        period      = planetParams['period'][0]
+    except:
+        period    = params.per
+        periodFit = False
+    try:
+        tcenter      = planetParams['tcenter'][0]
+    except:
+        tcenter   = params.tt
+        tcenterFit= False
+    try:
+        inc      = planetParams['inc'][0]
+    except:
+        inc       = params.i
+        incFit    = False
+    try:
+        aprs      = planetParams['aprs'][0]
+    except:
+        aprs      = params.a
+        aprsFit   = False
+    try:
+        ecc       = planetParams['ecc'][0]
+    except:
+        ecc       = params.ecc
+        eccFit    = False
+    try:
+        omega      = planetParams['omega'][0]
+    except:
+        omega     = params.omega
+        omegaFit  = False
+    try:
+        u1        = planetParams['u1'][0]
+    except:
+        u1        = 0.2
+        u1Fit     = False
+    try:
+        u2        = planetParams['u2'][0]
+    except:
+        u2        = 0.2
+        u2Fit     = False
+    try:
+        offset    = planetParams['offset'][0]
+    except:
+        offset    = 1.0
+        offsetFit = False
+    try:
+        slope      = planetParams['slope'][0]
+    except:
+        slope     = 0.
+        slopeFit  = False
+    try:
+        curvature = planetParams['rpcurvaturers'][0]
+    except:
+        curvature     = 0.0
+        curvatureFit  = False
+    
     initialParams = lmfit.Parameters()
     # Format: (key, value, vary?, min, max)
     initialParams.add_many(                     # WASP-107b paramters from Anderson et al (2017)
@@ -42,22 +125,27 @@ def default_init_params():
     
     return initialParams
 
-def align_spectra_into_transit_lightcurve(wasp107spec='AWESim_SOSS/wasp107_data/wasp107_extracted_1D_spectra.save'):
-    if isinstance(filename,str)
-        wasp107spec = joblib.load(wasp107spec)
+def align_spectra_into_transit_lightcurve(stellar1DSpectra, iIngress=25, iEgress=25):
+    # stellar1DSpectra='AWESim_SOSS/wasp107_data/wasp107_extracted_1D_spectra.save'
     
-    spec1D_0= wasp107spec['counts']
-    waves   = wasp107spec['waveslength']
-    times   = np.linspace(-0.114,0.114, spec1D.shape[0])
-
+    if isinstance(filename,str):
+        stellar1DSpectra = joblib.load(stellar1DSpectra)
+    
+    spec1D_0  = stellar1DSpectra['counts']
+    spec1Derr = stellar1DSpectra['countsErr']
+    waves     = stellar1DSpectra['waveslength']
+    times     = stellar1DSpectra['times']#np.linspace(-0.114,0.114, spec1D.shape[0])
+    
     err     = 3e-3                     # 3000 ppm uncertainty per pointnOOT    = 25
     
-    minAfter= 175
-    ootInds = np.array(list(np.arange(nOOT))+list(np.arange(nOOT)+minAfter))
-    medSpec = np.median(wasp107spec['counts'][ootInds],axis=0)
+    beforeTransit = list(np.arange(iIngress))
+    aftertransit  = list(-np.arange(iEgress)-1)
+    
+    ootInds = np.array(beforeTransit+afterTransit)
+    medSpec = np.median(stellar1DSpectra['counts'][ootInds],axis=0)
     spec1D  = spec1D_0 / medSpec
     
-    return times, waves, spec1D, err
+    return times, waves, spec1D, spec1Derr
 
 def plot_2D_transmission_spectrum(waves, spec1D, vmin=0.95, vmax=1.05):
     # Plot the time series of 1D spectra
@@ -87,24 +175,28 @@ def bin_flux_vs_wavelenght(wave, specID, wave_low, wave_hi, nchan):
         binflux[i] = np.mean(spec1D[:,index],axis=1)
         binerr[i]  = np.sqrt(len(index))*err
 
-
-def plot_eample_transit_lightcurve():
+def plot_example_transit_lightcurve(binwave, binflux, results, times, figsize=(8,6)):
     # Plot best fit light curve and residuals for the same channel
-    plt.figure(figsize=(8,6));
+    plt.figure(figsize=figsize);
     plt.title(str(binwave[i]) + " microns");
+    
     plt.plot(times, binflux[i], 'b.');
     plt.plot(times, results[i].best_fit, 'r-', lw=2);
+    
     a=plt.xlim(times.min(), times.max());
     plt.ylabel("Flux",size=14);
     plt.xlabel("Time (Days)",size=14);
-    plt.figure(figsize=(8,6));
+    
+    plt.figure(figsize=figsize);
     plt.title(str(binwave[i]) + " microns");
+    
     plt.plot(times, results[i].residual, 'k.');
+    
     a=plt.xlim(times.min(), times.max());
     plt.ylabel("Normalized Residuals",size=14);
     plt.xlabel("Time (Days)",size=14);
 
-def reorganize_transmission_spectrum():
+def reorganize_transmission_spectrum(nchan, results, ):
     # Record best-fit radii and formal errors
     rprs    = np.zeros(nchan)
     rprserr = np.zeros(nchan)
@@ -114,30 +206,45 @@ def reorganize_transmission_spectrum():
             rprserr[i] = np.sqrt(results[i].covar[0,0])       # Assumes RpRs is 0th free parameter
         except:
             rprserr[i] = np.nan       # Assumes RpRs is 0th free parameter
+    
+    return rprs, rprserr
 
-def plot_transmission_spectrum():
+def plot_transmission_spectrum(binwave, rprs, rprserr, waveMin=None, waveMax=None, figsize=(10,5)):
+    # waveMin=wave[0], waveMax=wave[-1]
+    
+    medDiffWave = np.median(np.diff(binwave))
+    if waveMin is None:
+        waveMin = binwave.min() - 0.5*medDiffWave
+    if waveMax is None:
+        waveMax = binwave.max() + 0.5*medDiffWave
+    
     # Plot transmission spectrum
-    plt.figure(figsize=(10,5))
+    plt.figure(figsize=figsize)
     plt.errorbar(binwave, rprs, rprserr, fmt='b.')
+    
     plt.ylabel("Planet-Star Radius Ratio",size=14)
     plt.xlabel("Wavelength ($\mu m$)",size=14)
-    a=plt.xlim(wave[0],wave[-1])
+    
+    a=plt.xlim(waveMin, waveMax)
     plt.ylim(0.150, 0.160);
     
-def rescale_injected_planetary_spectrum():
+def rescale_injected_planetary_spectrum(binwave, planetSpec, minSpec=0.151, maxSpec=0.159):
+    # planetSpec=planetSpec
     from scipy.signal import medfilt
     
-    waveUse     = (WASP107b[0]>binwave.min())*(WASP107b[0]<binwave.max())
-    wasp107b_wv = WASP107b[0][waveUse]
-    wasp107b_cr = WASP107b[1][waveUse]
-    wasp107b_sm = medfilt(wasp107b_cr,101)
-    wasp107b_rng= (0.159-0.151)
-    wasp107b_wid= (0.159+0.151)
-    observed_rng=(wasp107b_sm.max() - np.min(wasp107b_sm))
-    wasp107b_rs = (wasp107b_sm - np.min(wasp107b_sm)) / observed_rng * wasp107b_rng + 0.5 * wasp107b_wid
+    waveUse       = (planetSpec[0]>binwave.min())*(planetSpec[0]<binwave.max())
     
-    return wasp107b_rs
+    planetSpec_wv = planetSpec[0][waveUse]
+    planetSpec_cr = planetSpec[1][waveUse]
+    planetSpec_sm = medfilt(planetSpec_cr,101)
+    planetSpec_rng= (maxSpec - minSpec)
+    planetSpec_wid= (maxSpec + minSpec)
+    
+    observed_rng  =(planetSpec_sm.max() - np.min(planetSpec_sm))
+    planetSpec_rs = (planetSpec_sm - np.min(planetSpec_sm)) / observed_rng * planetSpec_rng + 0.5 * planetSpec_wid
+    
+    return planetSpec_rs
 
 def save_transmission_spectrum(filename, binwave, rprs, rprserr):
-    filename="AWESim_SOSS/example_results/WASP107b-TranSpec.save"
+    filename="AWESim_SOSS/example_results/planetSpec-TranSpec.save"
     joblib.dump(dict(binwave=binwave, rprs=rprs, rprserr=rprserr), filename)
