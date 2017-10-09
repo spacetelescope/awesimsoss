@@ -3,3 +3,4 @@
 __pycache__
 .DS_Store
 *~
+AWESim_SOSS/example_results/*_stellar_spectra_with_transit_over_time.save

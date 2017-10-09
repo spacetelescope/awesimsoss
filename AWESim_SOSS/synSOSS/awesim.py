@@ -396,10 +396,10 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        joblib.dump(d_map, 'AWESim_SOSS/order_{}_distance_map.save'.format(order))
+        joblib.dump(d_map, 'AWESim_SOSS/structSOSS/order_{}_distance_map.save'.format(order))
         
     else:
-        d_map = joblib.load('AWESim_SOSS/order_{}_distance_map.save'.format(order))
+        d_map = joblib.load('AWESim_SOSS/structSOSS/order_{}_distance_map.save'.format(order))
         
     
     if plot:

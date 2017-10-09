@@ -1,3 +1,7 @@
+import batman
+import numpy as np
+from matplotlib import pyplot as plt
+
 def batman_wrapper_lmfit(period, tcenter, inc, aprs, rprs, ecc, omega, u1, u2, 
                          offset, slope, curvature,
                          times, ldtype='quadratic', transitType='primary'):
