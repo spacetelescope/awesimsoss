@@ -727,7 +727,7 @@ class TSO(object):
             processes = 8
             start = time.time()
             pool = multiprocessing.Pool(processes)
-        
+            
             func = partial(lambda_lightcurve, 
                     ld_profile  = self.ld_profile, 
                     star        = self.star, 
@@ -743,6 +743,7 @@ class TSO(object):
                                                  local_distance, 
                                                  local_ld_coeffs)
                                       )
+            
             pool.close()
             pool.join()
             # Clean up and time of execution
