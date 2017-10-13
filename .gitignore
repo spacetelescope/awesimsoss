@@ -3,3 +3,7 @@
 __pycache__
 .DS_Store
 *~
+*_stellar_spectra_with_transit_over_time.save
+*.egg-info
+build
+dist
