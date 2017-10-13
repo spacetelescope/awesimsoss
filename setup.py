@@ -15,13 +15,13 @@ setup(
     author_email = "jfilippazzo@stsci.edu",
     description = ("Analyzing Webb Exoplanet Simulations with SOSS"),
     license = "MIT",
-    keywords = "example documentation tutorial",
-    url = "http://packages.python.org/an_example_pypi_project",
-    packages=['an_example_pypi_project', 'tests'],
-    long_description=read('README'),
+    keywords = "",#"NIRISS SOSS Exoplanet Atmospheres",
+    url = "https://github.com/ExoCTK/AWESim_SOSS",
+    packages=['AWESim_SOSS'],#, 'tests'],
+    long_description=read('README.md'),
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
-        "License :: OSI Approved :: BSD License",
+        "License :: OSI Approved :: MIT",
     ],
 )
