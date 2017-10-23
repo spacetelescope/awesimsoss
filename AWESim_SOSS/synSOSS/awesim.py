@@ -417,7 +417,7 @@ def psf_position(distance, extend=25, plot=False):
     """
     Scale the flux based on the pixel's distance from the center of the cross dispersed psf
     """
-    # Get the LPSF
+    # Get the LPSF (can I also get this from the 2D webbpsf?)
     lpsf = np.array([7.701976722368496E-008,  1.540395344473699E-007,  3.080790688947398E-007, \
                      6.161581377894797E-007,  1.232316275578959E-006,  2.464632551157919E-006, \
                      4.929265102315838E-006,  9.714837387708730E-006,  5.671904909021475E-006, \
