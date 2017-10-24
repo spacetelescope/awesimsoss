@@ -1,16 +1,3 @@
-# import os
-# import numpy as np
-# import astropy.units as q
-# import matplotlib.pyplot as plt
-# import matplotlib
-# import warnings
-# from numpy import ma
-# from scipy.optimize import curve_fit
-# from astropy.io import fits
-# from matplotlib.colors import LogNorm
-#
-# warnings.simplefilter('ignore')
-
 import os
 import multiprocessing
 import time
@@ -35,20 +22,6 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 WS = {1: np.array([2.60188,-0.000984839,3.09333e-08,-4.19166e-11,1.66371e-14]),
       2: np.array([1.30816,-0.000480837,-5.21539e-09,8.11258e-12,5.77072e-16]),
       3: np.array([0.880545,-0.000311876,8.17443e-11,0.0,0.0])}
-
-def soss_extract(order1_mask, order2_mask, wav1_map, wav2_map):
-    """
-    Steps:
-    
-    1. Create background mask from the inverse of the combined order masks
-    2. Create overlap mask from the intersection of the order masks
-    3. For a given wavelength value with a given width:
-        a. Find all the pixels in order 1 within that range
-        b. Find all the pixels in order 2 within that range
-        c. Check to see if any of the selected pixels are in both (step 2 mask)
-        d. 
-    """
-    pass
 
 def ADUtoFlux(order):
     """

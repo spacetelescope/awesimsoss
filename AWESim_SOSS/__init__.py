@@ -13,6 +13,5 @@ if not _ASTROPY_SETUP_:
 
 from . import extract1D
 from . import lcfitting
-from . import structSOSS
-from . import synSOSS
-from . import example_mod
+from . import sim2D
+from . import version

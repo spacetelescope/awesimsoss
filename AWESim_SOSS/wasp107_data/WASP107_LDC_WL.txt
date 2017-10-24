@@ -1,7 +1,0 @@
-Profile: quadratic
-|wavelength|    c1|    e1|    c2|    e2|
-|    double|double|double|double|double|
-|          |      |      |      |      |
-|      null|  null|  null|  null|  null|
-       1.65  0.284  0.010  0.208  0.014 
-
