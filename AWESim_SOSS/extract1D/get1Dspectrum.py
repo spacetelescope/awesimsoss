@@ -7,6 +7,7 @@ import astropy.units as q
 import matplotlib.pyplot as plt
 import matplotlib
 import warnings
+import AWESim_SOSS
 from functools import partial
 from numpy import ma
 from scipy.optimize import curve_fit
@@ -17,7 +18,7 @@ from scipy.ndimage.interpolation import map_coordinates
 
 warnings.simplefilter('ignore')
 
-dir_path = os.path.dirname(os.path.realpath(__file__))
+dir_path = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 
 WS = {1: np.array([2.60188,-0.000984839,3.09333e-08,-4.19166e-11,1.66371e-14]),
       2: np.array([1.30816,-0.000480837,-5.21539e-09,8.11258e-12,5.77072e-16]),
@@ -39,7 +40,7 @@ def ADUtoFlux(order):
         Arrays to convert the given order trace from ADUs to units of flux
     """
     ADU2mJy, mJy2erg = 7.586031e-05, 2.680489e-15
-    scaling = np.genfromtxt(dir_path+'/refs/GR700XD_{}.txt'.format(order), unpack=True)
+    scaling = np.genfromtxt(os.path.dirname(AWESim_SOSS.__file__)+'/files/GR700XD_{}.txt'.format(order), unpack=True)
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling
@@ -98,9 +99,10 @@ def fetch_pixels(lam, d_lam, order, masked_trace, plot=False):
     float
         The scaled flux value in the wavelength bin
     """
+    # Get the wavelength map
+    wavelength = wave_solutions('256')[order-1]
+    
     try:
-        # Get the wavelength map
-        wavelength = wave_solutions('256')[order-1]
         
         # Find all the pixels in the wavelength bin lam-d_lam < lam < lam+d_lam
         pixels = np.where(np.logical_and(wavelength>=lam-d_lam,wavelength<lam+d_lam))
@@ -1303,7 +1305,7 @@ def trimodal(x, mu1, sigma1, A1, mu2, sigma2, A2, mu3, sigma3, A3):
      
     return B
 
-def wave_solutions(subarr, directory=dir_path+'/refs/soss_wavelengths_fullframe.fits'):
+def wave_solutions(subarr, directory=dir_path+'/files/soss_wavelengths_fullframe.fits'):
     """
     Get the wavelength maps for SOSS orders 1, 2, and 3
     This will be obsolete once the apply_wcs step of the JWST pipeline
