@@ -314,31 +314,6 @@ def ld_coefficients(wave_map, lookup):
     
     return ld_coeffs
 
-def soss_polynomials(plot=False):
-    ''' LEGACY CODE '''
-    # Load the trace masks
-    path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
-    mask1 = joblib.load(path+'order1_mask.save').swapaxes(-1,-2)
-    mask2 = joblib.load(path+'order2_mask.save').swapaxes(-1,-2)
-    spec1 = np.ma.array(np.ones(mask1.shape), mask=mask1)
-    spec2 = np.ma.array(np.ones(mask2.shape), mask=mask2)
-    
-    # Generate the polynomials
-    poly1 = trace_polynomial(spec1, start=4, end=2040, order=4)
-    poly2 = trace_polynomial(spec2, start=470, end=2040, order=4)
-    
-    # Plot
-    plt.figure(figsize=(13,2))
-    file = open(path+'/trace_mask.p', 'rb')
-    trace = pickle.load(file, encoding='latin1')[::-1,::-1]
-    plt.imshow(trace.data, origin='lower', norm=matplotlib.colors.LogNorm())
-    plt.plot(*poly1)
-    plt.plot(*poly2)
-    plt.xlim(0,2048)
-    plt.ylim(0,256)
-    
-    return poly1, poly2
-
 def trace_polynomial(trace, start=4, end=2040, order=4):
     # Make a scatter plot where the pixels in each column are offset by a small amount
     x, y = [], []
@@ -622,6 +597,13 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     
     return time_axis
 
+def dark_ramps(time):
+    """
+    Placeholder for Kevin Volk's noise simulator, which will make a dark ramp 
+    image for each frame of the observation
+    """
+    return np.zeros(len(time))
+
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
@@ -675,7 +657,7 @@ class TSO(object):
         self.nints        = nints
         self.nresets      = 1
         self.time         = get_frame_times(self.subarray, self.ngrps, self.nints, t0, self.nresets)
-        self.nframes      = self.nframes
+        self.nframes      = len(self.time)
         
         # Set instance attributes for the target
         self.star         = star
@@ -704,30 +686,29 @@ class TSO(object):
         orders: sequence
             The orders to simulate
         """
-        # 
-        if isinstance(self.planet,str):
-            
-            if self.ld_profile == 'linear':
-                raise ValueError("ld_profile == 'linear' has not been implemented yet! :(")
-                print('Why are you setting the linear LDC to zero?')
-                local_ld_coeffs = np.zeros((self.rows*self.ncols, 1))
-            
-            elif self.ld_profile == 'quadratic':
-                print('Why are you setting the quadratic LDCs to zero?')
-                local_ld_coeffs = np.zeros((self.rows*self.ncols, 2))
-            
-            else:
-                raise ValueError("`limb_dark` must be either `'linear'` or `'quadratic'`")
-        else:
-            print('Using Injected Limb Darkenging Coefficients')
-            local_ld_coeffs = self.ld_coeffs.copy()
+        # if isinstance(self.planet,str):
+        #
+        #     if self.ld_profile == 'linear':
+        #         raise ValueError("ld_profile == 'linear' has not been implemented yet! :(")
+        #         print('Why are you setting the linear LDC to zero?')
+        #         local_ld_coeffs = np.zeros((self.rows*self.ncols, 1))
+        #
+        #     elif self.ld_profile == 'quadratic':
+        #         print('Why are you setting the quadratic LDCs to zero?')
+        #         local_ld_coeffs = np.zeros((self.rows*self.ncols, 2))
+        #
+        #     else:
+        #         raise ValueError("`limb_dark` must be either `'linear'` or `'quadratic'`")
+        # else:
+        #     print('Using Injected Limb Darkenging Coefficients')
+        #     local_ld_coeffs = self.ld_coeffs.copy()
         
         # Set single order to list
         if isinstance(orders,int):
             orders = [orders]
         if not all([o in [1,2] for o in orders]):
             raise TypeError('Order must be either an int, float, or list thereof; i.e. [1,2]')
-        orders = list(set(order))
+        orders = list(set(orders))
         
         # Generate simulation for each order
         for order in orders:
@@ -747,10 +728,8 @@ class TSO(object):
             
             local_response  = np.interp(local_wave, local_scaling[0], local_scaling[1])/dragons[order-1]
             
-            # Required for multiprocessing...
             # Run multiprocessing
             print('Calculating order {} light curves...'.format(order))
-            
             processes = 8
             start = time.time()
             pool = multiprocessing.Pool(processes)
@@ -776,13 +755,9 @@ class TSO(object):
             print('Order {} light curves finished: '.format(order), time.time()-start)
             
             self.tso = np.abs(self.tso+tso_order)
-        
-        print('Why are you subtracting Gaussian noise -- centered at 1 -- \
-                    instead of adding it -- centered at 0?')
-        
-        # self.noise = np.random.normal(loc=1, scale=1, size=self.tso.shape)
-        # self.tso  = np.abs(self.tso - noise)
-        self.tso  = np.abs(self.tso)
+            
+        # Add noise to the observations using Kevin Volk's dark ramp simulator
+        self.tso += dark_ramps(self.time)
     
     def plot_frame(self, frame='', scale='log', cmap=cm.jet):
         """
@@ -877,7 +852,6 @@ class TSO(object):
         col: int, sequence
             The column index(es) to plot a light curve for
         """
-        
         if isinstance(col, int):
             col = [col]
         
@@ -894,13 +868,35 @@ class TSO(object):
         plt.legend(loc=0, frameon=False)
     
     def save_tso(self, filename='dummy.save'):
+        """
+        Save the TSO data to file
+        
+        Parameters
+        ----------
+        filename: str
+            The path of the save file
+        """
         print('Saving TSO class dict to {}'.format(filename))
         joblib.dump(self.__dict__, filename)
     
     def load_tso(self, filename):
+        """
+        Load a previously calculated TSO
+        
+        Paramaters
+        ----------
+        filename: str
+            The path of the save file
+        
+        Returns
+        -------
+        awesim.TSO()
+            A TSO class dict
+        """
         print('Loading TSO class dict to {}'.format(filename))
         load_dict = joblib.load(filename)
         # for p in [i for i in dir(load_dict)]:
         #     setattr(self, p, getattr(params, p))
         for key in load_dict.keys():
             exec("self." + key + " = load_dict['" + key + "']")
+            
