@@ -8,6 +8,7 @@ import astropy.constants as ac
 import multiprocessing
 import time
 import AWESim_SOSS
+import inspect
 from ExoCTK import svo
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
@@ -597,12 +598,12 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     
     return time_axis
 
-def dark_ramps(time):
+def dark_ramps(time, subarray='SUBSTRIP256'):
     """
     Placeholder for Kevin Volk's noise simulator, which will make a dark ramp 
     image for each frame of the observation
     """
-    return np.zeros(len(time))
+    return np.zeros((len(time),256,2048))
 
 class TSO(object):
     """
@@ -664,7 +665,7 @@ class TSO(object):
         self.planet       = planet
         self.params       = params
         self.ld_coeffs    = ld_coeffs
-        self.ld_profile   = ld_profile
+        self.ld_profile   = ld_profile or 'quadratic'
         self.trace_radius = trace_radius
         self.SNR          = SNR
         self.extend       = extend
@@ -686,23 +687,11 @@ class TSO(object):
         orders: sequence
             The orders to simulate
         """
-        # if isinstance(self.planet,str):
-        #
-        #     if self.ld_profile == 'linear':
-        #         raise ValueError("ld_profile == 'linear' has not been implemented yet! :(")
-        #         print('Why are you setting the linear LDC to zero?')
-        #         local_ld_coeffs = np.zeros((self.rows*self.ncols, 1))
-        #
-        #     elif self.ld_profile == 'quadratic':
-        #         print('Why are you setting the quadratic LDCs to zero?')
-        #         local_ld_coeffs = np.zeros((self.rows*self.ncols, 2))
-        #
-        #     else:
-        #         raise ValueError("`limb_dark` must be either `'linear'` or `'quadratic'`")
-        # else:
-        #     print('Using Injected Limb Darkenging Coefficients')
-        #     local_ld_coeffs = self.ld_coeffs.copy()
-        
+        # Make dummy array of LDCs if no planet (required for multiprocessing)
+        if isinstance(self.planet,str):
+            self.ld_coeffs = np.zeros((self.nrows*self.ncols, 2))
+        local_ld_coeffs = self.ld_coeffs.copy()
+            
         # Set single order to list
         if isinstance(orders,int):
             orders = [orders]
@@ -750,14 +739,14 @@ class TSO(object):
             pool.join()
             
             # Clean up and time of execution
-            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.rows, self.ncols])
+            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.nrows, self.ncols])
             
             print('Order {} light curves finished: '.format(order), time.time()-start)
             
             self.tso = np.abs(self.tso+tso_order)
             
         # Add noise to the observations using Kevin Volk's dark ramp simulator
-        self.tso += dark_ramps(self.time)
+        self.tso += dark_ramps(self.time, self.subarray)
     
     def plot_frame(self, frame='', scale='log', cmap=cm.jet):
         """
