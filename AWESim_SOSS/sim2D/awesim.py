@@ -668,25 +668,25 @@ class TSO(object):
             The radius of the trace
         """
         # Set instance attributes for the exposure
-        self.subarray    = subarray
-        self.nrows       = 256 if '256' in subarray else 96 if '96' in subarray else 2048
-        self.ncols       = 2048
-        self.ngrps       = ngrps
-        self.nints       = nints
-        self.nresets     = 1
-        self.time        = get_frame_times(self.subarray, self.ngrps, self.nints, t0, self.nresets)
-        self.nframes     = len(self.time)
+        self.subarray     = subarray
+        self.nrows        = 256 if '256' in subarray else 96 if '96' in subarray else 2048
+        self.ncols        = 2048
+        self.ngrps        = ngrps
+        self.nints        = nints
+        self.nresets      = 1
+        self.time         = get_frame_times(self.subarray, self.ngrps, self.nints, t0, self.nresets)
+        self.nframes      = self.nframes
         
         # Set instance attributes for the target
-        self.star        = star
-        self.planet      = planet
-        self.params      = params
-        self.ld_coeffs   = ld_coeffs
-        self.ld_profile  = ld_profile
-        self.trace_radius= trace_radius
-        self.SNR         = SNR
-        self.extend      = extend
-        self.wave = wave_solutions(str(self.nrows))
+        self.star         = star
+        self.planet       = planet
+        self.params       = params
+        self.ld_coeffs    = ld_coeffs
+        self.ld_profile   = ld_profile
+        self.trace_radius = trace_radius
+        self.SNR          = SNR
+        self.extend       = extend
+        self.wave         = wave_solutions(str(self.nrows))
         
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
@@ -695,40 +695,41 @@ class TSO(object):
         # Create the empty exposure
         self.tso = np.zeros((self.nframes, self.nrows, self.ncols))
     
-    def run_simulation(self, orders=[1,2], nOrders=2):
-        # Flatten the wavelength and distance maps
+    def run_simulation(self, orders=[1,2]):
+        """
+        Generate the simulated 2D data given the initialized TSO object
         
+        Parameters
+        ----------
+        orders: sequence
+            The orders to simulate
+        """
+        # 
         if isinstance(self.planet,str):
+            
             if self.ld_profile == 'linear':
                 raise ValueError("ld_profile == 'linear' has not been implemented yet! :(")
                 print('Why are you setting the linear LDC to zero?')
-                local_ld_coeffs = np.zeros((self.subsize*self.nwaves, 1))
+                local_ld_coeffs = np.zeros((self.rows*self.ncols, 1))
+            
             elif self.ld_profile == 'quadratic':
                 print('Why are you setting the quadratic LDCs to zero?')
-                local_ld_coeffs = np.zeros((self.subsize*self.nwaves, 2))
+                local_ld_coeffs = np.zeros((self.rows*self.ncols, 2))
+            
             else:
                 raise ValueError("`limb_dark` must be either `'linear'` or `'quadratic'`")
         else:
             print('Using Injected Limb Darkenging Coefficients')
             local_ld_coeffs = self.ld_coeffs.copy()
         
-        if isinstance(orders,int) or isinstance(orders,float):
-            orders = [int(orders)]
+        # Set single order to list
+        if isinstance(orders,int):
+            orders = [orders]
+        if not all([o in [1,2] for o in orders]):
+            raise TypeError('Order must be either an int, float, or list thereof; i.e. [1,2]')
+        orders = list(set(order))
         
-        if not isinstance(orders, list):
-            raise TypeError('order must be either an int, float, or list thereof; i.e. [1,2]')
-        
-        # only use valid and unique values of [1,2]
-        order = []
-        for o in orders:
-            if o in [1,2]: # exclude non
-                order.append(o)
-            else:
-                print('{} is not a valid choice of `orders`; \
-                            must be either [1,2] or both'.format(o))
-        
-        orders = list(set(order)) # only keep unique values of [1,2]
-        
+        # Generate simulation for each order
         for order in orders:
             local_wave      = self.wave[order-1].flatten()
             local_distance  = distance_map(order=order).flatten()
@@ -744,9 +745,7 @@ class TSO(object):
             # ===============================================================================
             dragons = [1,50] # remove the dragons
             
-            local_response  = np.interp(local_wave, 
-                                        local_scaling[0], 
-                                        local_scaling[1])/dragons[order-1]
+            local_response  = np.interp(local_wave, local_scaling[0], local_scaling[1])/dragons[order-1]
             
             # Required for multiprocessing...
             # Run multiprocessing
@@ -757,27 +756,22 @@ class TSO(object):
             pool = multiprocessing.Pool(processes)
             
             func = partial(lambda_lightcurve, 
-                    ld_profile  = self.ld_profile, 
-                    star        = self.star, 
-                    planet      = self.planet, 
-                    time        = self.time, 
-                    params      = self.params, 
-                    trace_radius= self.trace_radius, 
-                    SNR         = self.SNR, 
-                    extend      = self.extend)
-            
-            lightcurves = pool.starmap(func, zip(local_wave, 
-                                                 local_response, 
-                                                 local_distance, 
-                                                 local_ld_coeffs)
-                                      )
+                           ld_profile   = self.ld_profile, 
+                           star         = self.star, 
+                           planet       = self.planet, 
+                           time         = self.time, 
+                           params       = self.params, 
+                           trace_radius = self.trace_radius, 
+                           SNR          = self.SNR, 
+                           extend       = self.extend)
+                    
+            lightcurves = pool.starmap(func, zip(local_wave, local_response, local_distance, local_ld_coeffs))
             
             pool.close()
             pool.join()
+            
             # Clean up and time of execution
-            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([len(self.time),
-                                                                           self.subsize,
-                                                                           self.nwaves])
+            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.rows, self.ncols])
             
             print('Order {} light curves finished: '.format(order), time.time()-start)
             
@@ -803,9 +797,9 @@ class TSO(object):
         
         plt.figure(figsize=(13,2))
         if scale=='log':
-            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
+            plt.imshow(self.tso[frame or self.nframes//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
         else:
-            plt.imshow(self.tso[frame or len(self.time)//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+            plt.imshow(self.tso[frame or self.nframes//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
         plt.colorbar()
         plt.title('Injected Spectrum')
     
@@ -818,7 +812,7 @@ class TSO(object):
         frame: int
             The frame number to plot
         """
-        SNR  = np.sqrt(self.tso[frame or len(self.time)//2].data)
+        SNR  = np.sqrt(self.tso[frame or self.nframes//2].data)
         vmax = int(np.nanmax(SNR))
         
         plt.figure(figsize=(13,2))
@@ -826,7 +820,7 @@ class TSO(object):
         
         plt.colorbar()
         plt.title('SNR over Spectrum')
-
+        
     def plot_saturation(self, frame='', saturation = 80.0, cmap=cm.jet):
         """
         Plot a frame of the TSO
@@ -841,7 +835,7 @@ class TSO(object):
         
         fullWell    = 65536.0
         
-        saturated = np.array(self.tso[frame or len(self.time)//2].data) > (saturation/100.0) * fullWell
+        saturated = np.array(self.tso[frame or self.nframes//2].data) > (saturation/100.0) * fullWell
         
         plt.figure(figsize=(13,2))
         plt.imshow(saturated, origin='lower', interpolation='none', cmap=cmap)
