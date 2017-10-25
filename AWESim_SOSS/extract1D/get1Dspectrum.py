@@ -40,7 +40,7 @@ def ADUtoFlux(order):
         Arrays to convert the given order trace from ADUs to units of flux
     """
     ADU2mJy, mJy2erg = 7.586031e-05, 2.680489e-15
-    scaling = np.genfromtxt(os.path.dirname(AWESim_SOSS.__file__)+'/files/GR700XD_{}.txt'.format(order), unpack=True)
+    scaling = np.genfromtxt(dir_path+'/files/GR700XD_{}.txt'.format(order), unpack=True)
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling

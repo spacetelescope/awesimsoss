@@ -7,6 +7,7 @@ import astropy.units as q
 import astropy.constants as ac
 import multiprocessing
 import time
+import AWESim_SOSS
 from ExoCTK import svo
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
@@ -17,7 +18,7 @@ from sklearn.externals import joblib
 
 cm = plt.cm
 FILTERS = svo.filters()
-dir_path = os.path.dirname(os.path.realpath(__file__))
+dir_path = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 
 def ADUtoFlux(order):
     """
@@ -35,7 +36,7 @@ def ADUtoFlux(order):
         Arrays to convert the given order trace from ADUs to units of flux
     """
     ADU2mJy, mJy2erg = 7.586031e-05, 2.680489e-15
-    scaling = np.genfromtxt(dir_path+'/refs/GR700XD_{}.txt'.format(order), unpack=True)
+    scaling = np.genfromtxt(dir_path+'/files/GR700XD_{}.txt'.format(order), unpack=True)
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling
@@ -376,8 +377,7 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
         
         print('Generating distance map...')
         
-        path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
-        mask = joblib.load(path+'order{}_mask.save'.format(order)).swapaxes(-1,-2)
+        mask = joblib.load(dir_path+'/files/order{}_mask.save'.format(order)).swapaxes(-1,-2)
         
         # Get the trace polynomial
         X, Y = trace_polynomial(mask, start, end, p_order)
@@ -393,10 +393,10 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        joblib.dump(d_map, dir_path+'/refs/order_{}_distance_map.save'.format(order))
+        joblib.dump(d_map, dir_path+'/files/order_{}_distance_map.save'.format(order))
         
     else:
-        d_map = joblib.load(dir_path+'/refs/order_{}_distance_map.save'.format(order))
+        d_map = joblib.load(dir_path+'/files/order_{}_distance_map.save'.format(order))
         
     
     if plot:
@@ -552,7 +552,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         
     return flux
 
-def wave_solutions(subarr, directory=dir_path+'/refs/soss_wavelengths_fullframe.fits'):
+def wave_solutions(subarr, directory=dir_path+'/files/soss_wavelengths_fullframe.fits'):
     """
     Get the wavelength maps for SOSS orders 1, 2, and 3
     This will be obsolete once the apply_wcs step of the JWST pipeline
