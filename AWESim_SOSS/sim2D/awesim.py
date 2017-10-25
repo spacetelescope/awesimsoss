@@ -579,69 +579,106 @@ def wave_solutions(subarr, directory=dir_path+'/files/soss_wavelengths_fullframe
     
     return wave
 
+def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
+    """
+    Calculate a time axis for the exposure in the given SOSS subarray
+    
+    Parameters
+    ----------
+    subarray: str
+        The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
+    ngrps: int
+        The number of groups per integration
+    nints: int
+        The number of integrations for the exposure
+    t0: float
+        The start time of the exposure
+    nresets: int
+        The number of reset frames per integration
+    
+    Returns
+    -------
+    sequence
+        The time of each frame
+    """
+    # Check the subarray
+    if subarray not in ['SUBSTRIP256','SUBSTRIP96','FULL']:
+        subarray = 'SUBSTRIP256'
+        print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
+    
+    # Get the appropriate frame time
+    frame_times = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
+    ft = frame_times[subarray]
+    
+    # Generate the time axis, removing reset frames
+    time_axis = []
+    t = t0
+    for _ in range(nints):
+        times = t+np.arange(nresets+ngrps)*ft
+        t = times[-1]+ft
+        time_axis.append(times[nresets:])
+    
+    time_axis = np.concatenate(time_axis)
+    
+    return time_axis
+
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
 
-    def __init__(self, time, star, 
+    def __init__(self, ngrps, nints, star,
                         planet      = '', 
                         params      = '', 
                         ld_coeffs   = '', 
                         ld_profile  = 'quadratic',
-                        trace_radius= 50, 
-                        SNR         = 700, 
+                        SNR         = 700,
+                        subarray    = 'SUBSTRIP256',
+                        t0          = 0,
                         extend      = 25, 
-                        subsize     = 256):
+                        trace_radius= 50):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
         Parameters
         ----------
-        t: sequence
-            The time axis for the TSO
+        ngrps: int
+            The number of groups per integration
+        nints: int
+            The number of integrations for the exposure
         star: sequence
             The wavelength and flux of the star
-        planet: sequence
+        planet: sequence (optional)
             The wavelength and Rp/R* of the planet at t=0 
-        params: batman.transitmodel.TransitParams
+        params: batman.transitmodel.TransitParams (optional)
             The transit parameters of the planet
-        ld_coeffs: array-like
+        ld_coeffs: array-like (optional)
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
-        ld_profile: str
+        ld_profile: str (optional)
             The limb darkening profile to use
+        SNR: float
+            The signal-to-noise
+        subarray: str
+            The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
+        t0: float
+            The start time of the exposure
+        extend: int
+            The number of pixels to extend the wings of the pfs
         trace_radius: int
             The radius of the trace
         """
-        #super(TSO, self).__init__(time, star, **kwargs)
+        # Set instance attributes for the exposure
+        self.subarray    = subarray
+        self.nrows       = 256 if '256' in subarray else 96 if '96' in subarray else 2048
+        self.ncols       = 2048
+        self.ngrps       = ngrps
+        self.nints       = nints
+        self.nresets     = 1
+        self.time        = get_frame_times(self.subarray, self.ngrps, self.nints, t0, self.nresets)
+        self.nframes     = len(self.time)
         
-        defaults = dict(planet      = '', 
-                        params      = '', 
-                        ld_coeffs   = '', 
-                        ld_profile  = 'quadratic',
-                        trace_radius= 50, 
-                        SNR         = 700, 
-                        extend      = 25, 
-                        subsize     = 256)
-        
-        # nArgs     = len(args)
-        # usedKeys  = np.array(list(defaults.keys()))[:nArgs]
-        # for k, key in enumerate(usedKeys):
-        #     print("self." + key + " = args[{}]".format(k))
-        #     exec( "self.__dict__['" + key + "'] = args[{}]".format(k), self.__dict__)
-        #     # setattr(self, key, arg)
-        
-        # while len(args) < nArgs:
-        #     args += kwargs.popitem()
-        #     super(TSO, self).__init__(*args[:nArgs], **kwargs)
-        
-        # Assign local to class values
-        self.nwaves      = 2048
-        
-        self.time = time#kwargs['time'] if 'time' in kwargs.keys() else args[0]
-        self.star = star#kwargs['star'] if 'star' in kwargs.keys() else args[1]
-        
-        self.ntimes      = len(self.time)
+        # Set instance attributes for the target
+        self.star        = star
         self.planet      = planet
         self.params      = params
         self.ld_coeffs   = ld_coeffs
@@ -649,20 +686,14 @@ class TSO(object):
         self.trace_radius= trace_radius
         self.SNR         = SNR
         self.extend      = extend
-        self.subsize     = subsize
-        # for key in defaults:
-        #     if key not in usedKeys and key in kwargs.keys():
-        #         exec("self." + key + " = kwargs['" + key + "']")
-        #     else:
-        #         exec("self." + key + " = defaults['" + key + "']")
+        self.wave = wave_solutions(str(self.nrows))
         
-        # Save some attributes
-        self.wave = wave_solutions(str(self.subsize))
-        
+        # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
             setattr(self, p, getattr(self.params, p))
         
-        self.tso = np.zeros((self.ntimes, self.subsize, self.nwaves))
+        # Create the empty exposure
+        self.tso = np.zeros((self.nframes, self.nrows, self.ncols))
     
     def run_simulation(self, orders=[1,2], nOrders=2):
         # Flatten the wavelength and distance maps
