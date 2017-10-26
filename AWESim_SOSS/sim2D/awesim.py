@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -9,6 +10,7 @@ import multiprocessing
 import time
 import AWESim_SOSS
 import inspect
+import warnings
 from ExoCTK import svo
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
@@ -16,6 +18,8 @@ from astropy.io import fits
 from scipy.optimize import curve_fit
 from functools import partial
 from sklearn.externals import joblib
+
+warnings.simplefilter('ignore')
 
 cm = plt.cm
 FILTERS = svo.filters()
@@ -251,69 +255,180 @@ def get_mag(spectrum, bandpass, exclude=[], fetch='mag', photon=False, Flam=Fals
     else:
         return ['']*4 if fetch=='both' else ['']*2
 
-def ld_coefficient_lookup(wave_map, ld_profile, grid_point, model_grid):
+def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
     """
-    Generate limb darkening coefficients for the wavelength at every pixel
+    Generate a lookup table of limb darkening coefficients for full SOSS wavelength range
+    
+    Parameters
+    ----------
+    ld_profile: str
+        A limb darkening profile name supported by `ExoCTK.ldc.ldcfit.ld_profile()`
+    grid_point: dict
+        The stellar model dictionary from `ExoCTK.core.ModelGrid.get()`
+    model_grid: ExoCTK.core.ModelGrid
+        The model grid
+    delta_w: float
+        The width of the wavelength bins in microns
+    save: str
+        The path to save to file to
     
     Example
     -------
-    ld_coeffs_lookup = ld_coefficient_lookup(lam1, 'quadratic', star, model_grid)
+    import os
+    from AWESim_SOSS.sim2D import awesim
+    from ExoCTK import core
+    grid = core.ModelGrid(os.environ['MODELGRID_DIR'], Teff_rng=(3000,4000), logg_rng=(4,5), FeH_rng=(0,0.5), resolution=700)
+    model = G.get(3300, 4.5, 0)
+    awesim.ldc_lookup('quadratic', model, grid, save='/Users/jfilippazzo/Desktop/')
     """
-    wave_list = wave_map.flatten()
-    filt = os.path.join(os.path.join(os.path.dirname(core.__file__),'AWESim_SOSS/data/filters/NIRISS.GR700XD.1.txt'))
-    throughput = np.genfromtxt(filt, unpack=True)
-    ld_coeffs = []
+    print("Go get a coffee! This takes about 5 minutes to run.")
     
-    # Generate a lookup
+    # Initialize the lookup table
     lookup = {}
-    delta_w = 0.005 #np.nanmean(np.diff(sorted(wave_list)))
-    for bin in np.arange(np.min(wave_map), np.max(wave_map), delta_w):
+    
+    # Get the full wavelength range
+    wave_maps = wave_solutions(256)
+    
+    # Define function for multiprocessing
+    def gr700xd_ldc(wavelength, delta_w, ld_profile, throughput, grid_point, model_grid):
+        """
+        Calculate the LCDs for the given wavelength range in the GR700XD grism
+        """
         try:
-            bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=(bin-delta_w/2.)*q.um, wl_max=(bin+delta_w/2.)*q.um)
-            ldcs = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08)
+            # Get the bandpass in that wavelength range
+            mn = (wavelength-delta_w/2.)*q.um
+            mx = (wavelength+delta_w/2.)*q.um
+            bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
+            
+            # Calculate the LDCs
+            ldcs = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08, verbose=False)
             coeffs = list(zip(*ldcs[ld_profile]['coeffs']))[1::2]
             coeffs = [coeffs[0][0],coeffs[1][0]]
-            lookup['{:.9f}'.format(bin)] = coeffs
+            
+            return ('{:.9f}'.format(wavelength), coeffs)
+            
         except:
-            pass
+            
+            return ('_', None)
+            
+    # Pool the LDC calculations across the whole wavelength range for each order
+    for order in [1,2,3]:
+        
+        # Get the wavelength limits for this order
+        min_wave = np.nanmin(wave_maps[order-1][wave_maps[order-1]>0])
+        max_wave = np.nanmax(wave_maps[order-1][wave_maps[order-1]>0])
+        
+        # Generate list of binned wavelengths
+        wavelengths = np.arange(min_wave, max_wave, delta_w)
+        
+        # Get the GR700XD filter throughput for this order
+        throughput = np.genfromtxt(dir_path+'/files/GR700XD_{}.txt'.format(order), unpack=True)
+        
+        # Turn off printing
+        print('Calculating order {} LDCs at {} wavelengths...'.format(order,len(wavelengths)))
+        sys.stdout = open(os.devnull, 'w')
+        
+        # Pool the LDC calculations across the whole wavelength range
+        processes = 8
+        start = time.time()
+        pool = multiprocessing.pool.ThreadPool(processes)
+        
+        func = partial(gr700xd_ldc, 
+                       delta_w    = delta_w,
+                       ld_profile = ld_profile,
+                       throughput = throughput,
+                       grid_point = grid_point,
+                       model_grid = model_grid)
+                       
+        # Turn list of coeffs into a dictionary
+        order_dict = dict(pool.map(func, wavelengths))
+        
+        pool.close()
+        pool.join()
+        
+        # Add the dict to the master
+        order_dict.pop('_')
+        lookup['order{}'.format(order)] = order_dict
+        
+        # Turn printing back on
+        sys.stdout = sys.__stdout__
+        print('Order {} LDCs finished: '.format(order), time.time()-start)
+        
+    if save:
+        t, g, m = grid_point['Teff'], grid_point['logg'], grid_point['FeH']
+        joblib.dump(lookup, save+'/{}_ldc_lookup_{}_{}_{}.save'.format(ld_profile,t,g,m))
+        
+    else:
     
-    print('Finished making LDC lookup table.')
+        return lookup
 
-    return lookup
-
-def ld_coefficients(wave_map, lookup):
+def ld_coefficient_map(lookup_file, delta_w=0.05, subarray='SUBSTRIP256', save=True):
     """
-    Generate limb darkening coefficients for the wavelength at every pixel
+    Generate  map of limb darkening coefficients at every NIRISS pixel for all SOSS orders
+    
+    Parameters
+    ----------
+    lookup_file: str
+        The path to the lookup table of LDCs
     
     Example
     -------
-    coeff_map = ld_coefficients(lam1, ld_coeffs_lookup)
+    ld_coeffs_lookup = ld_coefficient_lookup(1, 'quadratic', star, model_grid)
     """
-    wave_list = wave_map.flatten()
-    ld_coeffs = np.zeros((len(wave_list),2))
-    delta_w = 0.005/2. #np.nanmean(np.diff(sorted(wave_list)))
-    l = np.array(list(map(float,lookup)))
+    # Get the lookup table
+    ld_profile = os.path.basename(lookup_file).split('_')[0]
+    lookup = joblib.load(lookup_file)
     
-    # Get all the values 
-    done = np.zeros(wave_list.shape)
-    for w,d in zip(wave_list,done):
-        if not d:
-            
-            try:
-                # Determine coeffs
-                W, = l[(w>=l-delta_w)&(w<l+delta_w)]
-                print(W)
+    # Get the wavelength map
+    nrows = 256 if subarray=='SUBSTRIP256' else 96 if subarray=='SUBSTRIP96' else 2048
+    wave_map = wave_solutions(nrows)
+        
+    # Make dummy array for LDC map results
+    ldfunc = lf.ld_profile(ld_profile)
+    ncoeffs = len(inspect.signature(ldfunc).parameters)-1
+    ld_coeffs = np.zeros((3, nrows*2048, ncoeffs))
+    
+    # Calculate the coefficients at each pixel for each order
+    for order,wavelengths in enumerate(wave_map):
+        
+        print('Calculating order {} LDCs...'.format(order+1))
+        start = time.time()
+        
+        # Get a flat list of all wavelengths for this order
+        wave_list = wavelengths.flatten()
+        
+        # Get the lookup table of LDCs
+        lkup = np.array(list(map(float,lookup['order{}'.format(order+1)])))
+        
+        # Get all the values 
+        done = np.zeros(wave_list.shape)
+        for w,d in zip(wave_list,done):
+            if not d:
                 
-                # Put coeffs into the array for all wavelengths in the bin
-                pix = np.where((w>=l-delta_w)&(w<l+delta_w))
-                ld_coeffs[pix] = lookup['{:.9f}'.format(W)]
-                done[pix] = 1
-            except:
-                pass
-    
-    print('All coefficients calculated.')
-    
-    return ld_coeffs
+                try:
+                    # Determine coeffs
+                    W, = lkup[(w>=lkup-delta_w/2.)&(w<lkup+delta_w/2.)]
+                    print(W)
+                    
+                    # Put coeffs into the array for all wavelengths in the bin
+                    pix = np.where((w>=lkup-delta_w)&(w<lkup+delta_w))
+                    ld_coeffs[order][pix] = lookup['order{}'.format(order+1)]['{:.9f}'.format(W)]
+                    done[pix] = 1
+                    
+                except:
+                    pass
+                    
+        print('Order {} LDCs finished: '.format(order+1), time.time()-start)
+        
+    if save:
+        path = lookup_file.replace('lookup','map')
+        joblib.dump(ld_coeffs, path)
+        
+        print('LDC coefficient map saved at',path)
+        
+    else:
+        
+        return ld_coeffs
 
 def trace_polynomial(trace, start=4, end=2040, order=4):
     # Make a scatter plot where the pixels in each column are offset by a small amount
@@ -488,7 +603,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
     else:
         
         # Get the stellar flux at the given wavelength at t=t0
-        flux0 = np.interp(wavelength, star[0], star[1])
+        flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)
         
         # Expand to shape of time axis and add noise
         flux = np.abs(np.random.normal(loc=flux0, scale=flux0/SNR, size=len(time)))
