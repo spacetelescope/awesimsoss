@@ -589,10 +589,11 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
     sequence
         A 1D array of the lightcurve with the same length as *t* 
     """
-    # print(distance, trace_radius)
     # If it's a background pixel, it's just noise
     if distance>trace_radius+extend \
-        or wavelength<np.nanmin(star[0].value):
+    or wavelength<np.nanmin(star[0].value) \
+    or wavelength<filt.wl_min \
+    or wavelength>filt.wl_max:
         
         flux = np.abs(np.random.normal(loc=floor, scale=1, size=len(time)))
         
@@ -622,8 +623,9 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
             # Scale the flux with the lightcurve
             flux *= lightcurve
             
-        # Apply the photometric filter
-        flux *= np.interp(wavelength, filt.rsr[0][0], filt.rsr[0][1], left=0, right=0)
+        # Apply the photometric filter if F277W
+        if 'F277W' in filt.filterID:
+            flux *= np.interp(wavelength, filt.rsr[0][0], filt.rsr[0][1], left=0, right=0)
             
         # Convert the flux into counts
         flux /= response
@@ -818,6 +820,10 @@ class TSO(object):
         if not all([o in [1,2] for o in orders]):
             raise TypeError('Order must be either an int, float, or list thereof; i.e. [1,2]')
         orders = list(set(orders))
+        
+        # Check if it's F277W to speed up calculation
+        if 'F277W' in self.filter.filterID:
+            orders = [1]
         
         # Generate simulation for each order
         for order in orders:
