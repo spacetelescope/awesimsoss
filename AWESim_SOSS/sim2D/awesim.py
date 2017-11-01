@@ -549,7 +549,7 @@ def psf_position(distance, extend=25, plot=False):
         
     return val
 
-def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet, time, params, trace_radius=25, SNR=100, floor=2, extend=25, plot=False):
+def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet, time, params, filt, trace_radius=25, snr=100, floor=2, extend=25, plot=False):
     """
     Generate a lightcurve for a given wavelength
     
@@ -575,7 +575,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         The transit parameters of the planet
     trace_radius: int
         The radius of the trace
-    SNR: float
+    snr: float
         The signal-to-noise for the observations
     floor: int
         The noise floor in counts
@@ -602,7 +602,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)
         
         # Expand to shape of time axis and add noise
-        flux = np.abs(np.random.normal(loc=flux0, scale=flux0/SNR, size=len(time)))
+        flux = np.abs(np.random.normal(loc=flux0, scale=flux0/snr, size=len(time)))
         
         # If there is a transiting planet...
         if not isinstance(planet,str):
@@ -621,6 +621,9 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
             
             # Scale the flux with the lightcurve
             flux *= lightcurve
+            
+        # Apply the photometric filter
+        flux *= np.interp(wavelength, filt.rsr[0][0], filt.rsr[0][1], left=0, right=0)
             
         # Convert the flux into counts
         flux /= response
@@ -726,8 +729,9 @@ class TSO(object):
                         params      = '', 
                         ld_coeffs   = '', 
                         ld_profile  = 'quadratic',
-                        SNR         = 700,
+                        snr         = 700,
                         subarray    = 'SUBSTRIP256',
+                        filt        = 'CLEAR',
                         t0          = 0,
                         extend      = 25, 
                         trace_radius= 50):
@@ -750,10 +754,12 @@ class TSO(object):
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
         ld_profile: str (optional)
             The limb darkening profile to use
-        SNR: float
+        snr: float
             The signal-to-noise
         subarray: str
             The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
+        filt: str
+            The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
         t0: float
             The start time of the exposure
         extend: int
@@ -778,9 +784,13 @@ class TSO(object):
         self.ld_coeffs    = ld_coeffs
         self.ld_profile   = ld_profile or 'quadratic'
         self.trace_radius = trace_radius
-        self.SNR          = SNR
+        self.snr          = snr
         self.extend       = extend
         self.wave         = wave_solutions(str(self.nrows))
+        
+        # Get the filter
+        filt = 'NIRISS.F277W' if 'F277W' in filt else 'tophat'
+        self.filter = svo.Filter(filt, wl_min=0.5*q.um, wl_max=2.9*q.um)
         
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
@@ -840,9 +850,10 @@ class TSO(object):
                            star         = self.star, 
                            planet       = self.planet, 
                            time         = self.time, 
-                           params       = self.params, 
+                           params       = self.params,
+                           filt         = self.filter, 
                            trace_radius = self.trace_radius, 
-                           SNR          = self.SNR, 
+                           snr          = self.snr, 
                            extend       = self.extend)
                     
             lightcurves = pool.starmap(func, zip(local_wave, local_response, local_distance, local_ld_coeffs))
@@ -879,7 +890,7 @@ class TSO(object):
         plt.colorbar()
         plt.title('Injected Spectrum')
     
-    def plot_SNR(self, frame='', cmap=cm.jet):
+    def plot_snr(self, frame='', cmap=cm.jet):
         """
         Plot a frame of the TSO
         
@@ -888,11 +899,11 @@ class TSO(object):
         frame: int
             The frame number to plot
         """
-        SNR  = np.sqrt(self.tso[frame or self.nframes//2].data)
-        vmax = int(np.nanmax(SNR))
+        snr  = np.sqrt(self.tso[frame or self.nframes//2].data)
+        vmax = int(np.nanmax(snr))
         
         plt.figure(figsize=(13,2))
-        plt.imshow(SNR, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+        plt.imshow(snr, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
         
         plt.colorbar()
         plt.title('SNR over Spectrum')
