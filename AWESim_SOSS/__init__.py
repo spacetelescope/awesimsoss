@@ -14,4 +14,3 @@ if not _ASTROPY_SETUP_:
 from . import extract1D
 from . import lcfitting
 from . import sim2D
-from . import version

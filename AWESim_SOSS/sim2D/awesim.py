@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -8,6 +9,8 @@ import astropy.constants as ac
 import multiprocessing
 import time
 import AWESim_SOSS
+import inspect
+import warnings
 from ExoCTK import svo
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
@@ -15,6 +18,8 @@ from astropy.io import fits
 from scipy.optimize import curve_fit
 from functools import partial
 from sklearn.externals import joblib
+
+warnings.simplefilter('ignore')
 
 cm = plt.cm
 FILTERS = svo.filters()
@@ -250,94 +255,176 @@ def get_mag(spectrum, bandpass, exclude=[], fetch='mag', photon=False, Flam=Fals
     else:
         return ['']*4 if fetch=='both' else ['']*2
 
-def ld_coefficient_lookup(wave_map, ld_profile, grid_point, model_grid):
+def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
     """
-    Generate limb darkening coefficients for the wavelength at every pixel
+    Generate a lookup table of limb darkening coefficients for full SOSS wavelength range
+    
+    Parameters
+    ----------
+    ld_profile: str
+        A limb darkening profile name supported by `ExoCTK.ldc.ldcfit.ld_profile()`
+    grid_point: dict
+        The stellar model dictionary from `ExoCTK.core.ModelGrid.get()`
+    model_grid: ExoCTK.core.ModelGrid
+        The model grid
+    delta_w: float
+        The width of the wavelength bins in microns
+    save: str
+        The path to save to file to
     
     Example
     -------
-    ld_coeffs_lookup = ld_coefficient_lookup(lam1, 'quadratic', star, model_grid)
+    import os
+    from AWESim_SOSS.sim2D import awesim
+    from ExoCTK import core
+    grid = core.ModelGrid(os.environ['MODELGRID_DIR'], Teff_rng=(3000,4000), logg_rng=(4,5), FeH_rng=(0,0.5), resolution=700)
+    model = G.get(3300, 4.5, 0)
+    awesim.ldc_lookup('quadratic', model, grid, save='/Users/jfilippazzo/Desktop/')
     """
-    wave_list = wave_map.flatten()
-    filt = os.path.join(os.path.join(os.path.dirname(core.__file__),'AWESim_SOSS/data/filters/NIRISS.GR700XD.1.txt'))
-    throughput = np.genfromtxt(filt, unpack=True)
-    ld_coeffs = []
+    print("Go get a coffee! This takes about 5 minutes to run.")
     
-    # Generate a lookup
+    # Initialize the lookup table
     lookup = {}
-    delta_w = 0.005 #np.nanmean(np.diff(sorted(wave_list)))
-    for bin in np.arange(np.min(wave_map), np.max(wave_map), delta_w):
+    
+    # Get the full wavelength range
+    wave_maps = wave_solutions(256)
+    
+    # Define function for multiprocessing
+    def gr700xd_ldc(wavelength, delta_w, ld_profile, grid_point, model_grid):
+        """
+        Calculate the LCDs for the given wavelength range in the GR700XD grism
+        """
         try:
-            bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=(bin-delta_w/2.)*q.um, wl_max=(bin+delta_w/2.)*q.um)
-            ldcs = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08)
+            # Get the bandpass in that wavelength range
+            mn = (wavelength-delta_w/2.)*q.um
+            mx = (wavelength+delta_w/2.)*q.um
+            throughput = np.genfromtxt(dir_path+'/files/NIRISS.GR700XD.1.txt', unpack=True)
+            bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
+            
+            # Calculate the LDCs
+            ldcs = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08, verbose=False)
             coeffs = list(zip(*ldcs[ld_profile]['coeffs']))[1::2]
             coeffs = [coeffs[0][0],coeffs[1][0]]
-            lookup['{:.9f}'.format(bin)] = coeffs
+            
+            return ('{:.9f}'.format(wavelength), coeffs)
+            
+        except:
+            
+            print(wavelength)
+            
+            return ('_', None)
+            
+    # Pool the LDC calculations across the whole wavelength range for each order
+    for order in [1,2,3]:
+        
+        # Get the wavelength limits for this order
+        min_wave = np.nanmin(wave_maps[order-1][wave_maps[order-1]>0])
+        max_wave = np.nanmax(wave_maps[order-1][wave_maps[order-1]>0])
+        
+        # Generate list of binned wavelengths
+        wavelengths = np.arange(min_wave, max_wave, delta_w)
+        
+        # Turn off printing
+        print('Calculating order {} LDCs at {} wavelengths...'.format(order,len(wavelengths)))
+        sys.stdout = open(os.devnull, 'w')
+        
+        # Pool the LDC calculations across the whole wavelength range
+        processes = 8
+        start = time.time()
+        pool = multiprocessing.pool.ThreadPool(processes)
+        
+        func = partial(gr700xd_ldc, 
+                       delta_w    = delta_w,
+                       ld_profile = ld_profile,
+                       grid_point = grid_point,
+                       model_grid = model_grid)
+                       
+        # Turn list of coeffs into a dictionary
+        order_dict = dict(pool.map(func, wavelengths))
+        
+        pool.close()
+        pool.join()
+        
+        # Add the dict to the master
+        try:
+            order_dict.pop('_')
         except:
             pass
+        lookup['order{}'.format(order)] = order_dict
+        
+        # Turn printing back on
+        sys.stdout = sys.__stdout__
+        print('Order {} LDCs finished: '.format(order), time.time()-start)
+        
+    if save:
+        t, g, m = grid_point['Teff'], grid_point['logg'], grid_point['FeH']
+        joblib.dump(lookup, save+'/{}_ldc_lookup_{}_{}_{}.save'.format(ld_profile,t,g,m))
+        
+    else:
     
-    print('Finished making LDC lookup table.')
+        return lookup
 
-    return lookup
-
-def ld_coefficients(wave_map, lookup):
+def ld_coefficient_map(lookup_file, subarray='SUBSTRIP256', save=True):
     """
-    Generate limb darkening coefficients for the wavelength at every pixel
+    Generate  map of limb darkening coefficients at every NIRISS pixel for all SOSS orders
+    
+    Parameters
+    ----------
+    lookup_file: str
+        The path to the lookup table of LDCs
     
     Example
     -------
-    coeff_map = ld_coefficients(lam1, ld_coeffs_lookup)
+    ld_coeffs_lookup = ld_coefficient_lookup(1, 'quadratic', star, model_grid)
     """
-    wave_list = wave_map.flatten()
-    ld_coeffs = np.zeros((len(wave_list),2))
-    delta_w = 0.005/2. #np.nanmean(np.diff(sorted(wave_list)))
-    l = np.array(list(map(float,lookup)))
+    # Get the lookup table
+    ld_profile = os.path.basename(lookup_file).split('_')[0]
+    lookup = joblib.load(lookup_file)
     
-    # Get all the values 
-    done = np.zeros(wave_list.shape)
-    for w,d in zip(wave_list,done):
-        if not d:
+    # Get the wavelength map
+    nrows = 256 if subarray=='SUBSTRIP256' else 96 if subarray=='SUBSTRIP96' else 2048
+    wave_map = wave_solutions(nrows)
+        
+    # Make dummy array for LDC map results
+    ldfunc = lf.ld_profile(ld_profile)
+    ncoeffs = len(inspect.signature(ldfunc).parameters)-1
+    ld_coeffs = np.zeros((3, nrows*2048, ncoeffs))
+    
+    # Calculate the coefficients at each pixel for each order
+    for order,wavelengths in enumerate(wave_map[:1]):
+        
+        # Get a flat list of all wavelengths for this order
+        wave_list = wavelengths.flatten()
+        lkup = lookup['order{}'.format(order+1)]
+        
+        # Get the bin size
+        delta_w = np.mean(np.diff(sorted(np.array(list(map(float,lkup))))))/2.
+        
+        # For each bin in the lookup table...
+        for bin, coeffs in lkup.items():
             
             try:
-                # Determine coeffs
-                W, = l[(w>=l-delta_w)&(w<l+delta_w)]
-                print(W)
                 
-                # Put coeffs into the array for all wavelengths in the bin
-                pix = np.where((w>=l-delta_w)&(w<l+delta_w))
-                ld_coeffs[pix] = lookup['{:.9f}'.format(W)]
-                done[pix] = 1
+                # Get all the pixels that fall within the bin
+                w = float(bin)
+                idx, = np.where(np.logical_and(wave_list>=w-delta_w,wave_list<=w+delta_w))
+                
+                # Place them in the coefficient map
+                ld_coeffs[order][idx] = coeffs
+                
             except:
-                pass
-    
-    print('All coefficients calculated.')
-    
-    return ld_coeffs
-
-def soss_polynomials(plot=False):
-    ''' LEGACY CODE '''
-    # Load the trace masks
-    path = '/Users/jfilippazzo/Documents/Modules/NIRISS/soss_extract_spectrum/'
-    mask1 = joblib.load(path+'order1_mask.save').swapaxes(-1,-2)
-    mask2 = joblib.load(path+'order2_mask.save').swapaxes(-1,-2)
-    spec1 = np.ma.array(np.ones(mask1.shape), mask=mask1)
-    spec2 = np.ma.array(np.ones(mask2.shape), mask=mask2)
-    
-    # Generate the polynomials
-    poly1 = trace_polynomial(spec1, start=4, end=2040, order=4)
-    poly2 = trace_polynomial(spec2, start=470, end=2040, order=4)
-    
-    # Plot
-    plt.figure(figsize=(13,2))
-    file = open(path+'/trace_mask.p', 'rb')
-    trace = pickle.load(file, encoding='latin1')[::-1,::-1]
-    plt.imshow(trace.data, origin='lower', norm=matplotlib.colors.LogNorm())
-    plt.plot(*poly1)
-    plt.plot(*poly2)
-    plt.xlim(0,2048)
-    plt.ylim(0,256)
-    
-    return poly1, poly2
+                 
+                print(bin)
+                
+    if save:
+        path = lookup_file.replace('lookup','map')
+        joblib.dump(ld_coeffs, path)
+        
+        print('LDC coefficient map saved at',path)
+        
+    else:
+        
+        return ld_coeffs
 
 def trace_polynomial(trace, start=4, end=2040, order=4):
     # Make a scatter plot where the pixels in each column are offset by a small amount
@@ -512,7 +599,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
     else:
         
         # Get the stellar flux at the given wavelength at t=t0
-        flux0 = np.interp(wavelength, star[0], star[1])
+        flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)
         
         # Expand to shape of time axis and add noise
         flux = np.abs(np.random.normal(loc=flux0, scale=flux0/SNR, size=len(time)))
@@ -622,6 +709,13 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     
     return time_axis
 
+def dark_ramps(time, subarray='SUBSTRIP256'):
+    """
+    Placeholder for Kevin Volk's noise simulator, which will make a dark ramp 
+    image for each frame of the observation
+    """
+    return np.zeros((len(time),256,2048))
+
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
@@ -675,14 +769,14 @@ class TSO(object):
         self.nints        = nints
         self.nresets      = 1
         self.time         = get_frame_times(self.subarray, self.ngrps, self.nints, t0, self.nresets)
-        self.nframes      = self.nframes
+        self.nframes      = len(self.time)
         
         # Set instance attributes for the target
         self.star         = star
         self.planet       = planet
         self.params       = params
         self.ld_coeffs    = ld_coeffs
-        self.ld_profile   = ld_profile
+        self.ld_profile   = ld_profile or 'quadratic'
         self.trace_radius = trace_radius
         self.SNR          = SNR
         self.extend       = extend
@@ -704,35 +798,23 @@ class TSO(object):
         orders: sequence
             The orders to simulate
         """
-        # 
+        # Make dummy array of LDCs if no planet (required for multiprocessing)
         if isinstance(self.planet,str):
+            self.ld_coeffs = np.zeros((self.nrows*self.ncols, 2))
             
-            if self.ld_profile == 'linear':
-                raise ValueError("ld_profile == 'linear' has not been implemented yet! :(")
-                print('Why are you setting the linear LDC to zero?')
-                local_ld_coeffs = np.zeros((self.rows*self.ncols, 1))
-            
-            elif self.ld_profile == 'quadratic':
-                print('Why are you setting the quadratic LDCs to zero?')
-                local_ld_coeffs = np.zeros((self.rows*self.ncols, 2))
-            
-            else:
-                raise ValueError("`limb_dark` must be either `'linear'` or `'quadratic'`")
-        else:
-            print('Using Injected Limb Darkenging Coefficients')
-            local_ld_coeffs = self.ld_coeffs.copy()
-        
         # Set single order to list
         if isinstance(orders,int):
             orders = [orders]
         if not all([o in [1,2] for o in orders]):
             raise TypeError('Order must be either an int, float, or list thereof; i.e. [1,2]')
-        orders = list(set(order))
+        orders = list(set(orders))
         
         # Generate simulation for each order
         for order in orders:
             local_wave      = self.wave[order-1].flatten()
             local_distance  = distance_map(order=order).flatten()
+            
+            local_ld_coeffs = self.ld_coeffs.copy()[order-1]
             
             # Get relative spectral response to convert flux to counts
             local_scaling   = ADUtoFlux(order)
@@ -747,10 +829,8 @@ class TSO(object):
             
             local_response  = np.interp(local_wave, local_scaling[0], local_scaling[1])/dragons[order-1]
             
-            # Required for multiprocessing...
             # Run multiprocessing
             print('Calculating order {} light curves...'.format(order))
-            
             processes = 8
             start = time.time()
             pool = multiprocessing.Pool(processes)
@@ -771,18 +851,14 @@ class TSO(object):
             pool.join()
             
             # Clean up and time of execution
-            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.rows, self.ncols])
+            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.nrows, self.ncols])
             
             print('Order {} light curves finished: '.format(order), time.time()-start)
             
             self.tso = np.abs(self.tso+tso_order)
-        
-        print('Why are you subtracting Gaussian noise -- centered at 1 -- \
-                    instead of adding it -- centered at 0?')
-        
-        # self.noise = np.random.normal(loc=1, scale=1, size=self.tso.shape)
-        # self.tso  = np.abs(self.tso - noise)
-        self.tso  = np.abs(self.tso)
+            
+        # Add noise to the observations using Kevin Volk's dark ramp simulator
+        self.tso += dark_ramps(self.time, self.subarray)
     
     def plot_frame(self, frame='', scale='log', cmap=cm.jet):
         """
@@ -877,7 +953,6 @@ class TSO(object):
         col: int, sequence
             The column index(es) to plot a light curve for
         """
-        
         if isinstance(col, int):
             col = [col]
         
@@ -886,7 +961,7 @@ class TSO(object):
             w = np.mean(self.wave[0], axis=0)[c]
             f = np.nansum(self.tso[:,:,c], axis=1)
             f *= 1./np.nanmax(f)
-            plt.plot(self.time, f, label='Col {}'.format(c), marker='.', ls='None')
+            plt.plot(self.time/3000., f, label='Col {}'.format(c), marker='.', ls='None')
             
         # Plot whitelight curve too
         # plt.plot(self.time)
@@ -894,13 +969,35 @@ class TSO(object):
         plt.legend(loc=0, frameon=False)
     
     def save_tso(self, filename='dummy.save'):
+        """
+        Save the TSO data to file
+        
+        Parameters
+        ----------
+        filename: str
+            The path of the save file
+        """
         print('Saving TSO class dict to {}'.format(filename))
         joblib.dump(self.__dict__, filename)
     
     def load_tso(self, filename):
+        """
+        Load a previously calculated TSO
+        
+        Paramaters
+        ----------
+        filename: str
+            The path of the save file
+        
+        Returns
+        -------
+        awesim.TSO()
+            A TSO class dict
+        """
         print('Loading TSO class dict to {}'.format(filename))
         load_dict = joblib.load(filename)
         # for p in [i for i in dir(load_dict)]:
         #     setattr(self, p, getattr(params, p))
         for key in load_dict.keys():
             exec("self." + key + " = load_dict['" + key + "']")
+            
