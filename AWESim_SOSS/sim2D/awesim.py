@@ -290,7 +290,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
     wave_maps = wave_solutions(256)
     
     # Define function for multiprocessing
-    def gr700xd_ldc(wavelength, delta_w, ld_profile, throughput, grid_point, model_grid):
+    def gr700xd_ldc(wavelength, delta_w, ld_profile, grid_point, model_grid):
         """
         Calculate the LCDs for the given wavelength range in the GR700XD grism
         """
@@ -298,6 +298,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
             # Get the bandpass in that wavelength range
             mn = (wavelength-delta_w/2.)*q.um
             mx = (wavelength+delta_w/2.)*q.um
+            throughput = np.genfromtxt(dir_path+'/files/NIRISS.GR700XD.1.txt', unpack=True)
             bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
             
             # Calculate the LDCs
@@ -308,6 +309,8 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
             return ('{:.9f}'.format(wavelength), coeffs)
             
         except:
+            
+            print(wavelength)
             
             return ('_', None)
             
@@ -321,9 +324,6 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
         # Generate list of binned wavelengths
         wavelengths = np.arange(min_wave, max_wave, delta_w)
         
-        # Get the GR700XD filter throughput for this order
-        throughput = np.genfromtxt(dir_path+'/files/GR700XD_{}.txt'.format(order), unpack=True)
-        
         # Turn off printing
         print('Calculating order {} LDCs at {} wavelengths...'.format(order,len(wavelengths)))
         sys.stdout = open(os.devnull, 'w')
@@ -336,7 +336,6 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
         func = partial(gr700xd_ldc, 
                        delta_w    = delta_w,
                        ld_profile = ld_profile,
-                       throughput = throughput,
                        grid_point = grid_point,
                        model_grid = model_grid)
                        
@@ -347,7 +346,10 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
         pool.join()
         
         # Add the dict to the master
-        order_dict.pop('_')
+        try:
+            order_dict.pop('_')
+        except:
+            pass
         lookup['order{}'.format(order)] = order_dict
         
         # Turn printing back on
@@ -362,7 +364,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
     
         return lookup
 
-def ld_coefficient_map(lookup_file, delta_w=0.05, subarray='SUBSTRIP256', save=True):
+def ld_coefficient_map(lookup_file, subarray='SUBSTRIP256', save=True):
     """
     Generate  map of limb darkening coefficients at every NIRISS pixel for all SOSS orders
     
@@ -389,37 +391,31 @@ def ld_coefficient_map(lookup_file, delta_w=0.05, subarray='SUBSTRIP256', save=T
     ld_coeffs = np.zeros((3, nrows*2048, ncoeffs))
     
     # Calculate the coefficients at each pixel for each order
-    for order,wavelengths in enumerate(wave_map):
-        
-        print('Calculating order {} LDCs...'.format(order+1))
-        start = time.time()
+    for order,wavelengths in enumerate(wave_map[:1]):
         
         # Get a flat list of all wavelengths for this order
         wave_list = wavelengths.flatten()
+        lkup = lookup['order{}'.format(order+1)]
         
-        # Get the lookup table of LDCs
-        lkup = np.array(list(map(float,lookup['order{}'.format(order+1)])))
+        # Get the bin size
+        delta_w = np.mean(np.diff(sorted(np.array(list(map(float,lkup))))))/2.
         
-        # Get all the values 
-        done = np.zeros(wave_list.shape)
-        for w,d in zip(wave_list,done):
-            if not d:
+        # For each bin in the lookup table...
+        for bin, coeffs in lkup.items():
+            
+            try:
                 
-                try:
-                    # Determine coeffs
-                    W, = lkup[(w>=lkup-delta_w/2.)&(w<lkup+delta_w/2.)]
-                    print(W)
-                    
-                    # Put coeffs into the array for all wavelengths in the bin
-                    pix = np.where((w>=lkup-delta_w)&(w<lkup+delta_w))
-                    ld_coeffs[order][pix] = lookup['order{}'.format(order+1)]['{:.9f}'.format(W)]
-                    done[pix] = 1
-                    
-                except:
-                    pass
-                    
-        print('Order {} LDCs finished: '.format(order+1), time.time()-start)
-        
+                # Get all the pixels that fall within the bin
+                w = float(bin)
+                idx, = np.where(np.logical_and(wave_list>=w-delta_w,wave_list<=w+delta_w))
+                
+                # Place them in the coefficient map
+                ld_coeffs[order][idx] = coeffs
+                
+            except:
+                 
+                print(bin)
+                
     if save:
         path = lookup_file.replace('lookup','map')
         joblib.dump(ld_coeffs, path)
@@ -805,7 +801,6 @@ class TSO(object):
         # Make dummy array of LDCs if no planet (required for multiprocessing)
         if isinstance(self.planet,str):
             self.ld_coeffs = np.zeros((self.nrows*self.ncols, 2))
-        local_ld_coeffs = self.ld_coeffs.copy()
             
         # Set single order to list
         if isinstance(orders,int):
@@ -818,6 +813,8 @@ class TSO(object):
         for order in orders:
             local_wave      = self.wave[order-1].flatten()
             local_distance  = distance_map(order=order).flatten()
+            
+            local_ld_coeffs = self.ld_coeffs.copy()[order-1]
             
             # Get relative spectral response to convert flux to counts
             local_scaling   = ADUtoFlux(order)
@@ -964,7 +961,7 @@ class TSO(object):
             w = np.mean(self.wave[0], axis=0)[c]
             f = np.nansum(self.tso[:,:,c], axis=1)
             f *= 1./np.nanmax(f)
-            plt.plot(self.time, f, label='Col {}'.format(c), marker='.', ls='None')
+            plt.plot(self.time/3000., f, label='Col {}'.format(c), marker='.', ls='None')
             
         # Plot whitelight curve too
         # plt.plot(self.time)
