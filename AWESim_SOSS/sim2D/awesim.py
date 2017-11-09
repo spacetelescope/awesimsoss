@@ -18,6 +18,7 @@ from astropy.io import fits
 from scipy.optimize import curve_fit
 from functools import partial
 from sklearn.externals import joblib
+from numpy.core.multiarray import interp as compiled_interp
 
 warnings.simplefilter('ignore')
 
@@ -573,6 +574,8 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         The time axis for the TSO
     params: batman.transitmodel.TransitParams
         The transit parameters of the planet
+    throughput: float
+        The CLEAR or F277W filter throughput at the given wavelength
     trace_radius: int
         The radius of the trace
     snr: float
@@ -592,15 +595,23 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
     # If it's a background pixel, it's just noise
     if distance>trace_radius+extend \
     or wavelength<np.nanmin(star[0].value) \
-    or wavelength<filt.wl_min \
-    or wavelength>filt.wl_max:
+    or (filt=='f277w' and wavelength<2.36989) \
+    or (filt=='f277w' and wavelength>3.22972):
         
         flux = np.abs(np.random.normal(loc=floor, scale=1, size=len(time)))
         
     else:
         
+        # I = (Stellar Flux)*(LDC)*(Transit Depth)*(Filter Throughput)*(PSF position)
+        
         # Get the stellar flux at the given wavelength at t=t0
         flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)
+        
+        # Convert to photon flux density (lambda/h*c) where h*c = 2E-12 ergs/um
+        flux0 *= wavelength/1.9864458241717582e-12
+        
+        # Convert from photon flux density to ADU/s
+        flux0 *= 1E6
         
         # Expand to shape of time axis and add noise
         flux = np.abs(np.random.normal(loc=flux0, scale=flux0/snr, size=len(time)))
@@ -610,24 +621,20 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
             
             # Set the wavelength dependent orbital parameters
             params.limb_dark = ld_profile
-            params.u         = ld_coeffs
+            params.u = ld_coeffs
             
             # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
-            tdepth    = np.interp(wavelength, planet[0], planet[1])
+            tdepth = np.interp(wavelength, planet[0], planet[1])
             params.rp = np.sqrt(tdepth)
             
             # Generate the light curve for this pixel
-            model      = batman.TransitModel(params, time) 
+            model = batman.TransitModel(params, time) 
             lightcurve = model.light_curve(params)
             
             # Scale the flux with the lightcurve
             flux *= lightcurve
             
-        # Apply the photometric filter if F277W
-        if 'F277W' in filt.filterID:
-            flux *= np.interp(wavelength, filt.rsr[0][0], filt.rsr[0][1], left=0, right=0)
-            
-        # Convert the flux into counts
+        # Apply the filter response
         flux /= response
         
         # Scale pixel based on distance from the center of the cross-dispersed psf
@@ -640,7 +647,7 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         if plot:
             plt.plot(t, flux)
             plt.xlabel("Time from central transit")
-            plt.ylabel("Flux [erg/s/cm2/A]")
+            plt.ylabel("Flux Density [photons/s/cm2/A]")
         
     return flux
 
@@ -733,7 +740,6 @@ class TSO(object):
                         ld_profile  = 'quadratic',
                         snr         = 700,
                         subarray    = 'SUBSTRIP256',
-                        filt        = 'CLEAR',
                         t0          = 0,
                         extend      = 25, 
                         trace_radius= 50):
@@ -760,8 +766,6 @@ class TSO(object):
             The signal-to-noise
         subarray: str
             The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
-        filt: str
-            The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
         t0: float
             The start time of the exposure
         extend: int
@@ -790,10 +794,6 @@ class TSO(object):
         self.extend       = extend
         self.wave         = wave_solutions(str(self.nrows))
         
-        # Get the filter
-        filt = 'NIRISS.F277W' if 'F277W' in filt else 'tophat'
-        self.filter = svo.Filter(filt, wl_min=0.5*q.um, wl_max=2.9*q.um)
-        
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
             setattr(self, p, getattr(self.params, p))
@@ -801,7 +801,7 @@ class TSO(object):
         # Create the empty exposure
         self.tso = np.zeros((self.nframes, self.nrows, self.ncols))
     
-    def run_simulation(self, orders=[1,2]):
+    def run_simulation(self, orders=[1,2], filt='CLEAR'):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -809,11 +809,9 @@ class TSO(object):
         ----------
         orders: sequence
             The orders to simulate
+        filt: str
+            The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
         """
-        # Make dummy array of LDCs if no planet (required for multiprocessing)
-        if isinstance(self.planet,str):
-            self.ld_coeffs = np.zeros((self.nrows*self.ncols, 2))
-            
         # Set single order to list
         if isinstance(orders,int):
             orders = [orders]
@@ -822,35 +820,38 @@ class TSO(object):
         orders = list(set(orders))
         
         # Check if it's F277W to speed up calculation
-        if 'F277W' in self.filter.filterID:
+        if 'f277w' in filt.lower():
             orders = [1]
+            self.filter = 'f277w'
+        else:
+            self.filter = 'clear'
+            
+        # Make dummy array of LDCs if no planet (required for multiprocessing)
+        if isinstance(self.planet, str):
+            self.ld_coeffs = np.zeros((len(orders), self.nrows*self.ncols, 2))
         
         # Generate simulation for each order
         for order in orders:
-            local_wave      = self.wave[order-1].flatten()
-            local_distance  = distance_map(order=order).flatten()
             
+            # Get the wavelength map
+            local_wave = self.wave[order-1].flatten()
+            
+            # Get the distance map 
+            local_distance = distance_map(order=order).flatten()
+            
+            # Get limb darkening map
             local_ld_coeffs = self.ld_coeffs.copy()[order-1]
             
-            # Get relative spectral response to convert flux to counts
-            local_scaling   = ADUtoFlux(order)
-            
-            # Get relative spectral response to convert flux to counts
-            # ===============================================================================
-            # ======================== HERE BE DRAGONS!!!! ==================================
-            # ===============================================================================
-            # Order 2 scaling too bright! Fix factor of 50 below!
-            # ===============================================================================
-            dragons = [1,50] # remove the dragons
-            
-            local_response  = np.interp(local_wave, local_scaling[0], local_scaling[1])/dragons[order-1]
+            # Get relative spectral response map
+            throughput = np.genfromtxt(dir_path+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
+            local_response = np.interp(local_wave, throughput[0], throughput[-1], left=0, right=0)
             
             # Run multiprocessing
             print('Calculating order {} light curves...'.format(order))
-            processes = 8
             start = time.time()
-            pool = multiprocessing.Pool(processes)
+            pool = multiprocessing.Pool(8)
             
+            # Set wavelength independent inputs of lightcurve function
             func = partial(lambda_lightcurve, 
                            ld_profile   = self.ld_profile, 
                            star         = self.star, 
@@ -862,8 +863,10 @@ class TSO(object):
                            snr          = self.snr, 
                            extend       = self.extend)
                     
+            # Generate the lightcurves at each pixel
             lightcurves = pool.starmap(func, zip(local_wave, local_response, local_distance, local_ld_coeffs))
             
+            # Close the pool
             pool.close()
             pool.join()
             
@@ -984,6 +987,22 @@ class TSO(object):
         # plt.plot(self.time)
             
         plt.legend(loc=0, frameon=False)
+        
+    def plot_spectrum(self, frame=0):
+        """
+        Parameters
+        ----------
+        frame: int
+            The frame number to plot
+        """
+        # Get extracted spectrum
+        wave = np.mean(self.wave[0], axis=1)
+        flux = np.sum(self.tso[frame].data)
+        
+        # Plot it along with input spectrum
+        plt.figure(figsize=(13,2))
+        plt.plot(wave, flux, label='Extracted')
+        plt.plot(*self.star, label='Injected')
     
     def save_tso(self, filename='dummy.save'):
         """
