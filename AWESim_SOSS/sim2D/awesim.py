@@ -550,7 +550,7 @@ def psf_position(distance, extend=25, plot=False):
         
     return val
 
-def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, star, planet, time, params, filt, trace_radius=25, snr=100, floor=2, extend=25, plot=False):
+def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_profile, star, planet, time, params, filt, trace_radius=25, snr=100, floor=2, extend=25, plot=False):
     """
     Generate a lightcurve for a given wavelength
     
@@ -566,6 +566,8 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
         A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
     ld_profile: str
         The limb darkening profile to use
+    pfd2adu: sequence
+        The factor that converts photon flux density to ADU/s
     star: sequence
         The wavelength and flux of the star
     planet: sequence
@@ -603,17 +605,21 @@ def lambda_lightcurve(wavelength, response, distance, ld_coeffs, ld_profile, sta
     else:
         
         # I = (Stellar Flux)*(LDC)*(Transit Depth)*(Filter Throughput)*(PSF position)
+        # Don't use astropy units! It quadruples the computing time!
         
-        # Get the stellar flux at the given wavelength at t=t0
+        # Get the energy flux density [erg/s/cm2/A] at the given wavelength [um] at t=t0
         flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)
         
-        # Convert to photon flux density (lambda/h*c) where h*c = 2E-12 ergs/um
-        flux0 *= wavelength/1.9864458241717582e-12
+        # Convert from energy flux density to photon flux density [photons/s/cm2/A]
+        # by multiplying by (lambda/h*c)
+        flux0 *= wavelength*503411665111.4543 # [1/erg*um]
         
-        # Convert from photon flux density to ADU/s
-        flux0 *= 1E6
+        # Convert from photon flux density to ADU/s by multiplying by the 
+        # wavelength interval [um/pixel], primary mirror area [cm2], and gain [ADU/e-]
+        flux0 *= pfd2adu
         
         # Expand to shape of time axis and add noise
+        flux0 = np.abs(flux0)
         flux = np.abs(np.random.normal(loc=flux0, scale=flux0/snr, size=len(time)))
         
         # If there is a transiting planet...
@@ -794,6 +800,16 @@ class TSO(object):
         self.extend       = extend
         self.wave         = wave_solutions(str(self.nrows))
         
+        # Calculate a map that converts photon flux density to ADU/s
+        gain = 1.61 # [e-/ADU]
+        primary_mirror = 253260*q.cm**2
+        avg_wave = np.mean(self.wave, axis=1)
+        self.pfd2adu = np.ones((3,self.ncols*self.nrows))
+        for n,aw in enumerate(avg_wave):
+            coeffs = np.polyfit(aw[:-1], np.diff(aw), 1)
+            wave_int = (np.polyval(coeffs, self.wave[n])*q.um).to(q.AA)
+            self.pfd2adu[n] = (wave_int*primary_mirror/gain).value.flatten()
+        
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
             setattr(self, p, getattr(self.params, p))
@@ -828,8 +844,8 @@ class TSO(object):
             
         # Make dummy array of LDCs if no planet (required for multiprocessing)
         if isinstance(self.planet, str):
-            self.ld_coeffs = np.zeros((len(orders), self.nrows*self.ncols, 2))
-        
+            self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
+            
         # Generate simulation for each order
         for order in orders:
             
@@ -846,6 +862,9 @@ class TSO(object):
             throughput = np.genfromtxt(dir_path+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
             local_response = np.interp(local_wave, throughput[0], throughput[-1], left=0, right=0)
             
+            # Get the wavelength interval per pixel map
+            local_pfd2adu = self.pfd2adu[order-1]
+            
             # Run multiprocessing
             print('Calculating order {} light curves...'.format(order))
             start = time.time()
@@ -853,18 +872,18 @@ class TSO(object):
             
             # Set wavelength independent inputs of lightcurve function
             func = partial(lambda_lightcurve, 
-                           ld_profile   = self.ld_profile, 
-                           star         = self.star, 
-                           planet       = self.planet, 
-                           time         = self.time, 
-                           params       = self.params,
-                           filt         = self.filter, 
-                           trace_radius = self.trace_radius, 
-                           snr          = self.snr, 
-                           extend       = self.extend)
+                           ld_profile    = self.ld_profile,
+                           star          = self.star,
+                           planet        = self.planet,
+                           time          = self.time,
+                           params        = self.params,
+                           filt          = self.filter,
+                           trace_radius  = self.trace_radius,
+                           snr           = self.snr,
+                           extend        = self.extend)
                     
             # Generate the lightcurves at each pixel
-            lightcurves = pool.starmap(func, zip(local_wave, local_response, local_distance, local_ld_coeffs))
+            lightcurves = pool.starmap(func, zip(local_wave, local_response, local_distance, local_pfd2adu, local_ld_coeffs))
             
             # Close the pool
             pool.close()
@@ -996,8 +1015,11 @@ class TSO(object):
             The frame number to plot
         """
         # Get extracted spectrum
-        wave = np.mean(self.wave[0], axis=1)
-        flux = np.sum(self.tso[frame].data)
+        wave = np.mean(self.wave[0], axis=0)
+        flux = np.sum(self.tso[frame].data, axis=0)
+        
+        # Convert ADU/s to energy flux density
+        
         
         # Plot it along with input spectrum
         plt.figure(figsize=(13,2))
