@@ -649,7 +649,7 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
             flux *= lightcurve
             
         # Apply the filter response
-        flux /= response
+        flux *= response
         
         # Scale pixel based on distance from the center of the cross-dispersed psf
         flux *= psf_position(distance, extend=extend)
