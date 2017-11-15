@@ -1,3 +1,9 @@
+"""
+A module to generate simulated 2D time-series SOSS data
+
+Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
+"""
+
 import os
 import sys
 import numpy as np
@@ -11,6 +17,7 @@ import time
 import AWESim_SOSS
 import inspect
 import warnings
+import datetime
 from ExoCTK import svo
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
@@ -24,7 +31,8 @@ warnings.simplefilter('ignore')
 
 cm = plt.cm
 FILTERS = svo.filters()
-dir_path = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
+DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
+FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 
 def ADUtoFlux(order):
     """
@@ -42,7 +50,7 @@ def ADUtoFlux(order):
         Arrays to convert the given order trace from ADUs to units of flux
     """
     ADU2mJy, mJy2erg = 7.586031e-05, 2.680489e-15
-    scaling = np.genfromtxt(dir_path+'/files/GR700XD_{}.txt'.format(order), unpack=True)
+    scaling = np.genfromtxt(DIR_PATH+'/files/GR700XD_{}.txt'.format(order), unpack=True)
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling
@@ -299,7 +307,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
             # Get the bandpass in that wavelength range
             mn = (wavelength-delta_w/2.)*q.um
             mx = (wavelength+delta_w/2.)*q.um
-            throughput = np.genfromtxt(dir_path+'/files/NIRISS.GR700XD.1.txt', unpack=True)
+            throughput = np.genfromtxt(DIR_PATH+'/files/NIRISS.GR700XD.1.txt', unpack=True)
             bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
             
             # Calculate the LDCs
@@ -465,7 +473,7 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
         
         print('Generating distance map...')
         
-        mask = joblib.load(dir_path+'/files/order{}_mask.save'.format(order)).swapaxes(-1,-2)
+        mask = joblib.load(DIR_PATH+'/files/order{}_mask.save'.format(order)).swapaxes(-1,-2)
         
         # Get the trace polynomial
         X, Y = trace_polynomial(mask, start, end, p_order)
@@ -481,10 +489,10 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        joblib.dump(d_map, dir_path+'/files/order_{}_distance_map.save'.format(order))
+        joblib.dump(d_map, DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
         
     else:
-        d_map = joblib.load(dir_path+'/files/order_{}_distance_map.save'.format(order))
+        d_map = joblib.load(DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
         
     
     if plot:
@@ -597,8 +605,8 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
     # If it's a background pixel, it's just noise
     if distance>trace_radius+extend \
     or wavelength<np.nanmin(star[0].value) \
-    or (filt=='f277w' and wavelength<2.36989) \
-    or (filt=='f277w' and wavelength>3.22972):
+    or (filt=='F277W' and wavelength<2.36989) \
+    or (filt=='F277W' and wavelength>3.22972):
         
         flux = np.abs(np.random.normal(loc=floor, scale=1, size=len(time)))
         
@@ -641,7 +649,7 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
             flux *= lightcurve
             
         # Apply the filter response
-        flux /= response
+        flux *= response
         
         # Scale pixel based on distance from the center of the cross-dispersed psf
         flux *= psf_position(distance, extend=extend)
@@ -657,7 +665,7 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
         
     return flux
 
-def wave_solutions(subarr, directory=dir_path+'/files/soss_wavelengths_fullframe.fits'):
+def wave_solutions(subarr, directory=DIR_PATH+'/files/soss_wavelengths_fullframe.fits'):
     """
     Get the wavelength maps for SOSS orders 1, 2, and 3
     This will be obsolete once the apply_wcs step of the JWST pipeline
@@ -712,8 +720,7 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
         print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
     
     # Get the appropriate frame time
-    frame_times = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
-    ft = frame_times[subarray]
+    ft = FRAME_TIMES[subarray]
     
     # Generate the time axis, removing reset frames
     time_axis = []
@@ -726,13 +733,6 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     time_axis = np.concatenate(time_axis)
     
     return time_axis
-
-def dark_ramps(time, subarray='SUBSTRIP256'):
-    """
-    Placeholder for Kevin Volk's noise simulator, which will make a dark ramp 
-    image for each frame of the observation
-    """
-    return np.zeros((len(time),256,2048))
 
 class TSO(object):
     """
@@ -748,7 +748,8 @@ class TSO(object):
                         subarray    = 'SUBSTRIP256',
                         t0          = 0,
                         extend      = 25, 
-                        trace_radius= 50):
+                        trace_radius= 50, 
+                        target      = ''):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -778,6 +779,8 @@ class TSO(object):
             The number of pixels to extend the wings of the pfs
         trace_radius: int
             The radius of the trace
+        target: str (optional)
+            The name of the target
         """
         # Set instance attributes for the exposure
         self.subarray     = subarray
@@ -788,6 +791,12 @@ class TSO(object):
         self.nresets      = 1
         self.time         = get_frame_times(self.subarray, self.ngrps, self.nints, t0, self.nresets)
         self.nframes      = len(self.time)
+        
+        # FITS header info
+        self.target = target or 'Simulated Target'
+        self.obs_date = ''
+        self.filter = 'CLEAR'
+        self.header = ''
         
         # Set instance attributes for the target
         self.star         = star
@@ -801,14 +810,14 @@ class TSO(object):
         self.wave         = wave_solutions(str(self.nrows))
         
         # Calculate a map that converts photon flux density to ADU/s
-        gain = 1.61 # [e-/ADU]
-        primary_mirror = 253260*q.cm**2
+        self.gain = 1.61 # [e-/ADU]
+        self.primary_mirror = 253260 # [cm2]
         avg_wave = np.mean(self.wave, axis=1)
         self.pfd2adu = np.ones((3,self.ncols*self.nrows))
         for n,aw in enumerate(avg_wave):
             coeffs = np.polyfit(aw[:-1], np.diff(aw), 1)
             wave_int = (np.polyval(coeffs, self.wave[n])*q.um).to(q.AA)
-            self.pfd2adu[n] = (wave_int*primary_mirror/gain).value.flatten()
+            self.pfd2adu[n] = (wave_int*self.primary_mirror*q.cm**2/self.gain).value.flatten()
         
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
@@ -816,6 +825,8 @@ class TSO(object):
         
         # Create the empty exposure
         self.tso = np.zeros((self.nframes, self.nrows, self.ncols))
+        self.tso_order1 = np.zeros((self.nframes, self.nrows, self.ncols))
+        self.tso_order2 = np.zeros((self.nframes, self.nrows, self.ncols))
     
     def run_simulation(self, orders=[1,2], filt='CLEAR'):
         """
@@ -836,11 +847,9 @@ class TSO(object):
         orders = list(set(orders))
         
         # Check if it's F277W to speed up calculation
-        if 'f277w' in filt.lower():
+        if 'F277W' in filt.upper():
             orders = [1]
-            self.filter = 'f277w'
-        else:
-            self.filter = 'clear'
+            self.filter = 'F277W'
             
         # Make dummy array of LDCs if no planet (required for multiprocessing)
         if isinstance(self.planet, str):
@@ -859,7 +868,7 @@ class TSO(object):
             local_ld_coeffs = self.ld_coeffs.copy()[order-1]
             
             # Get relative spectral response map
-            throughput = np.genfromtxt(dir_path+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
+            throughput = np.genfromtxt(DIR_PATH+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
             local_response = np.interp(local_wave, throughput[0], throughput[-1], left=0, right=0)
             
             # Get the wavelength interval per pixel map
@@ -894,12 +903,21 @@ class TSO(object):
             
             print('Order {} light curves finished: '.format(order), time.time()-start)
             
+            # Add to the master TSO
             self.tso = np.abs(self.tso+tso_order)
             
+            # Add it to the individual order
+            setattr(self, 'tso_order{}'.format(order), tso_order)
+            
         # Add noise to the observations using Kevin Volk's dark ramp simulator
-        self.tso += dark_ramps(self.time, self.subarray)
+        # self.tso += dark_ramps(self.time, self.subarray)
     
-    def plot_frame(self, frame='', scale='log', cmap=cm.jet):
+    def add_noise_model(self):
+        """
+        Generate the 
+        """
+    
+    def plot_frame(self, frame='', scale='log', order='', cmap=cm.jet):
         """
         Plot a frame of the TSO
         
@@ -907,14 +925,25 @@ class TSO(object):
         ----------
         frame: int
             The frame number to plot
+        scale: str
+            Plot in linear or log scale
+        order: int (optional)
+            The order to isolate
+        cmap: str
+            The color map to use
         """
-        vmax = int(np.nanmax(self.tso))
+        if order:
+            tso = getattr(self, 'tso_order{}'.format(order))
+        else:
+            tso = self.tso
+        
+        vmax = int(np.nanmax(tso))
         
         plt.figure(figsize=(13,2))
         if scale=='log':
-            plt.imshow(self.tso[frame or self.nframes//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
+            plt.imshow(tso[frame or self.nframes//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
         else:
-            plt.imshow(self.tso[frame or self.nframes//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+            plt.imshow(tso[frame or self.nframes//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
         plt.colorbar()
         plt.title('Injected Spectrum')
     
@@ -1007,19 +1036,32 @@ class TSO(object):
             
         plt.legend(loc=0, frameon=False)
         
-    def plot_spectrum(self, frame=0):
+    def plot_spectrum(self, frame=0, order=''):
         """
         Parameters
         ----------
         frame: int
             The frame number to plot
         """
+        if order:
+            tso = getattr(self, 'tso_order{}'.format(order))
+        else:
+            tso = self.tso
+        
         # Get extracted spectrum
         wave = np.mean(self.wave[0], axis=0)
-        flux = np.sum(self.tso[frame].data, axis=0)
+        flux = np.sum(tso[frame].data, axis=0)
         
-        # Convert ADU/s to energy flux density
+        # Deconvolve with the grism
+        throughput = np.genfromtxt(DIR_PATH+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
+        flux *= np.interp(wave, throughput[0], throughput[-1], left=0, right=0)
         
+        # Convert from ADU/s to photon flux density
+        wave_int = np.diff(wave)*q.um.to(q.AA)
+        flux /= (np.array(list(wave_int)+[wave_int[-1]])*self.primary_mirror*q.cm**2/self.gain).value.flatten()
+        
+        # Convert from photon flux density to energy flux density
+        flux /= wave*503411665111.4543 # [1/erg*um]
         
         # Plot it along with input spectrum
         plt.figure(figsize=(13,2))
@@ -1058,4 +1100,189 @@ class TSO(object):
         #     setattr(self, p, getattr(params, p))
         for key in load_dict.keys():
             exec("self." + key + " = load_dict['" + key + "']")
-            
+    
+    def to_fits(self, outfile):
+        """
+        Save the data to a JWST pipeline ingestible FITS file
+        
+        Parameters
+        ----------
+        outfile: str
+            The path of the output file
+        """
+        # Make the cards
+        cards = [('DATE', datetime.datetime.now().strftime("%Y-%m-%d%H:%M:%S"), 'Date file created yyyy-mm-ddThh:mm:ss, UTC'),
+                ('FILENAME', outfile, 'Name of the file'),
+                ('DATAMODL', 'RampModel', 'Type of data model'),
+                ('ORIGIN', 'STScI', 'Institution responsible for creating FITS file'),
+                ('TIMESYS', 'UTC', 'principal time system for time-related keywords'),
+                ('FILETYPE', 'uncalibrated', 'Type of data in the file'),
+                ('SDP_VER', '2016_1', 'data processing software version number'),
+                ('PRD_VER', 'PRDDEVSOC-D-012', 'S&OC PRD version number used in data processing'),
+                ('TELESCOP', 'JWST', 'Telescope used to acquire data'),
+                ('RADESYS', 'ICRS', 'Name of the coordinate reference frame'),
+                ('', '', ''),
+                ('COMMENT', '/ Program information', ''),
+                ('TITLE', 'UNKNOWN', 'Proposal title'),
+                ('PI_NAME', 'N/A', 'Principal investigator name'),
+                ('CATEGORY', 'UNKNOWN', 'Program category'),
+                ('SUBCAT', '', 'Program sub-category'),
+                ('SCICAT', '', 'Science category assigned during TAC process'),
+                ('CONT_ID', 0, 'Continuation of previous program'),
+                ('', '', ''),
+                ('COMMENT', '/ Observation identifiers', ''),
+                ('DATE-OBS', self.obs_date, 'UT date at start of exposure'),
+                ('TIME-OBS', self.obs_date, 'UT time at the start of exposure'),
+                ('OBS_ID', 'V87600007001P0000000002102', 'Programmatic observation identifier'),
+                ('VISIT_ID', '87600007001', 'Visit identifier'),
+                ('PROGRAM', '87600', 'Program number'),
+                ('OBSERVTN', '001', 'Observation number'),
+                ('VISIT', '001', 'Visit number'),
+                ('VISITGRP', '02', 'Visit group identifier'),
+                ('SEQ_ID', '1', 'Parallel sequence identifier'),
+                ('ACT_ID', '02', 'Activity identifier'),
+                ('EXPOSURE', '1', 'Exposure request number'),
+                ('', '', ''),
+                ('COMMENT', '/ Visit information', ''),
+                ('TEMPLATE', 'NIRISS SOSS', 'Proposal instruction template used'),
+                ('OBSLABEL', 'Observation label', 'Proposer label for the observation'),
+                ('VISITYPE', '', 'Visit type'),
+                ('VSTSTART', self.obs_date, 'UTC visit start time'),
+                ('WFSVISIT', '', 'Wavefront sensing and control visit indicator'),
+                ('VISITSTA', 'SUCCESSFUL', 'Status of a visit'),
+                ('NEXPOSUR', 1, 'Total number of planned exposures in visit'),
+                ('INTARGET', False, 'At least one exposure in visit is internal'),
+                ('TARGOOPP', False, 'Visit scheduled as target of opportunity'),
+                ('', '', ''),
+                ('COMMENT', '/ Target information', ''),
+                ('TARGPROP', '', "Proposer's name for the target"),
+                ('TARGNAME', self.target, 'Standard astronomical catalog name for tar'),
+                ('TARGTYPE', 'FIXED', 'Type of target (fixed, moving, generic)'),
+                ('TARG_RA', 175.5546225, 'Target RA at mid time of exposure'),
+                ('TARG_DEC', 26.7065694, 'Target Dec at mid time of exposure'),
+                ('TARGURA', 0.01, 'Target RA uncertainty'),
+                ('TARGUDEC', 0.01, 'Target Dec uncertainty'),
+                ('PROP_RA', 175.5546225, 'Proposer specified RA for the target'),
+                ('PROP_DEC', 26.7065694, 'Proposer specified Dec for the target'),
+                ('PROPEPOC', '2000-01-01 00:00:00', 'Proposer specified epoch for RA and Dec'),
+                ('', '', ''),
+                ('COMMENT', '/ Exposure parameters', ''),
+                ('INSTRUME', 'NIRISS', 'Identifier for niriss used to acquire data'),
+                ('DETECTOR', 'NIS', 'ASCII Mnemonic corresponding to the SCA_ID'),
+                ('LAMP', 'NULL', 'Internal lamp state'),
+                ('FILTER', self.filter, 'Name of the filter element used'),
+                ('PUPIL', 'GR700XD', 'Name of the pupil element used'),
+                ('FOCUSPOS', 0.0, 'Focus position'),
+                ('', '', ''),
+                ('COMMENT', '/ Exposure information', ''),
+                ('PNTG_SEQ', 2, 'Pointing sequence number'),
+                ('EXPCOUNT', 0, 'Running count of exposures in visit'),
+                ('EXP_TYPE', 'NIS_SOSS', 'Type of data in the exposure'),
+                ('', '', ''),
+                ('COMMENT', '/ Exposure times', ''),
+                ('EXPSTART', self.time[0], 'UTC exposure start time'),
+                ('EXPMID', self.time[len(self.time)//2], 'UTC exposure mid time'),
+                ('EXPEND', self.time[-1], 'UTC exposure end time'),
+                ('READPATT', 'NISRAPID', 'Readout pattern'),
+                ('NINTS', self.nints, 'Number of integrations in exposure'),
+                ('NGROUPS', self.ngrps, 'Number of groups in integration'),
+                ('NFRAMES', self.nframes, 'Number of frames per group'),
+                ('GROUPGAP', 0, 'Number of frames dropped between groups'),
+                ('NSAMPLES', 1, 'Number of A/D samples per pixel'),
+                ('TSAMPLE', 10.0, 'Time between samples (microsec)'),
+                ('TFRAME', FRAME_TIMES[self.subarray], 'Time in seconds between frames'),
+                ('TGROUP', FRAME_TIMES[self.subarray], 'Delta time between groups (s)'),
+                ('EFFINTTM', 15.8826, 'Effective integration time (sec)'),
+                ('EFFEXPTM', 15.8826, 'Effective exposure time (sec)'),
+                ('CHRGTIME', 0.0, 'Charge accumulation time per integration (sec)'),
+                ('DURATION', self.time[-1]-self.time[0], 'Total duration of exposure (sec)'),
+                ('NRSTSTRT', self.nresets, 'Number of resets at start of exposure'),
+                ('NRESETS', self.nresets, 'Number of resets between integrations'),
+                ('ZEROFRAM', False, 'Zero frame was downlinkws separately'),
+                ('DATAPROB', False, 'Science telemetry indicated a problem'),
+                ('SCA_NUM', 496, 'Sensor Chip Assembly number'),
+                ('DATAMODE', 91, 'post-processing method used in FPAP'),
+                ('COMPRSSD', False, 'data compressed on-board (T/F)'),
+                ('SUBARRAY', 'SUBSTRIP256', 'Subarray pattern name'),
+                ('SUBSTRT1', 1, 'Starting pixel in axis 1 direction'),
+                ('SUBSTRT2', 1793, 'Starting pixel in axis 2 direction'),
+                ('SUBSIZE1', self.ncols, 'Number of pixels in axis 1 direction'),
+                ('SUBSIZE2', self.nrows, 'Number of pixels in axis 2 direction'),
+                ('FASTAXIS', -2, 'Fast readout axis direction'),
+                ('SLOWAXIS', -1, 'Slow readout axis direction'),
+                ('COORDSYS', '', 'Ephemeris coordinate system'),
+                ('EPH_TIME', 57403, 'UTC time from ephemeris start time (sec)'),
+                ('JWST_X', 1462376.39634336, 'X spatial coordinate of JWST (km)'),
+                ('JWST_Y', -178969.457007469, 'Y spatial coordinate of JWST (km)'),
+                ('JWST_Z', -44183.7683640854, 'Z spatial coordinate of JWST (km)'),
+                ('JWST_DX', 0.147851665036734, 'X component of JWST velocity (km/sec)'),
+                ('JWST_DY', 0.352194454527743, 'Y component of JWST velocity (km/sec)'),
+                ('JWST_DZ', 0.032553742839182, 'Z component of JWST velocity (km/sec)'),
+                ('APERNAME', 'NIS-CEN', 'PRD science aperture used'),
+                ('PA_APER', -290.1, 'Position angle of aperture used (deg)'),
+                ('SCA_APER', -697.500000000082, 'SCA for intended target'),
+                ('DVA_RA', 0.0, 'Velocity aberration correction RA offset (rad)'),
+                ('DVA_DEC', 0.0, 'Velocity aberration correction Dec offset (rad)'),
+                ('VA_SCALE', 0.0, 'Velocity aberration scale factor'),
+                ('BARTDELT', 0.0, 'Barycentric time correction'),
+                ('BSTRTIME', 0.0, 'Barycentric exposure start time'),
+                ('BENDTIME', 0.0, 'Barycentric exposure end time'),
+                ('BMIDTIME', 0.0, 'Barycentric exposure mid time'),
+                ('HELIDELT', 0.0, 'Heliocentric time correction'),
+                ('HSTRTIME', 0.0, 'Heliocentric exposure start time'),
+                ('HENDTIME', 0.0, 'Heliocentric exposure end time'),
+                ('HMIDTIME', 0.0, 'Heliocentric exposure mid time'),
+                ('WCSAXES', 2, 'Number of WCS axes'),
+                ('CRPIX1', 1955.0, 'Axis 1 coordinate of the reference pixel in the'),
+                ('CRPIX2', 1199.0, 'Axis 2 coordinate of the reference pixel in the'),
+                ('CRVAL1', 175.5546225, 'First axis value at the reference pixel (RA in'),
+                ('CRVAL2', 26.7065694, 'Second axis value at the reference pixel (RA in'),
+                ('CTYPE1', 'RA---TAN', 'First axis coordinate type'),
+                ('CTYPE2', 'DEC--TAN', 'Second axis coordinate type'),
+                ('CUNIT1', 'deg', 'units for first axis'),
+                ('CUNIT2', 'deg', 'units for second axis'),
+                ('CDELT1', 0.065398, 'first axis increment per pixel, increasing east'),
+                ('CDELT2', 0.065893, 'Second axis increment per pixel, increasing nor'),
+                ('PC1_1', -0.5446390350150271, 'linear transformation matrix element cos(theta)'),
+                ('PC1_2', 0.8386705679454239, 'linear transformation matrix element -sin(theta'),
+                ('PC2_1', 0.8386705679454239, 'linear transformation matrix element sin(theta)'),
+                ('PC2_2', -0.5446390350150271, 'linear transformation matrix element cos(theta)'),
+                ('S_REGION', '', 'spatial extent of the observation, footprint'),
+                ('GS_ORDER', 0, 'index of guide star within listed of selected g'),
+                ('GSSTRTTM', '1999-01-01 00:00:00', 'UTC time when guide star activity started'),
+                ('GSENDTIM', '1999-01-01 00:00:00', 'UTC time when guide star activity completed'),
+                ('GDSTARID', '', 'guide star identifier'),
+                ('GS_RA', 0.0, 'guide star right ascension'),
+                ('GS_DEC', 0.0, 'guide star declination'),
+                ('GS_URA', 0.0, 'guide star right ascension uncertainty'),
+                ('GS_UDEC', 0.0, 'guide star declination uncertainty'),
+                ('GS_MAG', 0.0, 'guide star magnitude in FGS detector'),
+                ('GS_UMAG', 0.0, 'guide star magnitude uncertainty'),
+                ('PCS_MODE', 'COARSE', 'Pointing Control System mode'),
+                ('GSCENTX', 0.0, 'guide star centroid x postion in the FGS ideal'),
+                ('GSCENTY', 0.0, 'guide star centroid x postion in the FGS ideal'),
+                ('JITTERMS', 0.0, 'RMS jitter over the exposure (arcsec).'),
+                ('VISITEND', '2017-03-02 15:58:45.36', 'Observatory UTC time when the visit st'),
+                ('WFSCFLAG', '', 'Wavefront sensing and control visit indicator'),
+                ('BSCALE', 1, ''),
+                ('BZERO', 32768, '')]
+        
+        # Make the header
+        prihdr = fits.Header()
+        for card in cards:
+            prihdr.append(card, end=True)
+        
+        # Store the header in the object too
+        self.header = prihdr
+        
+        # Make the HDUList
+        prihdu  = fits.PrimaryHDU(header=prihdr)
+        sci_hdu = fits.ImageHDU(data=self.tso, name='SCI')
+        hdulist = fits.HDUList([prihdu, sci_hdu])
+        
+        # Write the file
+        hdulist.writeto(outfile, overwrite=True)
+        hdulist.close()
+        
+        print('File saved as',outfile)
+
