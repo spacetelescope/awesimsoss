@@ -24,7 +24,7 @@ warnings.simplefilter('ignore')
 
 cm = plt.cm
 FILTERS = svo.filters()
-dir_path = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
+DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 
 def ADUtoFlux(order):
     """
@@ -42,7 +42,7 @@ def ADUtoFlux(order):
         Arrays to convert the given order trace from ADUs to units of flux
     """
     ADU2mJy, mJy2erg = 7.586031e-05, 2.680489e-15
-    scaling = np.genfromtxt(dir_path+'/files/GR700XD_{}.txt'.format(order), unpack=True)
+    scaling = np.genfromtxt(DIR_PATH+'/files/GR700XD_{}.txt'.format(order), unpack=True)
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling
@@ -299,7 +299,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
             # Get the bandpass in that wavelength range
             mn = (wavelength-delta_w/2.)*q.um
             mx = (wavelength+delta_w/2.)*q.um
-            throughput = np.genfromtxt(dir_path+'/files/NIRISS.GR700XD.1.txt', unpack=True)
+            throughput = np.genfromtxt(DIR_PATH+'/files/NIRISS.GR700XD.1.txt', unpack=True)
             bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
             
             # Calculate the LDCs
@@ -465,7 +465,7 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
         
         print('Generating distance map...')
         
-        mask = joblib.load(dir_path+'/files/order{}_mask.save'.format(order)).swapaxes(-1,-2)
+        mask = joblib.load(DIR_PATH+'/files/order{}_mask.save'.format(order)).swapaxes(-1,-2)
         
         # Get the trace polynomial
         X, Y = trace_polynomial(mask, start, end, p_order)
@@ -481,10 +481,10 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
             for j in range(height):
                 d_map[j,i] = dist((j,i), (Y,X))
                 
-        joblib.dump(d_map, dir_path+'/files/order_{}_distance_map.save'.format(order))
+        joblib.dump(d_map, DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
         
     else:
-        d_map = joblib.load(dir_path+'/files/order_{}_distance_map.save'.format(order))
+        d_map = joblib.load(DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
         
     
     if plot:
@@ -657,7 +657,7 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
         
     return flux
 
-def wave_solutions(subarr, directory=dir_path+'/files/soss_wavelengths_fullframe.fits'):
+def wave_solutions(subarr, directory=DIR_PATH+'/files/soss_wavelengths_fullframe.fits'):
     """
     Get the wavelength maps for SOSS orders 1, 2, and 3
     This will be obsolete once the apply_wcs step of the JWST pipeline
@@ -801,14 +801,14 @@ class TSO(object):
         self.wave         = wave_solutions(str(self.nrows))
         
         # Calculate a map that converts photon flux density to ADU/s
-        gain = 1.61 # [e-/ADU]
-        primary_mirror = 253260*q.cm**2
+        self.gain = 1.61 # [e-/ADU]
+        self.primary_mirror = 253260 # [cm2]
         avg_wave = np.mean(self.wave, axis=1)
         self.pfd2adu = np.ones((3,self.ncols*self.nrows))
         for n,aw in enumerate(avg_wave):
             coeffs = np.polyfit(aw[:-1], np.diff(aw), 1)
             wave_int = (np.polyval(coeffs, self.wave[n])*q.um).to(q.AA)
-            self.pfd2adu[n] = (wave_int*primary_mirror/gain).value.flatten()
+            self.pfd2adu[n] = (wave_int*self.primary_mirror*q.cm**2/self.gain).value.flatten()
         
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
@@ -816,6 +816,8 @@ class TSO(object):
         
         # Create the empty exposure
         self.tso = np.zeros((self.nframes, self.nrows, self.ncols))
+        self.tso_order1 = np.zeros((self.nframes, self.nrows, self.ncols))
+        self.tso_order2 = np.zeros((self.nframes, self.nrows, self.ncols))
     
     def run_simulation(self, orders=[1,2], filt='CLEAR'):
         """
@@ -859,7 +861,7 @@ class TSO(object):
             local_ld_coeffs = self.ld_coeffs.copy()[order-1]
             
             # Get relative spectral response map
-            throughput = np.genfromtxt(dir_path+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
+            throughput = np.genfromtxt(DIR_PATH+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
             local_response = np.interp(local_wave, throughput[0], throughput[-1], left=0, right=0)
             
             # Get the wavelength interval per pixel map
@@ -894,12 +896,16 @@ class TSO(object):
             
             print('Order {} light curves finished: '.format(order), time.time()-start)
             
+            # Add to the master TSO
             self.tso = np.abs(self.tso+tso_order)
+            
+            # Add it to the individual order
+            setattr(self, 'tso_order{}'.format(order), tso_order)
             
         # Add noise to the observations using Kevin Volk's dark ramp simulator
         self.tso += dark_ramps(self.time, self.subarray)
     
-    def plot_frame(self, frame='', scale='log', cmap=cm.jet):
+    def plot_frame(self, frame='', scale='log', order='', cmap=cm.jet):
         """
         Plot a frame of the TSO
         
@@ -907,14 +913,25 @@ class TSO(object):
         ----------
         frame: int
             The frame number to plot
+        scale: str
+            Plot in linear or log scale
+        order: int (optional)
+            The order to isolate
+        cmap: str
+            The color map to use
         """
-        vmax = int(np.nanmax(self.tso))
+        if order:
+            tso = getattr(self, 'tso_order{}'.format(order))
+        else:
+            tso = self.tso
+        
+        vmax = int(np.nanmax(tso))
         
         plt.figure(figsize=(13,2))
         if scale=='log':
-            plt.imshow(self.tso[frame or self.nframes//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
+            plt.imshow(tso[frame or self.nframes//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
         else:
-            plt.imshow(self.tso[frame or self.nframes//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+            plt.imshow(tso[frame or self.nframes//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
         plt.colorbar()
         plt.title('Injected Spectrum')
     
@@ -1007,19 +1024,32 @@ class TSO(object):
             
         plt.legend(loc=0, frameon=False)
         
-    def plot_spectrum(self, frame=0):
+    def plot_spectrum(self, frame=0, order=''):
         """
         Parameters
         ----------
         frame: int
             The frame number to plot
         """
+        if order:
+            tso = getattr(self, 'tso_order{}'.format(order))
+        else:
+            tso = self.tso
+        
         # Get extracted spectrum
         wave = np.mean(self.wave[0], axis=0)
-        flux = np.sum(self.tso[frame].data, axis=0)
+        flux = np.sum(tso[frame].data, axis=0)
         
-        # Convert ADU/s to energy flux density
+        # Deconvolve with the grism
+        throughput = np.genfromtxt(DIR_PATH+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
+        flux *= np.interp(wave, throughput[0], throughput[-1], left=0, right=0)
         
+        # Convert from ADU/s to photon flux density
+        wave_int = np.diff(wave)*q.um.to(q.AA)
+        flux /= (np.array(list(wave_int)+[wave_int[-1]])*self.primary_mirror*q.cm**2/self.gain).value.flatten()
+        
+        # Convert from photon flux density to energy flux density
+        flux /= wave*503411665111.4543 # [1/erg*um]
         
         # Plot it along with input spectrum
         plt.figure(figsize=(13,2))
