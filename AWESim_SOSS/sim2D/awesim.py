@@ -508,6 +508,48 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
     
     return d_map
 
+def generate_psf(filt, oversample=4, plot=False):
+    """
+    Generate the SOSS psf with 'CLEAR' or 'F277W' filter
+    
+    Parameters
+    ----------
+    filt: str
+        The filter to use, 'CLEAR' or 'F277W'
+    oversample:int
+        The oversampling factor
+    plot: bool
+        Plot the 1D and 2D psf for visual inspection
+    
+    Returns
+    -------
+    np.ndarray
+        The 1D psf
+    """
+    print("Generating the psf with {} filter and GR700XD pupil mask...".format(filt))
+    
+    # Get the NIRISS class from webbpsf and set the filter
+    ns = webbpsf.NIRISS()
+    ns.filter = filt
+    ns.pupil_mask = 'GR700XD'
+    psf2D = ns.calcPSF(oversample=oversample)[0].data
+    psf1D = np.sum(psf2D, axis=0)
+    
+    if plot:
+        plt.figure(figsize=(4,6))
+        plt.suptitle('PSF for NIRISS GR700XD and {} filter'.format(filt))
+        gs = matplotlib.gridspec.GridSpec(2, 1, height_ratios=[3, 1]) 
+        ax1 = plt.subplot(gs[0])
+        ax1.imshow(psf2D)
+        
+        ax2 = plt.subplot(gs[1])
+        ax2.plot(psf1D)
+        ax2.set_xlim(0,psf2D.shape[0])
+        
+        plt.tight_layout()
+    
+    return psf1D
+
 def psf_position(distance, extend=25, generate=False, filt='CLEAR', plot=False):
     """
     Scale the flux based on the pixel's distance from the center of the cross dispersed psf
@@ -515,14 +557,8 @@ def psf_position(distance, extend=25, generate=False, filt='CLEAR', plot=False):
     # Generate the PSF from webbpsf
     if generate:
         
-        print("Generating the psf with {} filter and GR700XD pupil mask...".format(filt))
-        
-        # Get the NIRISS class from webbpsf and set the filter
-        ns = webbpsf.NIRISS()
-        ns.filter = filt
-        ns.pupil_mask = 'GR700XD'
-        psf2D = ns.calcPSF(oversample=4)[0].data
-        psf1D = np.sum(psf2D, axis=0)
+        # Generate the 1D psf
+        psf1D = generate_psf(filt)
         
         # Scale the transmission to 1
         psf = psf1D/np.trapz(psf1D)
@@ -659,7 +695,7 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
         flux *= response
         
         # Scale pixel based on distance from the center of the cross-dispersed psf
-        flux *= psf_position(distance, extend=extend)
+        flux *= psf_position(distance, filt=filt, extend=extend)
         
         # Replace very low signal pixels with noise floor
         # flux[flux<floor] += np.random.normal(loc=floor, scale=1, size=len(flux[flux<floor]))
