@@ -1,12 +1,8 @@
 #! /usr/bin/env python
 import numpy
 import astropy.io.fits as fits
-import noise_simulation_special as ng
+from . import noise_simulation as ng
 import os
-
-path=os.getenv('NIRISS_NOISE_HOME')+'/'
-if path is None:
-    path='./'
 
 def add_dark_current(ramp,seed,gain,darksignal):
     numpy.random.seed(seed)
@@ -21,9 +17,9 @@ def add_dark_current(ramp,seed,gain,darksignal):
     
 def make_exposure(nints,ngroups,darksignal,gain,noise_seed=None,dark_seed=None,offset=None):
     if noise_seed is None:
-        noise_seed=7L+long(numpy.random.uniform()*4000000000.)
+        noise_seed=long(7)+long(numpy.random.uniform()*4000000000.)
     if dark_seed is None:
-        dark_seed=5L+long(numpy.random.uniform()*4000000000.)
+        dark_seed=long(5)+long(numpy.random.uniform()*4000000000.)
     if offset is None:
         offset=500.
     numpy.random.seed(dark_seed)

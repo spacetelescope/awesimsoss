@@ -18,6 +18,8 @@ import AWESim_SOSS
 import inspect
 import warnings
 import datetime
+import webbpsf
+from . import generate_darks as gd
 from ExoCTK import svo
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
@@ -506,47 +508,88 @@ def distance_map(order, generate=False, start=4, end=2044, p_order=4, plot=False
     
     return d_map
 
-def psf_position(distance, extend=25, plot=False):
+def psf_position(distance, extend=25, generate=False, filt='CLEAR', plot=False):
     """
     Scale the flux based on the pixel's distance from the center of the cross dispersed psf
     """
-    # Get the LPSF (can I also get this from the 2D webbpsf?)
-    lpsf = np.array([7.701976722368496E-008,  1.540395344473699E-007,  3.080790688947398E-007, \
-                     6.161581377894797E-007,  1.232316275578959E-006,  2.464632551157919E-006, \
-                     4.929265102315838E-006,  9.714837387708730E-006,  5.671904909021475E-006, \
-                     4.548023730510664E-006,  1.022713226439542E-005,  6.886893882507295E-006, \
-                     8.177790144225927E-006,  1.357109057534278E-005,  8.916710340478584E-006, \
-                     1.239566539967818E-005,  2.781745489985332E-005,  2.509716449416999E-005, \
-                     2.631011432652208E-005,  4.830151269574756E-005,  5.380108778450451E-005, \
-                     7.547263667725956E-005,  1.022118883162726E-004,  1.420077972523748E-004, \
-                     2.362241206079752E-004,  3.385566380821325E-004,  5.477043893594158E-004, \
-                     6.696818098559376E-004,  5.493319867611035E-004,  4.720754680409556E-004, \
-                     2.991750642213908E-004,  3.058475983204190E-004,  3.109660592775787E-004, \
-                     2.226914950899106E-004,  2.979418360802288E-004,  3.397708704659941E-004, \
-                     2.990017218531538E-004,  2.758223087866440E-004,  3.294162992516503E-004, \
-                     2.381257536346881E-004,  3.407167609725814E-004,  5.361983993812380E-004, \
-                     6.230353641937803E-004,  6.140843798414508E-004,  5.070604643273580E-004, \
-                     3.306009460586345E-004,  2.371751859966409E-004,  1.155928608405077E-004, \
-                     6.370671124544813E-005,  7.242587988226523E-005,  3.417951946560471E-005, \
-                     2.799611461752616E-005,  3.403609616187131E-005,  1.659919620922157E-005, \
-                     1.873137450902895E-005,  1.825263581423098E-005,  9.144579730557822E-006, \
-                     8.962197003747896E-006,  9.059127708432868E-006,  5.408733372069818E-006, \
-                     7.623564329893584E-006,  7.990429056435600E-006,  4.048852234816991E-006, \
-                     6.761537376720472E-006])
+    # Generate the PSF from webbpsf
+    if generate:
+        
+        # Get the NIRISS class from webbpsf and set the filter
+        ns = webbpsf.NIRISS()
+        ns.filter = filt
+        ns.pupil_mask = 'GR700XD'
+        psf2D = ns.calcPSF(oversample=4)[0].data
+        psf1D = np.sum(psf2D, axis=0)
+        
+    # Or just use this one
+    else:
+        
+        psf1D = np.array([5.83481665e-05,   6.56322048e-05,   7.52470683e-05, \
+                         7.02759033e-05,   7.86948234e-05,   7.56720214e-05, \
+                         7.16950313e-05,   7.49320549e-05,   8.75974333e-05, \
+                         8.49589852e-05,   9.78484741e-05,   9.54325778e-05, \
+                         1.04021838e-04,   9.31272313e-05,   9.38132761e-05, \
+                         1.06975481e-04,   1.13885427e-04,   1.45214913e-04, \
+                         1.25916643e-04,   1.31508590e-04,   1.37958390e-04, \
+                         1.56179923e-04,   1.59852140e-04,   1.55946280e-04, \
+                         1.69979257e-04,   1.63448538e-04,   1.67324699e-04, \
+                         2.02793184e-04,   2.14443303e-04,   2.38094250e-04, \
+                         2.52850706e-04,   2.46207776e-04,   3.23323300e-04, \
+                         3.22398985e-04,   3.72937770e-04,   3.27714231e-04, \
+                         3.90219004e-04,   4.42950638e-04,   5.01561954e-04, \
+                         6.25955792e-04,   7.10831339e-04,   7.66708646e-04, \
+                         8.28292330e-04,   9.53694152e-04,   1.12110206e-03, \
+                         1.56683295e-03,   1.72534924e-03,   2.07805420e-03, \
+                         2.28743713e-03,   2.87378788e-03,   3.34490077e-03, \
+                         4.37717313e-03,   5.99502637e-03,   8.07971823e-03, \
+                         1.00328036e-02,   1.28667718e-02,   1.51740977e-02, \
+                         1.63074419e-02,   1.53397374e-02,   1.61010793e-02, \
+                         1.54381747e-02,   1.52025943e-02,   1.46467818e-02, \
+                         1.36687241e-02,   1.31107948e-02,   1.26643624e-02, \
+                         1.35217668e-02,   1.20246384e-02,   9.38761089e-03, \
+                         8.20080732e-03,   7.80380494e-03,   7.46099537e-03, \
+                         6.72187764e-03,   6.20459022e-03,   6.65443858e-03, \
+                         8.48880604e-03,   9.27146992e-03,   8.43853098e-03, \
+                         8.93369301e-03,   8.82120736e-03,   9.06529876e-03, \
+                         8.40046950e-03,   9.22187873e-03,   9.89323673e-03, \
+                         1.10144353e-02,   1.15221573e-02,   1.26997776e-02, \
+                         1.41984438e-02,   1.47337816e-02,   1.59085234e-02, \
+                         1.86350411e-02,   1.93995664e-02,   1.92512920e-02, \
+                         1.77431473e-02,   1.55704866e-02,   1.18367102e-02, \
+                         1.01309336e-02,   7.70381621e-03,   5.20222357e-03, \
+                         3.92637114e-03,   3.07334265e-03,   2.46599767e-03, \
+                         2.11022681e-03,   1.45088608e-03,   1.47390548e-03, \
+                         1.21404256e-03,   1.05247860e-03,   8.57261004e-04, \
+                         7.41414569e-04,   6.61385824e-04,   5.15329524e-04, \
+                         5.62962797e-04,   4.84417475e-04,   4.04049342e-04, \
+                         3.45686074e-04,   3.62280810e-04,   3.20793598e-04, \
+                         3.17432176e-04,   2.65239236e-04,   2.55608761e-04, \
+                         2.11663102e-04,   2.23451940e-04,   2.14970373e-04, \
+                         1.87199646e-04,   2.01367252e-04,   1.59298151e-04, \
+                         1.73178962e-04,   1.48874838e-04,   1.36001604e-04, \
+                         1.43551756e-04,   1.51749658e-04,   1.40357232e-04, \
+                         1.08334369e-04,   9.82451511e-05,   1.14485038e-04, \
+                         1.05696485e-04,   1.10897103e-04,   9.92508466e-05, \
+                         8.17683437e-05,   9.00938135e-05,   7.55619120e-05, \
+                         9.22618169e-05,   8.24362262e-05,   8.56524332e-05, \
+                         7.17028719e-05,   6.98181765e-05,   7.32711509e-05, \
+                         6.02283243e-05,   6.59735326e-05,   6.63745656e-05, \
+                         5.65874521e-05,   4.89422753e-05])
                      
     # Function to extend wings
-    def add_wings(a, pts):
-        w = min(a)*(np.arange(pts)/pts)*50
-        a = np.concatenate([np.abs(np.random.normal(w,w)),a,np.abs(np.random.normal(w[::-1],w[::-1]))])
-        
-        return a
+    # def add_wings(a, pts):
+    #     w = min(a)*(np.arange(pts)/pts)*50
+    #     a = np.concatenate([np.abs(np.random.normal(w,w)),a,np.abs(np.random.normal(w[::-1],w[::-1]))])
+    #
+    #     return a
         
     # Extend the wings for a nice wide PSF that tapers off rather than ending sharply for bright targets
-    if extend:
-        lpsf = add_wings(lpsf.copy(), extend)
+    # if extend:
+    #     lpsf = add_wings(lpsf.copy(), extend)
         
     # Scale the transmission to 1
-    psf = lpsf/np.trapz(lpsf)
+    psf = psf1D/np.trapz(psf1D)
     
     # Interpolate lpsf to distance
     p0 = len(psf)//2
@@ -602,13 +645,16 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
     sequence
         A 1D array of the lightcurve with the same length as *t* 
     """
+    nframes = len(time)
+    
     # If it's a background pixel, it's just noise
     if distance>trace_radius+extend \
     or wavelength<np.nanmin(star[0].value) \
     or (filt=='F277W' and wavelength<2.36989) \
     or (filt=='F277W' and wavelength>3.22972):
         
-        flux = np.abs(np.random.normal(loc=floor, scale=1, size=len(time)))
+        # flux = np.abs(np.random.normal(loc=floor, scale=1, size=nframes))
+        flux = np.repeat(floor, nframes)
         
     else:
         
@@ -627,8 +673,9 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
         flux0 *= pfd2adu
         
         # Expand to shape of time axis and add noise
-        flux0 = np.abs(flux0)
-        flux = np.abs(np.random.normal(loc=flux0, scale=flux0/snr, size=len(time)))
+        # flux0 = np.abs(flux0)
+        # flux = np.abs(np.random.normal(loc=flux0, scale=flux0/snr, size=len(time)))
+        flux = np.repeat(flux0, nframes)
         
         # If there is a transiting planet...
         if not isinstance(planet,str):
@@ -655,7 +702,8 @@ def lambda_lightcurve(wavelength, response, distance, pfd2adu, ld_coeffs, ld_pro
         flux *= psf_position(distance, extend=extend)
         
         # Replace very low signal pixels with noise floor
-        flux[flux<floor] += np.random.normal(loc=floor, scale=1, size=len(flux[flux<floor]))
+        # flux[flux<floor] += np.random.normal(loc=floor, scale=1, size=len(flux[flux<floor]))
+        flux[flux<floor] += np.repeat(floor, len(flux[flux<floor]))
         
         # Plot
         if plot:
@@ -791,12 +839,10 @@ class TSO(object):
         self.nresets      = 1
         self.time         = get_frame_times(self.subarray, self.ngrps, self.nints, t0, self.nresets)
         self.nframes      = len(self.time)
-        
-        # FITS header info
-        self.target = target or 'Simulated Target'
-        self.obs_date = ''
-        self.filter = 'CLEAR'
-        self.header = ''
+        self.target       = target or 'Simulated Target'
+        self.obs_date     = ''
+        self.filter       = 'CLEAR'
+        self.header       = ''
         
         # Set instance attributes for the target
         self.star         = star
@@ -809,7 +855,7 @@ class TSO(object):
         self.extend       = extend
         self.wave         = wave_solutions(str(self.nrows))
         
-        # Calculate a map that converts photon flux density to ADU/s
+        # Calculate a map for each order that converts photon flux density to ADU/s
         self.gain = 1.61 # [e-/ADU]
         self.primary_mirror = 253260 # [cm2]
         avg_wave = np.mean(self.wave, axis=1)
@@ -904,7 +950,7 @@ class TSO(object):
             print('Order {} light curves finished: '.format(order), time.time()-start)
             
             # Add to the master TSO
-            self.tso = np.abs(self.tso+tso_order)
+            self.tso += tso_order
             
             # Add it to the individual order
             setattr(self, 'tso_order{}'.format(order), tso_order)
@@ -914,10 +960,11 @@ class TSO(object):
     
     def add_noise_model(self):
         """
-        Generate the 
+        Generate the noise model and add to the simulation
         """
+        pass
     
-    def plot_frame(self, frame='', scale='log', order='', cmap=cm.jet):
+    def plot_frame(self, frame='', scale='linear', order='', cmap=cm.jet):
         """
         Plot a frame of the TSO
         
@@ -987,7 +1034,7 @@ class TSO(object):
         plt.colorbar()
         plt.title('Saturated Pixels')
     
-    def plot_slice(self, col, trace='tso', frame=0, **kwargs):
+    def plot_slice(self, col, trace='tso', frame=0, order='', **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
         
@@ -1000,7 +1047,12 @@ class TSO(object):
         frame: int
             The frame number to plot
         """
-        f = getattr(self, trace)[frame].T
+        if order:
+            tso = getattr(self, 'tso_order{}'.format(order))
+        else:
+            tso = self.tso
+            
+        f = tso[frame].T
         
         if isinstance(col, int):
             col = [col]
@@ -1053,7 +1105,7 @@ class TSO(object):
         flux = np.sum(tso[frame].data, axis=0)
         
         # Deconvolve with the grism
-        throughput = np.genfromtxt(DIR_PATH+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
+        throughput = np.genfromtxt(DIR_PATH+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order or 1), unpack=True)
         flux *= np.interp(wave, throughput[0], throughput[-1], left=0, right=0)
         
         # Convert from ADU/s to photon flux density

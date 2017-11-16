@@ -469,31 +469,30 @@ class HXRGNoise:
         self.u_pink    = 1        if u_pink       is None else u_pink
         self.acn       = 0.5      if acn          is None else acn
         self.pca0_amp  = 0.2      if pca0_amp     is None else pca0_amp
-                self.dark_current = 0.0   if dark_current is None else dark_current
-                self.dc_seed   = 0        if dc_seed      is None else dc_seed
-                self.gain      = 1        if gain         is None else gain
-                self.noise_seed = 0       if noise_seed   is None else noise_seed
-
-                if self.gain <= 0.:
-                  self.gain=1.
-
-                if self.dark_current <= 0.:
-                  self.dark_current=0.
-
-                if self.dc_seed <= 0:
-                  self.dc_seed=long(4294967280.*np.random.uniform())+10L
+        self.dark_current = 0.0   if dark_current is None else dark_current
+        self.dc_seed   = 0        if dc_seed      is None else dc_seed
+        self.gain      = 1        if gain         is None else gain
+        self.noise_seed = 0       if noise_seed   is None else noise_seed
+        
+        if self.gain <= 0.:
+            self.gain=1.
+        
+        if self.dark_current <= 0.:
+            self.dark_current=0.
+        
+        if self.dc_seed <= 0:
+            self.dc_seed=long(4294967280.*np.random.uniform())+long(10)
 
         # Change this only if you know that your detector is different from a
         # typical H2RG.
-        self.reference_pixel_noise_ratio = 0.8 if \
-            reference_pixel_noise_ratio is None else reference_pixel_noise_ratio
+        self.reference_pixel_noise_ratio = 0.8 if reference_pixel_noise_ratio is None else reference_pixel_noise_ratio
 
         # These are used only when generating cubes. They are
         # completely removed when the data are calibrated to
         # correlated double sampling or slope images. We include
         # them in here to make more realistic looking raw cubes.
         self.ktc_noise = 29.     if ktc_noise   is None else ktc_noise 
-                # The following are from the NIRISS pedestal, in electrons
+        # The following are from the NIRISS pedestal, in electrons
         self.bias_offset = 20994.06  if bias_offset is None else bias_offset
         self.bias_amp    = 5358.87  if bias_amp    is None else bias_amp
 
