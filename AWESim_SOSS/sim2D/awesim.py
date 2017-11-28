@@ -45,6 +45,8 @@ def trace_from_webbpsf(psf_file, offset=100):
     ----------
     psf_file: str
         The path to the numpy file with the psf at each wavelength
+    
+    # TODO: Input a polynomial and then convolve the psf in each column with the trace center
     """
     # Load the psfs
     psfs = np.load(psf_file)
@@ -64,8 +66,6 @@ def trace_from_webbpsf(psf_file, offset=100):
         # Place the trace center in the correct column
         final[n:n+c*2,offset-c:offset+c] += z
         
-        print("Plotting",n)
-            
     # Transpose to DMS orientation
     final = final.T
     
