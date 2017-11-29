@@ -36,6 +36,7 @@ cm = plt.cm
 FILTERS = svo.filters()
 DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
+SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
 def trace_from_webbpsf(psf_file, offset=100, plot=True):
     """
@@ -514,7 +515,7 @@ def trace_polynomial(trace, start=4, end=2040, order=4):
     
     return X, Y
 
-def distance_map(order, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01], dims=(256,2048), start=4, end=2044, plot=True):
+def distance_map(order, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01], subarr='SUBSTRIP256', plot=False):
     """
     Generate a map where each pixel is the distance from the trace polynomial
     
@@ -524,12 +525,8 @@ def distance_map(order, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04,
         The order
     coeffs: sequence (optional)
         Custom polynomial coefficients of the trace
-    dims: sequence
-        The number of (rows, columns) in the distance map
-    start: int
-        The index of the starting pixel of the trace
-    end: int
-        The index of the ending pixel of the trace
+    subarr: str
+        The subarray to use, ['SUBSTRIP96','SUBSTRIP256','FULL']
     plot: bool
         Plot the distance map
     
@@ -543,15 +540,18 @@ def distance_map(order, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04,
         
         print('Generating distance map with coefficients {}...'.format(coeffs))
         
+        # Get the dimensions
+        dims = (2048, SUBARRAY_Y[subarr])
+        
         # Generate an array of pixel coordinates
         flat = np.zeros(list(dims)+[2])
-        for i in range(dims[0]):
+        for i in range(4,2044):
             for j in range(dims[1]):
                 flat[i,j] = (i,j)
         flat = flat.reshape(np.prod(dims),2)
         
         # Make the (X,Y) coordinates of the polynomial on an oversampled grid
-        X = np.arange(start, end, 0.1)
+        X = np.arange(4, 2044, 0.1)
         Y = np.polyval(coeffs, X)
         
         # Set pixel independent inputs of distance function
@@ -568,7 +568,7 @@ def distance_map(order, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04,
         pool.join()
         
         # Reshape into frame
-        d_map = np.asarray(d_map).reshape(dims)
+        d_map = np.asarray(d_map).reshape(dims).T
         
         # Write to file
         joblib.dump(d_map, DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
@@ -580,10 +580,13 @@ def distance_map(order, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04,
     if plot:
         plt.figure(figsize=(13,2))
         plt.title('Order {}'.format(order))
-        plt.imshow(d_map, interpolation='none', origin='lower', norm=matplotlib.colors.LogNorm())
-        plt.plot(X, Y)
-        plt.xlim(0,2048)
-        plt.ylim(0,256)
+        plt.imshow(d_map, interpolation='none', origin='lower')
+        try:
+            plt.plot(X, Y)
+            plt.xlim(0,2048)
+            plt.ylim(0,dims[1])
+        except:
+            pass
         plt.colorbar()
     
     return d_map
@@ -602,13 +605,14 @@ def dist(p0, Poly):
     Returns
     -------
     float
-        The minimum distance from (x,y) to (X,Y)
+        The minimum distance from pixel (x,y) to the polynomial points (X,Y)
     """
     # Calculate the distance from each point on the line to p0
-    d_min = np.argmin(np.sqrt((p0[0]-Poly[0])**2 + (p0[1]-Poly[1])**2))
+    distances = np.sqrt((p0[0]-Poly[0])**2 + (p0[1]-Poly[1])**2)
+    d_min = np.min(distances)
     
     # Check if above or below the polynomial
-    d_min *= np.sign(p0[1] - Poly[1][d_min])
+    d_min *= float(np.sign(p0[1] - Poly[1][np.argmin(distances)]))
     
     return d_min
 
