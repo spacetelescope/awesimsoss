@@ -324,7 +324,7 @@ def get_mag(spectrum, bandpass, exclude=[], fetch='mag', photon=False, Flam=Fals
     else:
         return ['']*4 if fetch=='both' else ['']*2
 
-def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
+def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, save=''):
     """
     Generate a lookup table of limb darkening coefficients for full SOSS wavelength range
     
@@ -356,7 +356,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, save=''):
     lookup = {}
     
     # Get the full wavelength range
-    wave_maps = wave_solutions(256)
+    wave_maps = wave_solutions(nrows)
     
     # Define function for multiprocessing
     def gr700xd_ldc(wavelength, delta_w, ld_profile, grid_point, model_grid):
@@ -752,6 +752,10 @@ def lambda_lightcurve(wavelength, response, psf_loc, pfd2adu, ld_coeffs, ld_prof
     """
     nframes = len(time)
     
+    if not isinstance(ld_coeffs, list) or not isinstance(ld_coeffs, np.ndarray):
+        ld_coeffs  = [ld_coeffs]
+        ld_profile = 'linear'
+    
     # If it's a background pixel, it's just noise
     if psf_loc>trace_radius+extend \
     or wavelength<np.nanmin(star[0].value) \
@@ -836,6 +840,7 @@ def wave_solutions(subarr, directory=DIR_PATH+'/files/soss_wavelengths_fullframe
     np.ndarray
         An array of the wavelength solutions for orders 1, 2, and 3
     """
+    print(DIR_PATH, directory)
     try:
         idx = int(subarr)
     except:
@@ -1026,40 +1031,48 @@ class TSO(object):
             # Get the wavelength interval per pixel map
             local_pfd2adu = self.pfd2adu[order-1]
             
-            # Run multiprocessing
-            print('Calculating order {} light curves...'.format(order))
-            start = time.time()
-            pool = multiprocessing.Pool(8)
+            print(isinstance(local_ld_coeffs[0], float), local_ld_coeffs)
             
-            # Set wavelength independent inputs of lightcurve function
-            func = partial(lambda_lightcurve, 
-                           ld_profile    = self.ld_profile,
-                           star          = self.star,
-                           planet        = self.planet,
-                           time          = self.time,
-                           params        = self.params,
-                           filt          = self.filter,
-                           trace_radius  = self.trace_radius,
-                           snr           = self.snr,
-                           extend        = self.extend)
-                    
-            # Generate the lightcurves at each pixel
-            lightcurves = pool.starmap(func, zip(local_wave, local_response, local_psf_loc, local_pfd2adu, local_ld_coeffs))
+            if isinstance(local_ld_coeffs[0], float):
+                local_ld_coeffs = np.transpose([[local_ld_coeffs[0], local_ld_coeffs[1]]] * local_wave.size)
             
-            # Close the pool
-            pool.close()
-            pool.join()
-            
-            # Clean up and time of execution
-            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.nrows, self.ncols])
-            
-            print('Order {} light curves finished: '.format(order), time.time()-start)
-            
-            # Add to the master TSO
-            self.tso += tso_order
-            
-            # Add it to the individual order
-            setattr(self, 'tso_order{}'.format(order), tso_order)
+            print(isinstance(local_ld_coeffs[0], float), local_ld_coeffs)
+                        #
+            # # Run multiprocessing
+            # print('Calculating order {} light curves...'.format(order))
+            # start = time.time()
+            # pool = multiprocessing.Pool(8)
+            #
+            # # Set wavelength independent inputs of lightcurve function
+            # func = partial(lambda_lightcurve,
+            #                ld_profile    = self.ld_profile,
+            #                star          = self.star,
+            #                planet        = self.planet,
+            #                time          = self.time,
+            #                params        = self.params,
+            #                filt          = self.filter,
+            #                trace_radius  = self.trace_radius,
+            #                snr           = self.snr,
+            #                extend        = self.extend)
+            #
+            # # Generate the lightcurves at each pixel
+            # lightcurves = pool.starmap(func, zip(local_wave, local_response, local_psf_loc, local_pfd2adu, local_ld_coeffs))
+            #
+            # # Close the pool
+            # pool.close()
+            # pool.join()
+            #
+            # # Clean up and time of execution
+            # print(np.shape(lightcurves))
+            # tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.nrows, self.ncols])
+            #
+            # print('Order {} light curves finished: '.format(order), time.time()-start)
+            #
+            # # Add to the master TSO
+            # self.tso += tso_order
+            #
+            # # Add it to the individual order
+            # setattr(self, 'tso_order{}'.format(order), tso_order)
             
         # Add noise to the observations using Kevin Volk's dark ramp simulator
         # self.tso += dark_ramps(self.time, self.subarray)
