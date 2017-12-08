@@ -140,7 +140,7 @@ def make_photon_yield(photon_yield, orders):
     
     return pyimage
 
-def add_signal(signals, cube, frametime, gain, zodi, zodi_scale, pyimage=None):
+def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon_yield=False):
     """
     Add the science signal to the generated noise
     
@@ -150,6 +150,8 @@ def add_signal(signals, cube, frametime, gain, zodi, zodi_scale, pyimage=None):
         The science frames
     cube: sequence
         The generated dark ramp
+    pyimage: sequence
+        The photon yield per order
     frametime: float
         The number of seconds per frame
     gain: float
@@ -158,8 +160,6 @@ def add_signal(signals, cube, frametime, gain, zodi, zodi_scale, pyimage=None):
         The zodiacal background image
     zodi_scale: float
         The scale factor for the zodi background
-    pyimage: sequence (optional)
-        The photon yield per order
     """
     # Get the data dimensions
     dims1 = cube.shape
@@ -178,14 +178,14 @@ def add_signal(signals, cube, frametime, gain, zodi, zodi_scale, pyimage=None):
         framesignal = signals[n,:,:]*gain*frametime
         
         # Add photon yield
-        if pyimage:
+        if photon_yield:
             newvalues = np.random.poisson(framesignal)
             target = pyimage-1.
             for k in range(dims1[1]):
                 for l in range(dims1[2]):
                     if target[k,l] > 0.:
                         n = int(newvalues[k,l])
-                        values = np.random.poisson(target[k,l],size=n)
+                        values = np.random.poisson(target[k,l], size=n)
                         newvalues[k,l] = newvalues[k,l]+np.sum(values)
             newvalues = newvalues+np.random.poisson(background)
             

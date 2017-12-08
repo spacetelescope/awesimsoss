@@ -1063,7 +1063,7 @@ class TSO(object):
         self.tso_order1 = np.zeros(dims)
         self.tso_order2 = np.zeros(dims)
     
-    def run_simulation(self, orders=[1,2], filt='CLEAR'):
+    def run_simulation(self, orders=[1,2], filt='CLEAR', noise=False):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -1073,6 +1073,8 @@ class TSO(object):
             The orders to simulate
         filt: str
             The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
+        noise: bool
+            Run add_noise method to generate ramps with noise
         """
         # Set single order to list
         if isinstance(orders,int):
@@ -1152,11 +1154,21 @@ class TSO(object):
             
         # Add noise to the observations using Kevin Volk's dark ramp simulator
         self.tso_ideal = self.tso.copy()
-        # self.add_noise()
+        
+        # Add noise and ramps
+        if noise:
+            self.add_noise()
     
     def add_noise(self, zodi_scale=1., offset=500):
         """
-        Generate background noise
+        Generate ramp and background noise
+        
+        Parameters
+        ----------
+        zodi_scale: float
+            The scale factor of the zodiacal background
+        offset: int
+            The dark current offset
         """
         # Get the separated orders
         orders = np.asarray([self.tso_order1,self.tso_order2])
@@ -1173,7 +1185,7 @@ class TSO(object):
         
         # add in the SOSS signal
         zodi = fits.getdata(DIR_PATH+'/files/soss_zodiacal_background_scaled.fits')
-        ramp = gd.add_signal(self.tso_ideal, ramp, self.frame_time, self.gain, zodi, zodi_scale, pyimage=pyf)
+        ramp = gd.add_signal(self.tso_ideal, ramp, pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
         
         # apply the non-linearity function
         nonlinearity = fits.getdata(DIR_PATH+'/files/substrip256_forward_coefficients_dms.fits')
@@ -1186,7 +1198,7 @@ class TSO(object):
         # Update the TSO with one containing noise
         self.tso = ramp
     
-    def plot_frame(self, frame='', scale='linear', order='', cmap=cm.jet):
+    def plot_frame(self, frame='', scale='linear', order='', noise=True, cmap=cm.jet):
         """
         Plot a frame of the TSO
         
@@ -1198,13 +1210,18 @@ class TSO(object):
             Plot in linear or log scale
         order: int (optional)
             The order to isolate
+        noise: bool
+            Plot with the noise model
         cmap: str
             The color map to use
         """
         if order:
             tso = getattr(self, 'tso_order{}'.format(order))
         else:
-            tso = self.tso
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
         
         vmax = int(np.nanmax(tso))
         
