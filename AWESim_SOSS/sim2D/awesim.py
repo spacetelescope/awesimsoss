@@ -114,9 +114,12 @@ def warped(image, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43
     src_rows, src_cols = np.meshgrid(src_rows, src_cols)
     src = np.dstack([src_cols.flat, src_rows.flat])[0]
     
+    # Calculate the y-intercept of the curved trace
+    y_int = coeffs[-1]+2*76
+    
     # Add curvature to control points
     dst_cols = src[:,0]
-    dst_rows = src[:,1]+np.polyval(coeffs, dst_cols)-220
+    dst_rows = src[:,1]+np.polyval(coeffs, dst_cols)-y_int
     dst = np.vstack([dst_cols, dst_rows]).T
     
     # Perform transform
@@ -556,7 +559,7 @@ def trace_polynomial(trace, start=4, end=2040, order=4):
     
     return X, Y
 
-def distance_map(order, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01], subarr='SUBSTRIP256', plot=False):
+def distance_map(order, coeffs='', subarr='SUBSTRIP256', generate=False, plot=False):
     """
     Generate a map where each pixel is the distance from the trace polynomial
     
@@ -575,11 +578,27 @@ def distance_map(order, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04,
     -------
     np.ndarray
         An array the same shape as masked_data
-    """   
+    
+    Example
+    -------
+    The default polynomials for CV3 data are
+    order1 = [1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01]
+    order2 = [2.35705513e-13, -2.62302311e-08, 1.65517682e-04, -3.19677081e-01, 2.81349581e+02]
+    """
+    # Set the polynomial coefficients to use
+    if not coeffs:
+            
+        if order==1:
+            coeffs = [1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01]
+        elif order==2:
+            coeffs = [2.35705513e-13, -2.62302311e-08, 1.65517682e-04, -3.19677081e-01, 2.81349581e+02]
+        else:
+            print('Order {} not supported.'.format(order))
+            
     # If coefficients are provided, generate a new map
-    if isinstance(coeffs, (list, tuple, np.ndarray)):
+    if isinstance(coeffs, (list, tuple, np.ndarray)) and generate:
         
-        print('Generating distance map with coefficients {}...'.format(coeffs))
+        print('Generating distance map for order {} with coefficients {}...'.format(order,coeffs))
         
         # Get the dimensions
         dims = (2048, SUBARRAY_Y[subarr])
@@ -726,17 +745,17 @@ def psf_position(distance, extend=25, generate=False, filt='CLEAR', plot=False):
         # Generate the 1D psf
         psf1D = generate_psf(filt)
         
-        # Scale the transmission to 1
-        psf = psf1D/np.trapz(psf1D)
-        
-    # Or just use these (already scaled to 1!)
+    # Or just use these
     else:
         
         if filt=='F277W':
-            psf = np.array([ 0.00019988, 0.0002117 , 0.00021934, 0.00023641, 0.00026375, 0.0003073 , 0.00033975, 0.0003496 , 0.00038376, 0.00044702, 0.00047626, 0.00046785, 0.0004981 , 0.000573 , 0.00067364, 0.00076275, 0.00088491, 0.00100102, 0.00111439, 0.00132894, 0.00162288, 0.00188021, 0.00240184, 0.00370172, 0.00555634, 0.0072683 , 0.01021882, 0.01486976, 0.02364649, 0.03089798, 0.03602238, 0.03632454, 0.02973947, 0.0199811 , 0.01537851, 0.01493862, 0.01572836, 0.02018245, 0.01958941, 0.01427322, 0.01350232, 0.01688971, 0.02418887, 0.03537919, 0.03975415, 0.03609305, 0.02878872, 0.02192827, 0.01334616, 0.00835515, 0.00543218, 0.00380858, 0.00249234, 0.00204165, 0.00180445, 0.00132019, 0.00095559, 0.00082456, 0.0008002 , 0.00074513, 0.00068732, 0.00060487, 0.00050018, 0.00046889, 0.00045214, 0.00042667, 0.00038588, 0.00037849, 0.00036246, 0.00032832, 0.00030491, 0.00028396, 0.00026219, 0.00023077, 0.00021248, 0.0001944 ])
+            psf1D = np.array([ 0.00019988, 0.0002117 , 0.00021934, 0.00023641, 0.00026375, 0.0003073 , 0.00033975, 0.0003496 , 0.00038376, 0.00044702, 0.00047626, 0.00046785, 0.0004981 , 0.000573 , 0.00067364, 0.00076275, 0.00088491, 0.00100102, 0.00111439, 0.00132894, 0.00162288, 0.00188021, 0.00240184, 0.00370172, 0.00555634, 0.0072683 , 0.01021882, 0.01486976, 0.02364649, 0.03089798, 0.03602238, 0.03632454, 0.02973947, 0.0199811 , 0.01537851, 0.01493862, 0.01572836, 0.02018245, 0.01958941, 0.01427322, 0.01350232, 0.01688971, 0.02418887, 0.03537919, 0.03975415, 0.03609305, 0.02878872, 0.02192827, 0.01334616, 0.00835515, 0.00543218, 0.00380858, 0.00249234, 0.00204165, 0.00180445, 0.00132019, 0.00095559, 0.00082456, 0.0008002 , 0.00074513, 0.00068732, 0.00060487, 0.00050018, 0.00046889, 0.00045214, 0.00042667, 0.00038588, 0.00037849, 0.00036246, 0.00032832, 0.00030491, 0.00028396, 0.00026219, 0.00023077, 0.00021248, 0.0001944 ])
             
         else:
-            psf = np.array([ 0.00013901, 0.00016542, 0.00015689, 0.00015623, 0.00017186, 0.00016965, 0.00018987, 0.00019185, 0.00023556, 0.00023899, 0.00029408, 0.00029346, 0.00035087, 0.00038025, 0.00042468, 0.00051199, 0.00066475, 0.00065935, 0.00089182, 0.00121465, 0.00148197, 0.00200335, 0.00266229, 0.00321626, 0.00485754, 0.00829491, 0.01690362, 0.02678705, 0.03461085, 0.03111909, 0.03046135, 0.02457325, 0.01972383, 0.02033947, 0.01575621, 0.01368122, 0.01234645, 0.01643781, 0.0200006 , 0.01972283, 0.0190382 , 0.02177633, 0.02355946, 0.02783534, 0.02869785, 0.03584818, 0.0343261 , 0.02788289, 0.0176711 , 0.00835883, 0.00510581, 0.0038801 , 0.00286961, 0.00192759, 0.00153765, 0.00103414, 0.00083634, 0.00078 , 0.00067393, 0.00050412, 0.00049817, 0.00041538, 0.00037431, 0.00035373, 0.00027228, 0.00027909, 0.00019483, 0.00020813, 0.00019951, 0.00017749, 0.00016526, 0.00016733, 0.00015403, 0.00013206, 0.00013329, 0.00011637])
+            psf1D = np.array([ 0.00013901, 0.00016542, 0.00015689, 0.00015623, 0.00017186, 0.00016965, 0.00018987, 0.00019185, 0.00023556, 0.00023899, 0.00029408, 0.00029346, 0.00035087, 0.00038025, 0.00042468, 0.00051199, 0.00066475, 0.00065935, 0.00089182, 0.00121465, 0.00148197, 0.00200335, 0.00266229, 0.00321626, 0.00485754, 0.00829491, 0.01690362, 0.02678705, 0.03461085, 0.03111909, 0.03046135, 0.02457325, 0.01972383, 0.02033947, 0.01575621, 0.01368122, 0.01234645, 0.01643781, 0.0200006 , 0.01972283, 0.0190382 , 0.02177633, 0.02355946, 0.02783534, 0.02869785, 0.03584818, 0.0343261 , 0.02788289, 0.0176711 , 0.00835883, 0.00510581, 0.0038801 , 0.00286961, 0.00192759, 0.00153765, 0.00103414, 0.00083634, 0.00078 , 0.00067393, 0.00050412, 0.00049817, 0.00041538, 0.00037431, 0.00035373, 0.00027228, 0.00027909, 0.00019483, 0.00020813, 0.00019951, 0.00017749, 0.00016526, 0.00016733, 0.00015403, 0.00013206, 0.00013329, 0.00011637])
+            
+    # Scale the transmission to 1
+    psf = psf1D/np.trapz(psf1D)
     
     # Shift the psf so that the points go from -38 to 38
     l = len(psf)
@@ -885,7 +904,6 @@ def wave_solutions(subarr, directory=DIR_PATH+'/files/soss_wavelengths_fullframe
     np.ndarray
         An array of the wavelength solutions for orders 1, 2, and 3
     """
-    print(DIR_PATH, directory)
     try:
         idx = int(subarr)
     except:
@@ -984,6 +1002,19 @@ class TSO(object):
             The radius of the trace
         target: str (optional)
             The name of the target
+                        
+        Example
+        -------
+        from AWESim_SOSS.sim2D import awesim
+        from svo_filters import svo
+        import AWESim_SOSS
+        import astropy.units as q
+        import os
+        K = svo.Filter('2MASS.Ks')
+        wave_s_raw, flux_s_raw = np.genfromtxt(os.path.dirname(AWESim_SOSS.__file__)+'/files/m4v_combined_template.txt', unpack=True)
+        wave_s, flux_s, *_ = awesim.norm_to_mag([wave_s_raw*q.um,flux_s_raw*q.erg/q.s/q.cm**2/q.AA], 9.128, K)
+        tso = awesim.TSO(3, 5, [wave_s, flux_s])
+        tso.run_simulation()
         """
         # Set instance attributes for the exposure
         self.subarray     = subarray
@@ -992,7 +1023,8 @@ class TSO(object):
         self.ngrps        = ngrps
         self.nints        = nints
         self.nresets      = 1
-        self.time         = get_frame_times(self.subarray, self.ngrps, self.nints, t0, self.nresets)
+        self.frame_time   = FRAME_TIMES[subarray]
+        self.time         = get_frame_times(subarray, ngrps, nints, t0, self.nresets)
         self.nframes      = len(self.time)
         self.target       = target or 'Simulated Target'
         self.obs_date     = ''
@@ -1025,9 +1057,11 @@ class TSO(object):
             setattr(self, p, getattr(self.params, p))
         
         # Create the empty exposure
-        self.tso = np.zeros((self.nframes, self.nrows, self.ncols))
-        self.tso_order1 = np.zeros((self.nframes, self.nrows, self.ncols))
-        self.tso_order2 = np.zeros((self.nframes, self.nrows, self.ncols))
+        dims = (self.nframes, self.nrows, self.ncols)
+        self.tso = np.zeros(dims)
+        self.tso_ideal = np.zeros(dims)
+        self.tso_order1 = np.zeros(dims)
+        self.tso_order2 = np.zeros(dims)
     
     def run_simulation(self, orders=[1,2], filt='CLEAR'):
         """
@@ -1076,57 +1110,81 @@ class TSO(object):
             # Get the wavelength interval per pixel map
             local_pfd2adu = self.pfd2adu[order-1]
             
-            print(isinstance(local_ld_coeffs[0], float), local_ld_coeffs)
+            # print(isinstance(local_ld_coeffs[0], float), local_ld_coeffs)
             
             if isinstance(local_ld_coeffs[0], float):
                 local_ld_coeffs = np.transpose([[local_ld_coeffs[0], local_ld_coeffs[1]]] * local_wave.size)
             
-            print(isinstance(local_ld_coeffs[0], float), local_ld_coeffs)
-                        #
-            # # Run multiprocessing
-            # print('Calculating order {} light curves...'.format(order))
-            # start = time.time()
-            # pool = multiprocessing.Pool(8)
-            #
-            # # Set wavelength independent inputs of lightcurve function
-            # func = partial(lambda_lightcurve,
-            #                ld_profile    = self.ld_profile,
-            #                star          = self.star,
-            #                planet        = self.planet,
-            #                time          = self.time,
-            #                params        = self.params,
-            #                filt          = self.filter,
-            #                trace_radius  = self.trace_radius,
-            #                snr           = self.snr,
-            #                extend        = self.extend)
-            #
-            # # Generate the lightcurves at each pixel
-            # lightcurves = pool.starmap(func, zip(local_wave, local_response, local_psf_loc, local_pfd2adu, local_ld_coeffs))
-            #
-            # # Close the pool
-            # pool.close()
-            # pool.join()
-            #
-            # # Clean up and time of execution
-            # print(np.shape(lightcurves))
-            # tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.nrows, self.ncols])
-            #
-            # print('Order {} light curves finished: '.format(order), time.time()-start)
-            #
-            # # Add to the master TSO
-            # self.tso += tso_order
-            #
-            # # Add it to the individual order
-            # setattr(self, 'tso_order{}'.format(order), tso_order)
+            # Run multiprocessing
+            print('Calculating order {} light curves...'.format(order))
+            start = time.time()
+            pool = multiprocessing.Pool(8)
+            
+            # Set wavelength independent inputs of lightcurve function
+            func = partial(lambda_lightcurve,
+                           ld_profile    = self.ld_profile,
+                           star          = self.star,
+                           planet        = self.planet,
+                           time          = self.time,
+                           params        = self.params,
+                           filt          = self.filter,
+                           trace_radius  = self.trace_radius,
+                           snr           = self.snr,
+                           extend        = self.extend)
+                           
+            # Generate the lightcurves at each pixel
+            lightcurves = pool.starmap(func, zip(local_wave, local_response, local_psf_loc, local_pfd2adu, local_ld_coeffs))
+            
+            # Close the pool
+            pool.close()
+            pool.join()
+            
+            # Clean up and time of execution
+            tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.nrows, self.ncols])
+            
+            print('Order {} light curves finished: '.format(order), time.time()-start)
+            
+            # Add to the master TSO
+            self.tso += tso_order
+            
+            # Add it to the individual order
+            setattr(self, 'tso_order{}'.format(order), tso_order)
             
         # Add noise to the observations using Kevin Volk's dark ramp simulator
-        # self.tso += dark_ramps(self.time, self.subarray)
+        self.tso_ideal = self.tso.copy()
+        # self.add_noise()
     
-    def add_noise_model(self):
+    def add_noise(self, zodi_scale=1., offset=500):
         """
-        Generate the noise model and add to the simulation
+        Generate background noise
         """
-        pass
+        # Get the separated orders
+        orders = np.asarray([self.tso_order1,self.tso_order2])
+        
+        # Generate the photon yield factor values
+        photon_yield = fits.getdata(DIR_PATH+'/files/photon_yield_dms.fits')
+        pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
+        
+        # make the dark ramp
+        darksignal = fits.getdata(DIR_PATH+'/files/substrip256signaldms.fits')*self.gain
+        darksignal[np.where(darksignal < 0.)] = 0.
+        pca0_file = DIR_PATH+'/files/niriss_pca0.fits'
+        ramp = gd.make_exposure(self.nints, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
+        
+        # add in the SOSS signal
+        zodi = fits.getdata(DIR_PATH+'/files/soss_zodiacal_background_scaled.fits')
+        ramp = gd.add_signal(self.tso_ideal, ramp, pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+        
+        # apply the non-linearity function
+        nonlinearity = fits.getdata(DIR_PATH+'/files/substrip256_forward_coefficients_dms.fits')
+        ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
+        
+        # add the pedestal to each frame in the integration
+        pedestal = fits.getdata(DIR_PATH+'/files/substrip256pedestaldms.fits')
+        ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
+        
+        # Update the TSO with one containing noise
+        self.tso = ramp
     
     def plot_frame(self, frame='', scale='linear', order='', cmap=cm.jet):
         """
