@@ -5,14 +5,36 @@ from . import noise_simulation as ng
 import os
 
 def add_dark_current(ramp, seed, gain, darksignal):
+    """
+    Adds dark current to the input signal
+    
+    Parameters
+    ----------
+    ramp: sequence
+        The array of ramp images
+    seed: int
+        The seed for the dark signal
+    gain: float
+        The detector gain
+    darksignal: sequence
+        A 2D map of the dark signal to project onto the ramp
+        
+    Returns
+    -------
+    np.ndarray
+        The dark signal ramp
+    """
+    # Get the random seed and array shape
     np.random.seed(seed)
-    dims=ramp.shape
-    total=darksignal*0.
-    ngroups=ramp.shape[0]
+    dims = ramp.shape
+    
+    # Add the dark signal to the ramp
+    total = darksignal*0.
     for n in range(dims[0]):
-        signal=np.random.poisson(darksignal)/gain
-        total=total+signal
-        ramp[n,:,:]=ramp[n,:,:]+total
+        signal = np.random.poisson(darksignal)/gain
+        total = total+signal
+        ramp[n,:,:] = ramp[n,:,:]+total
+        
     return ramp
     
 def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, dark_seed=None, offset=500):
@@ -25,6 +47,23 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, da
         The number of integrations
     ngrps: int
         The number of groups per integration
+    darksignal: sequence
+        A dark frame
+    gain: float
+        The gain on the detector
+    pca0_file: str
+        The path to the PCA-zero file
+    noise_seed: int
+        The seed for the generated noise
+    dark_seed: int
+        The seed for the generated dark
+    offset: int
+        The pedestal offset
+    
+    Returns
+    -------
+    np.ndarray
+        A simulated ramp of darks
     """
     if nints < 1 or ngrps < 1:
         return None
@@ -66,8 +105,6 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, da
         simulated_data[loop*ngrps:(loop+1)*ngrps,:,:] = np.copy(ramp)
         ramp = 0
         
-    # noisecube=noisecube.astype('uint16')
-    
     return simulated_data
 
 def make_photon_yield(photon_yield, orders):
@@ -81,6 +118,11 @@ def make_photon_yield(photon_yield, orders):
         The path to the file containg the calculated photon yield at each pixel
     orders: sequence
         An array of the median image of each order
+    
+    Returns
+    -------
+    np.ndarray
+        The array containing the photon yield map for each order
     """
     # Get the shape and create empty arrays
     dims = orders.shape
@@ -98,60 +140,135 @@ def make_photon_yield(photon_yield, orders):
     
     return pyimage
 
-def add_signal(signals,cube,pyimage,frametime,gain,zodi,zodi_scale,photon_yield=None):
-    if photon_yield is None:
-        photon_yield=False
-    dims1=cube.shape
-    dims2=signals.shape
+def add_signal(signals, cube, frametime, gain, zodi, zodi_scale, pyimage=None):
+    """
+    Add the science signal to the generated noise
+    
+    Parameters
+    ----------
+    signals: sequence
+        The science frames
+    cube: sequence
+        The generated dark ramp
+    frametime: float
+        The number of seconds per frame
+    gain: float
+        The detector gain
+    zodi: sequence
+        The zodiacal background image
+    zodi_scale: float
+        The scale factor for the zodi background
+    pyimage: sequence (optional)
+        The photon yield per order
+    """
+    # Get the data dimensions
+    dims1 = cube.shape
+    dims2 = signals.shape
     if dims1 != dims2:
         raise ValueError
-    newcube=cube*0.
+        
+    # Make a new ramp
+    newcube = cube.copy()*0.
+    
     # The background is assumed to be in electrons/second/pixel, not ADU/s/pixel.
-    background=zodi*zodi_scale*frametime
+    background = zodi*zodi_scale*frametime
+    
+    # Iterate over each group
     for n in range(dims1[0]):
-        framesignal=signals[n,:,:]*gain*frametime
-        if photon_yield:
-            newvalues=np.random.poisson(framesignal)
-            target=pyimage-1.
+        framesignal = signals[n,:,:]*gain*frametime
+        
+        # Add photon yield
+        if pyimage:
+            newvalues = np.random.poisson(framesignal)
+            target = pyimage-1.
             for k in range(dims1[1]):
                 for l in range(dims1[2]):
                     if target[k,l] > 0.:
-                        n=int(newvalues[k,l])
-                        values=np.random.poisson(target[k,l],size=n)
-                        newvalues[k,l]=newvalues[k,l]+np.sum(values)
-            newvalues=newvalues+np.random.poisson(background)
+                        n = int(newvalues[k,l])
+                        values = np.random.poisson(target[k,l],size=n)
+                        newvalues[k,l] = newvalues[k,l]+np.sum(values)
+            newvalues = newvalues+np.random.poisson(background)
+            
+        # Or don't
         else:
-            newvalues=np.random.poisson(framesignal*pyimage+background)
-        if n == 0:
-            newcube[n,:,:]=newvalues
+            newvalues = np.random.poisson(framesignal*pyimage+background)
+            
+        # First ramp image
+        if n==0:
+            newcube[n,:,:] = newvalues
         else:
-            newcube[n,:,:]=newcube[n-1,:,:]+newvalues
-    newcube=cube+newcube/gain
+            newcube[n,:,:] = newcube[n-1,:,:]+newvalues
+            
+    newcube = cube+newcube/gain
+    
     return newcube
 
-def non_linearity(cube,nonlinearity,offset=None):
-    dims1=nonlinearity.shape
-    dims2=cube.shape
+def non_linearity(cube, nonlinearity, offset=0):
+    """
+    Add nonlinearity to the ramp
+    
+    Parameters
+    ----------
+    cube: sequence
+        The ramp with no non-linearity
+    nonlinearity: sequence
+        The non-linearity image to add to the ramp
+    offset: int
+        The non-linearity offset
+    
+    Returns
+    -------
+    np.ndarray
+        The ramp with the added non-linearity
+    """
+    # Get the dimensions of the input data
+    dims1 = nonlinearity.shape
+    dims2 = cube.shape
     if (dims1[1] != dims2[1]) | (dims1[1] != dims2[1]):
         raise ValueError
-    if offset is None:
-        offset=0.
-    newcube=cube-offset
+        
+    # Make a new array for the ramp+non-linearity
+    newcube = cube-offset
     for k in range(dims2[0]):
-        frame=np.squeeze(np.copy(newcube[k,:,:]))
-        sum1=frame*0.
+        frame = np.squeeze(np.copy(newcube[k,:,:]))
+        sum1 = frame*0.
         for n in range(dims1[0]-1,-1,-1):
-            sum1=sum1+nonlinearity[n,:,:]*np.power(frame,n+1)
-        sum1=frame*(1.+sum1)
-        newcube[k,:,:]=sum1
-    newcube=newcube+offset
+            sum1 = sum1+nonlinearity[n,:,:]*np.power(frame,n+1)
+        sum1 = frame*(1.+sum1)
+        newcube[k,:,:] = sum1
+        
+    newcube = newcube+offset
+    
     return newcube
 
-def add_pedestal(cube,pedestal,offset):
-    ped1=pedestal+(offset-500.)
-    dims=cube.shape
-    newcube=np.zeros_like(cube,dtype=np.float32)
+def add_pedestal(cube, pedestal, offset=500):
+    """
+    Add a pedestal to the ramp
+    
+    Parameters
+    ----------
+    cube: sequence
+        The ramp with no pedestal
+    pedestal: sequence
+        The pedestal image to add to the ramp
+    offset: int
+        The pedestal offset
+    
+    Returns
+    -------
+    np.ndarray
+        The ramp with the added pedestal
+    """
+    # Add the offset to the pedestal
+    ped1 = pedestal+(offset-500.)
+    
+    # Make a new array for the ramp+pedestal
+    dims = cube.shape
+    newcube = np.zeros_like(cube,dtype=np.float32)
+    
+    # Iterate over each integration
     for n in range(dims[0]):
-        newcube[n,:,:]=cube[n,:,:]+ped1
-    newcube=newcube.astype(np.uint16)
+        newcube[n,:,:] = cube[n,:,:]+ped1
+    newcube = newcube.astype(np.uint16)
+    
     return newcube

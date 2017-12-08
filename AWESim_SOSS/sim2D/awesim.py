@@ -1173,7 +1173,7 @@ class TSO(object):
         
         # add in the SOSS signal
         zodi = fits.getdata(DIR_PATH+'/files/soss_zodiacal_background_scaled.fits')
-        ramp = gd.add_signal(self.tso_ideal, ramp, pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+        ramp = gd.add_signal(self.tso_ideal, ramp, self.frame_time, self.gain, zodi, zodi_scale, pyimage=pyf)
         
         # apply the non-linearity function
         nonlinearity = fits.getdata(DIR_PATH+'/files/substrip256_forward_coefficients_dms.fits')
@@ -1285,6 +1285,15 @@ class TSO(object):
         plt.xlim(0,256)
         
         plt.legend(loc=0, frameon=False)
+        
+    def plot_ramp(self):
+        """
+        Plot the total flux on each frame to display the ramp
+        """
+        plt.figure()
+        plt.plot(np.sum(tso.tso, axis=(1,2)))
+        plt.xlabel('Group')
+        plt.ylable('Count Rate [ADU/s]')
         
     def plot_lightcurve(self, col):
         """
