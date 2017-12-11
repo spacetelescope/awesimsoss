@@ -377,8 +377,8 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, sav
     ----------
     ld_profile: str
         A limb darkening profile name supported by `ExoCTK.ldc.ldcfit.ld_profile()`
-    grid_point: dict
-        The stellar model dictionary from `ExoCTK.core.ModelGrid.get()`
+    grid_point: dict, sequence
+        The stellar parameters [Teff, logg, FeH] or stellar model dictionary from `ExoCTK.core.ModelGrid.get()`
     model_grid: ExoCTK.core.ModelGrid
         The model grid
     delta_w: float
@@ -392,8 +392,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, sav
     from AWESim_SOSS.sim2D import awesim
     from ExoCTK import core
     grid = core.ModelGrid(os.environ['MODELGRID_DIR'], Teff_rng=(3000,4000), logg_rng=(4,5), FeH_rng=(0,0.5), resolution=700)
-    model = G.get(3300, 4.5, 0)
-    awesim.ldc_lookup('quadratic', model, grid, save='/Users/jfilippazzo/Desktop/')
+    awesim.ldc_lookup('quadratic', [3300, 4.5, 0], grid, save='/Users/jfilippazzo/Desktop/')
     """
     print("Go get a coffee! This takes about 5 minutes to run.")
     
@@ -403,6 +402,15 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, sav
     # Get the full wavelength range
     wave_maps = wave_solutions(nrows)
     
+    # Get the grid point
+    if isinstance(grid_point, (list,tuple,np.ndarray)):
+        grid_point = model_grid.get(*grid_point)
+        
+    # Abort of no stellar dict
+    if not isinstance(grid_point, dict):
+        print('Please provide [Teff, logg, FeH] or ExoCTK.core.ModelGrid.get(Teff, logg, FeH).')
+        return
+        
     # Define function for multiprocessing
     def gr700xd_ldc(wavelength, delta_w, ld_profile, grid_point, model_grid):
         """
@@ -429,7 +437,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, sav
             return ('_', None)
             
     # Pool the LDC calculations across the whole wavelength range for each order
-    for order in [1,2,3]:
+    for order in [1,2]:
         
         # Get the wavelength limits for this order
         min_wave = np.nanmin(wave_maps[order-1][wave_maps[order-1]>0])
@@ -1011,10 +1019,18 @@ class TSO(object):
         import astropy.units as q
         import os
         K = svo.Filter('2MASS.Ks')
-        wave_s_raw, flux_s_raw = np.genfromtxt(os.path.dirname(AWESim_SOSS.__file__)+'/files/m4v_combined_template.txt', unpack=True)
+        path = os.path.dirname(AWESim_SOSS.__file__)
+        wave_s_raw, flux_s_raw = np.genfromtxt(path+'/files/m4v_combined_template.txt', unpack=True)
         wave_s, flux_s, *_ = awesim.norm_to_mag([wave_s_raw*q.um,flux_s_raw*q.erg/q.s/q.cm**2/q.AA], 9.128, K)
+        
+        # No planet
         tso = awesim.TSO(3, 5, [wave_s, flux_s])
         tso.run_simulation()
+        
+        # Planet
+        planet = np.genfromtxt(path+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+        tso_planet = awesim.TSO(3, 5, [wave_s, flux_s], )
+        tso_planet.run_simulation()
         """
         # Set instance attributes for the exposure
         self.subarray     = subarray
