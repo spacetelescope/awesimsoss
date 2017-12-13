@@ -2,7 +2,7 @@
 
 ### Analyzing Webb Exoplanet Simulations with SOSS
 
-Authors: Joe Filippazzo and Jonathan Fraine
+Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
 This pure Python module produces simulated data for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope.
 
@@ -14,22 +14,20 @@ The following packages are needed to run `AWESim_SOSS`:
 
 ### Usage
 
-Given a time axis and a 1D spectrum of a target, this module produces a 2D SOSS slope image for each point on the time axis. For example, if I want to produce 200 integrations of WASP-107 (no planet) as seen through SOSS, my code might look like:
+Given a 1D spectrum of a target, this module produces a 2D SOSS ramp image with the given number of groups and integrations. For example, if I want to produce 20 integrations of 5 groups each for a J=9 A0 star as seen through SOSS, my code might look like:
 
 ```
-import numpy as np
-from AWESim_SOSS import awesim
-t = np.linspace(-0.2, 0.2, 200)
-WASP107 = np.genfromtxt('AWESim_SOSS/data/WASP107.txt', unpack=True)
-TSO = awesim.TSO(t, WASP107)
-TSO.plot_frame()
+from AWESim_SOSS.sim2D import awesim
+import astropy.units as q, os, AWESim_SOSS
+DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
+star = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True)
+spec1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+tso = awesim.TSO(ngrps=5, nints=20, star=spec1D)
+tso.run_simulation()
+tso.plot_frame()
 ```
 
-Here is the input spectrum and one frame of the output data cube:
-
-![input](AWESim_SOSS/img/1D_spec.png "The input spectrum")
-
-![output](AWESim_SOSS/img/2D_spec.png "The output trace")
+![output](AWESim_SOSS/img/2D_star.png "The output trace")
 
 The example above was for an isolated star though. To include a planetary transit we must additionally provide:
 
@@ -40,7 +38,7 @@ The example above was for an isolated star though. To include a planetary transi
 Here is a sample transmission spectrum generated with PANDEXO:
 
 ```
-WASP107b = np.genfromtxt('AWESim_SOSS/data/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+WASP107b = np.genfromtxt('AWESim_SOSS/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
 ````
 
 ![planet](AWESim_SOSS/img/1D_planet.png "Planet")
@@ -58,10 +56,10 @@ params.ecc = 0.                               # eccentricity
 params.w = 90.                                # longitude of periastron (in degrees)
 ```
 
-Now the code to create 200 integrations which contain a planetary transit might look like:
+Now the code to generate a simulated planetary transit might look like:
 
 ```
-TSO = awesim.TSO(t, WASP107, WASP107b, params, ld_coeffs)
+TSO = awesim.TSO(5, 20, spec1D, WASP107b, params, ld_coeffs)
 ```
 
 We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
