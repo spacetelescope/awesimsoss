@@ -12,7 +12,7 @@ The following packages are needed to run `AWESim_SOSS`:
 - batman
 - astropy
 
-### Usage
+### Simulating SOSS Observations
 
 Given a 1D spectrum of a target, this module produces a 2D SOSS ramp image with the given number of groups and integrations. For example, if I want to produce 20 integrations of 5 groups each for a J=9 A0 star as seen through SOSS, my code might look like:
 
@@ -28,6 +28,20 @@ tso.plot_frame()
 ```
 
 ![output](AWESim_SOSS/img/2D_star.png "The output trace")
+
+The 96 subarray is also supported:
+
+```
+tso = awesim.TSO(ngrps=5, nints=20, star=spec1D, subarray='SUBSTRIP96')
+```
+
+The default filter is CLEAR but you can also simulate observations with the F277W filter like so:
+
+```
+tso.run_simulation(filt='F277W')
+```
+
+### Simulated Planetary Transits
 
 The example above was for an isolated star though. To include a planetary transit we must additionally provide:
 
