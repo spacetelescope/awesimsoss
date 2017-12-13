@@ -1181,37 +1181,46 @@ class TSO(object):
         offset: int
             The dark current offset
         """
+        print('Adding noise to TSO...')
+        
         # Get the separated orders
         orders = np.asarray([self.tso_order1,self.tso_order2])
         
-        # Generate the photon yield factor values
+        # Load all the reference files
         photon_yield = fits.getdata(DIR_PATH+'/files/photon_yield_dms.fits')
+        pca0_file = DIR_PATH+'/files/niriss_pca0.fits'
+        zodi = fits.getdata(DIR_PATH+'/files/soss_zodiacal_background_scaled.fits')
+        nonlinearity = fits.getdata(DIR_PATH+'/files/substrip256_forward_coefficients_dms.fits')
+        pedestal = fits.getdata(DIR_PATH+'/files/substrip256pedestaldms.fits')
+        darksignal = fits.getdata(DIR_PATH+'/files/substrip256signaldms.fits')*self.gain
+        
+        # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
         
-        # make the dark ramp
-        darksignal = fits.getdata(DIR_PATH+'/files/substrip256signaldms.fits')*self.gain
+        # Remove negatives from the dark ramp
         darksignal[np.where(darksignal < 0.)] = 0.
-        pca0_file = DIR_PATH+'/files/niriss_pca0.fits'
-        ramp = gd.make_exposure(self.nints, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
         
-        # add in the SOSS signal
-        zodi = fits.getdata(DIR_PATH+'/files/soss_zodiacal_background_scaled.fits')
-        ramp = gd.add_signal(self.tso_ideal, ramp, pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+        # Make the exposure
+        RAMP = gd.make_exposure(1, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
         
-        # apply the non-linearity function
-        nonlinearity = fits.getdata(DIR_PATH+'/files/substrip256_forward_coefficients_dms.fits')
-        ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
+        # Iterate over integrations
+        for n in range(self.nints):
+            
+            # Add in the SOSS signal
+            ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+            
+            # apply the non-linearity function
+            ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
+            
+            # add the pedestal to each frame in the integration
+            ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
+            
+            # Update the TSO with one containing noise
+            self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
         
-        # add the pedestal to each frame in the integration
-        pedestal = fits.getdata(DIR_PATH+'/files/substrip256pedestaldms.fits')
-        ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
-        
-        # Update the TSO with one containing noise
-        self.tso = ramp
-    
     def plot_frame(self, frame='', scale='linear', order='', noise=True, cmap=cm.jet):
         """
-        Plot a frame of the TSO
+        Plot a TSO frame
         
         Parameters
         ----------
@@ -1246,43 +1255,49 @@ class TSO(object):
     
     def plot_snr(self, frame='', cmap=cm.jet):
         """
-        Plot a frame of the TSO
+        Plot the SNR of a TSO frame
         
         Parameters
         ----------
         frame: int
             The frame number to plot
+        cmap: matplotlib.cm.colormap
+            The color map to use
         """
+        # Get the SNR
         snr  = np.sqrt(self.tso[frame or self.nframes//2].data)
         vmax = int(np.nanmax(snr))
         
+        # Plot it
         plt.figure(figsize=(13,2))
         plt.imshow(snr, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
-        
         plt.colorbar()
         plt.title('SNR over Spectrum')
         
-    def plot_saturation(self, frame='', saturation = 80.0, cmap=cm.jet):
+    def plot_saturation(self, frame='', saturation=80.0, cmap=cm.jet):
         """
-        Plot a frame of the TSO
+        Plot the saturation of a TSO frame
         
         Parameters
         ----------
         frame: int
             The frame number to plot
-        
-        fullWell: percentage [0-100] of maximum value, 65536
+        saturation: float
+            Percentage of full well that defines saturation
+        cmap: matplotlib.cm.colormap
+            The color map to use
         """
+        # The full well of the detector pixels
+        fullWell = 65536.0
         
-        fullWell    = 65536.0
-        
+        # Get saturated pixels
         saturated = np.array(self.tso[frame or self.nframes//2].data) > (saturation/100.0) * fullWell
         
+        # Plot it
         plt.figure(figsize=(13,2))
         plt.imshow(saturated, origin='lower', interpolation='none', cmap=cmap)
-        
         plt.colorbar()
-        plt.title('Saturated Pixels')
+        plt.title('{} Saturated Pixels'.format(len(saturated[saturated>fullWell])))
     
     def plot_slice(self, col, trace='tso', frame=0, order='', **kwargs):
         """
@@ -1319,9 +1334,10 @@ class TSO(object):
         Plot the total flux on each frame to display the ramp
         """
         plt.figure()
-        plt.plot(np.sum(tso.tso, axis=(1,2)))
+        plt.plot(np.sum(self.tso, axis=(1,2)), ls='none', marker='o')
         plt.xlabel('Group')
-        plt.ylable('Count Rate [ADU/s]')
+        plt.ylabel('Count Rate [ADU/s]')
+        plt.grid()
         
     def plot_lightcurve(self, col):
         """
@@ -1394,7 +1410,7 @@ class TSO(object):
         plt.plot(wave, flux, label='Extracted')
         plt.plot(*self.star, label='Injected')
     
-    def save_tso(self, filename='dummy.save'):
+    def save(self, filename='dummy.save'):
         """
         Save the TSO data to file
         
@@ -1406,7 +1422,7 @@ class TSO(object):
         print('Saving TSO class dict to {}'.format(filename))
         joblib.dump(self.__dict__, filename)
     
-    def load_tso(self, filename):
+    def load(self, filename):
         """
         Load a previously calculated TSO
         
