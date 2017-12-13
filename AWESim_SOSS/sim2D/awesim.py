@@ -1335,7 +1335,7 @@ class TSO(object):
         """
         # Get the scaled flux in each column
         f = np.nansum(self.tso, axis=1)
-        f = f/np.nanmax(f)
+        f = f/np.nanmax(f, axis=1)[:,None]
         
         # Make it into an array
         if isinstance(col, (int,float)):
