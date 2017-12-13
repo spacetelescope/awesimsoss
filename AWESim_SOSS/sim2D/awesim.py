@@ -804,6 +804,8 @@ def lambda_lightcurve(wavelength, response, psf_loc, pfd2adu, ld_coeffs, ld_prof
         The time axis for the TSO
     params: batman.transitmodel.TransitParams
         The transit parameters of the planet
+    filt: str
+        The filter to apply, ['CLEAR','F277W']
     throughput: float
         The CLEAR or F277W filter throughput at the given wavelength
     trace_radius: int
@@ -844,16 +846,19 @@ def lambda_lightcurve(wavelength, response, psf_loc, pfd2adu, ld_coeffs, ld_prof
         
         # Get the energy flux density [erg/s/cm2/A] at the given wavelength [um] at t=t0
         flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)
+        # print('Energy Flux Density [erg/s/cm2/A]:',flux0)
         
         # Convert from energy flux density to photon flux density [photons/s/cm2/A]
         # by multiplying by (lambda/h*c)
         flux0 *= wavelength*503411665111.4543 # [1/erg*um]
+        # print('Photon Flux Density [1/s/cm2/A]:',flux0)
         
-        # Convert from photon flux density to ADU/s by multiplying by the 
-        # wavelength interval [um/pixel], primary mirror area [cm2], and gain [ADU/e-]
+        # Convert from photon flux density to ADU/s by multiplying by the wavelength 
+        # interval [um/pixel] and primary mirror area [cm2], and dividing by the gain [e-/ADU]
         flux0 *= pfd2adu
+        # print('Count Rate [ADU/s * 1/e-]:',flux0)
         
-        # Expand to shape of time axis and add noise
+        # Expand to shape of time axis
         # flux0 = np.abs(flux0)
         # flux = np.abs(np.random.normal(loc=flux0, scale=flux0/snr, size=len(time)))
         flux = np.repeat(flux0, nframes)
@@ -1014,23 +1019,13 @@ class TSO(object):
         Example
         -------
         from AWESim_SOSS.sim2D import awesim
-        from svo_filters import svo
-        import AWESim_SOSS
-        import astropy.units as q
-        import os
-        K = svo.Filter('2MASS.Ks')
-        path = os.path.dirname(AWESim_SOSS.__file__)
-        wave_s_raw, flux_s_raw = np.genfromtxt(path+'/files/m4v_combined_template.txt', unpack=True)
-        wave_s, flux_s, *_ = awesim.norm_to_mag([wave_s_raw*q.um,flux_s_raw*q.erg/q.s/q.cm**2/q.AA], 9.128, K)
-        
-        # No planet
-        tso = awesim.TSO(3, 5, [wave_s, flux_s])
+        import astropy.units as q, os, AWESim_SOSS
+        DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
+        vega = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True) # A0V with Jmag=9
+        w = vega[0]*q.um
+        f = (vega[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)
+        tso = awesim.TSO(3, 5, [w, f])
         tso.run_simulation()
-        
-        # Planet
-        planet = np.genfromtxt(path+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
-        tso_planet = awesim.TSO(3, 5, [wave_s, flux_s], )
-        tso_planet.run_simulation()
         """
         # Set instance attributes for the exposure
         self.subarray     = subarray
@@ -1066,7 +1061,7 @@ class TSO(object):
         for n,aw in enumerate(avg_wave):
             coeffs = np.polyfit(aw[:-1], np.diff(aw), 1)
             wave_int = (np.polyval(coeffs, self.wave[n])*q.um).to(q.AA)
-            self.pfd2adu[n] = (wave_int*self.primary_mirror*q.cm**2/self.gain).value.flatten()
+            self.pfd2adu[n] = (wave_int*self.primary_mirror*q.cm**2/self.gain).to(q.cm**2*q.AA).value.flatten()
         
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
@@ -1079,7 +1074,7 @@ class TSO(object):
         self.tso_order1 = np.zeros(dims)
         self.tso_order2 = np.zeros(dims)
     
-    def run_simulation(self, orders=[1,2], filt='CLEAR', noise=False):
+    def run_simulation(self, orders=[1,2], filt='CLEAR', noise=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -1334,21 +1329,36 @@ class TSO(object):
         
         Parameters
         ----------
-        col: int, sequence
-            The column index(es) to plot a light curve for
+        col: int, float, sequence
+            The integer column index(es) or float wavelength(s) in microns 
+            to plot as a light curve
         """
-        if isinstance(col, int):
-            col = [col]
+        # Get the scaled flux in each column
+        f = np.nansum(self.tso, axis=1)
+        f = f/np.nanmax(f)
         
-        for c in col:
-            # ld = self.ldc[c*self.tso.shape[1]]
-            w = np.mean(self.wave[0], axis=0)[c]
-            f = np.nansum(self.tso[:,:,c], axis=1)
-            f *= 1./np.nanmax(f)
-            plt.plot(self.time/3000., f, label='Col {}'.format(c), marker='.', ls='None')
+        # Make it into an array
+        if isinstance(col, (int,float)):
+            col = [col]
             
-        # Plot whitelight curve too
-        # plt.plot(self.time)
+        for c in col:
+            
+            # If it is an index
+            if isinstance(c, int):
+                lc = f[:,c]
+                label = 'Col {}'.format(c)
+                
+            # Or assumed to be a wavelength in microns
+            elif isinstance(c, float):
+                W = np.mean(self.wave[0], axis=0)
+                lc = [np.interp(c, W, F) for F in f]
+                label = '{} um'.format(c)
+                
+            else:
+                print('Please enter an index, astropy quantity, or array thereof.')
+                return
+            
+            plt.plot(self.time, lc, label=label, marker='.', ls='None')
             
         plt.legend(loc=0, frameon=False)
         
