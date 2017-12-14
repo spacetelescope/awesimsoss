@@ -72,13 +72,13 @@ params.w = 90.                                # longitude of periastron (in degr
 
 Now the code to generate a simulated planetary transit might look like:
 
-```
+```python
 TSO = awesim.TSO(5, 20, spec1D, WASP107b, params, ld_coeffs)
 ```
 
 We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
 
-```
+```python
 TSO.plot_lightcurve([15,150,300])
 ```
 
