@@ -59,7 +59,7 @@ WASP107b = np.genfromtxt('AWESim_SOSS/files/WASP107b_pandexo_input_spectrum.dat'
 
 And here are some orbital parameters for WASP-107:
 
-```
+```python
 import batman
 params = batman.TransitParams()
 params.t0 = 0.                                # time of inferior conjunction
