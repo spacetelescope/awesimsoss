@@ -21,8 +21,8 @@ from AWESim_SOSS.sim2D import awesim
 import astropy.units as q, os, AWESim_SOSS
 DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 star = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True)
-spec1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-tso = awesim.TSO(ngrps=5, nints=20, star=spec1D)
+star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+tso = awesim.TSO(ngrps=5, nints=20, star=star1D)
 tso.run_simulation()
 tso.plot_frame()
 ```
@@ -43,27 +43,23 @@ tso.run_simulation(filt='F277W')
 
 ### Simulated Planetary Transits
 
-The example above was for an isolated star though. To include a planetary transit we must additionally provide:
-
-- A transmission spectrum of the planet
-- A map of the limb darkening coefficients at each pixel
-- The orbital parameters of the planet
+The example above was for an isolated star though. To include a planetary transit we must additionally provide a transmission spectrum and the orbital parameters of the planet.
 
 Here is a sample transmission spectrum generated with PANDEXO:
 
 ```
-WASP107b = np.genfromtxt('AWESim_SOSS/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
 ````
 
 ![planet](AWESim_SOSS/img/1D_planet.png "Planet")
 
-And here are some orbital parameters for WASP-107:
+And here are some orbital parameters for our star:
 
 ```
 import batman
 params = batman.TransitParams()
 params.t0 = 0.                                # time of inferior conjunction
-params.per = 5.7214742                        # orbital period
+params.per = 5.7214742                        # orbital period (days)
 params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
 params.inc = 89.8                             # orbital inclination (in degrees)
 params.ecc = 0.                               # eccentricity
@@ -73,7 +69,7 @@ params.w = 90.                                # longitude of periastron (in degr
 Now the code to generate a simulated planetary transit might look like:
 
 ```
-TSO = awesim.TSO(5, 20, spec1D, WASP107b, params, ld_coeffs)
+TSO = awesim.TSO(5, 20, star1D, planet1D, params)
 ```
 
 We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:

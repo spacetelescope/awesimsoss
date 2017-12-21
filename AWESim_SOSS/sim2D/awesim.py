@@ -369,7 +369,7 @@ def get_mag(spectrum, bandpass, exclude=[], fetch='mag', photon=False, Flam=Fals
     else:
         return ['']*4 if fetch=='both' else ['']*2
 
-def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, save=''):
+def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
     """
     Generate a lookup table of limb darkening coefficients for full SOSS wavelength range
     
@@ -379,8 +379,6 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, sav
         A limb darkening profile name supported by `ExoCTK.ldc.ldcfit.ld_profile()`
     grid_point: dict, sequence
         The stellar parameters [Teff, logg, FeH] or stellar model dictionary from `ExoCTK.core.ModelGrid.get()`
-    model_grid: ExoCTK.core.ModelGrid
-        The model grid
     delta_w: float
         The width of the wavelength bins in microns
     save: str
@@ -388,11 +386,8 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, sav
     
     Example
     -------
-    import os
     from AWESim_SOSS.sim2D import awesim
-    from ExoCTK import core
-    grid = core.ModelGrid(os.environ['MODELGRID_DIR'], Teff_rng=(3000,4000), logg_rng=(4,5), FeH_rng=(0,0.5), resolution=700)
-    awesim.ldc_lookup('quadratic', [3300, 4.5, 0], grid, save='/Users/jfilippazzo/Desktop/')
+    lookup = awesim.ldc_lookup('quadratic', [3300, 4.5, 0])
     """
     print("Go get a coffee! This takes about 5 minutes to run.")
     
@@ -404,11 +399,12 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, sav
     
     # Get the grid point
     if isinstance(grid_point, (list,tuple,np.ndarray)):
-        grid_point = model_grid.get(*grid_point)
         
-    # Abort of no stellar dict
+        grid_point = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6,2.6)).get(*grid_point)
+        
+    # Abort if no stellar dict
     if not isinstance(grid_point, dict):
-        print('Please provide [Teff, logg, FeH] or ExoCTK.core.ModelGrid.get(Teff, logg, FeH).')
+        print('Please provide the grid_point argument as [Teff, logg, FeH] or ExoCTK.core.ModelGrid.get(Teff, logg, FeH).')
         return
         
     # Define function for multiprocessing
@@ -486,7 +482,7 @@ def ldc_lookup(ld_profile, grid_point, model_grid, delta_w=0.005, nrows=256, sav
     
         return lookup
 
-def ld_coefficient_map(lookup_file, subarray='SUBSTRIP256', save=True):
+def ld_coefficient_map(lookup_file, subarray='SUBSTRIP256', save=''):
     """
     Generate  map of limb darkening coefficients at every NIRISS pixel for all SOSS orders
     
@@ -1042,11 +1038,18 @@ class TSO(object):
         self.filter       = 'CLEAR'
         self.header       = ''
         
+        # ========================================================================
+        # ========================================================================
+        # Change this to accept StellarModel onbject for star and planet and
+        # move planet params and transmission spectrum input to run_simulation()
+        # ========================================================================
+        # ========================================================================
+        
         # Set instance attributes for the target
         self.star         = star
         self.planet       = planet
         self.params       = params
-        self.ld_coeffs    = ld_coeffs
+        self.ld_coeffs    = ld_coeffs or np.zeros((2, self.nrows*self.ncols, 2))
         self.ld_profile   = ld_profile or 'quadratic'
         self.trace_radius = trace_radius
         self.snr          = snr
@@ -1099,9 +1102,14 @@ class TSO(object):
             orders = [1]
             self.filter = 'F277W'
             
-        # Make dummy array of LDCs if no planet (required for multiprocessing)
-        if isinstance(self.planet, str):
-            self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
+        # If there is a planet transmission spectrum but no LDCs, generate them
+        if not isinstance(self.planet, str) and not any(self.ld_coeffs):
+            
+            # Generate the lookup table
+            lookup = ldc_lookup(self.ld_profile, [3300, 4.5, 0])
+            
+            # Generate the coefficient map
+            self.ld_coeffs = ld_coefficient_map(lookup, subarray=self.subarray)
             
         # Generate simulation for each order
         for order in orders:
