@@ -68,7 +68,6 @@ params.w = 90.                                # longitude of periastron (in degr
 
 Now the code to generate a simulated planetary transit might look like:
 
-<<<<<<< HEAD
 ```
 TSO = awesim.TSO(5, 20, star1D, planet1D, params)
 ```
