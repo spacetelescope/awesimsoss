@@ -55,7 +55,7 @@ planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', 
 
 And here are some orbital parameters for our star:
 
-```
+```python
 import batman
 params = batman.TransitParams()
 params.t0 = 0.                                # time of inferior conjunction
@@ -68,13 +68,14 @@ params.w = 90.                                # longitude of periastron (in degr
 
 Now the code to generate a simulated planetary transit might look like:
 
+<<<<<<< HEAD
 ```
 TSO = awesim.TSO(5, 20, star1D, planet1D, params)
 ```
 
 We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
 
-```
+```python
 TSO.plot_lightcurve([15,150,300])
 ```
 
