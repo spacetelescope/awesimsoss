@@ -28,9 +28,6 @@ from scipy.optimize import curve_fit
 from scipy.ndimage.interpolation import zoom
 from functools import partial
 from sklearn.externals import joblib
-from numpy.core.multiarray import interp as compiled_interp
-from skimage.transform import PiecewiseAffineTransform, warp
-from skimage import data
 
 warnings.simplefilter('ignore')
 
@@ -39,6 +36,12 @@ FILTERS = svo.filters()
 DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
+
+# ================================================================================
+# This is WIP code to alternately generate the SOSS trace using 2D webbpsf models
+# ================================================================================
+from skimage.transform import PiecewiseAffineTransform, warp
+from skimage import data
 
 def monochromatic(wavelength, filt, star_spectrum, star_params='', model_grid='', planet_spectrum='', planet_params=''):
     """
@@ -160,6 +163,10 @@ def warped(image, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43
         plt.imshow(out, origin='lower', norm=matplotlib.colors.LogNorm())
         
     return out
+
+# ================================================================================
+# ================================================================================
+# ================================================================================
 
 def ADUtoFlux(order):
     """
