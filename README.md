@@ -69,7 +69,13 @@ params.w = 90.                                # longitude of periastron (in degr
 Now the code to generate a simulated planetary transit might look like:
 
 ```
-TSO = awesim.TSO(5, 20, star1D, planet1D, params)
+tso_planet = awesim.TSO(5, 20, star1D, planet1D, params)
+```
+
+We can write this to a FITS file directly ingestible by the JWST pipeline with:
+
+```
+tso_planet.to_fits('my_SOSS_simulation.fits')
 ```
 
 <!--We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
