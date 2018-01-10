@@ -51,7 +51,7 @@ Here is a sample transmission spectrum generated with PANDEXO:
 planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
 ````
 
-![planet](AWESim_SOSS/img/1D_planet.png "Planet")
+![planet_input](AWESim_SOSS/img/1D_planet.png "The input transmission spectrum")
 
 And here are some orbital parameters for our star:
 
@@ -72,10 +72,10 @@ Now the code to generate a simulated planetary transit might look like:
 TSO = awesim.TSO(5, 20, star1D, planet1D, params)
 ```
 
-We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
+<!--We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
 
 ```python
 TSO.plot_lightcurve([15,150,300])
 ```
 
-![lightcurves](AWESim_SOSS/img/lc.png "lightcurves")
+![lightcurves](AWESim_SOSS/img/lc.png "lightcurves") -->
