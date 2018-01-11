@@ -845,7 +845,8 @@ class TSO(object):
         self.time         = get_frame_times(subarray, ngrps, nints, t0, self.nresets)
         self.nframes      = len(self.time)
         self.target       = target or 'Simulated Target'
-        self.obs_date     = ''
+        self.obs_date     = '2016-01-04'
+        self.obs_time     = '23:37:52.226'
         self.filter       = 'CLEAR'
         self.header       = ''
         
@@ -1270,7 +1271,7 @@ class TSO(object):
             The path of the output file
         """
         # Make the cards
-        cards = [('DATE', datetime.datetime.now().strftime("%Y-%m-%d%H:%M:%S"), 'Date file created yyyy-mm-ddThh:mm:ss, UTC'),
+        cards = [('DATE', datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), 'Date file created yyyy-mm-ddThh:mm:ss, UTC'),
                 ('FILENAME', outfile, 'Name of the file'),
                 ('DATAMODL', 'RampModel', 'Type of data model'),
                 ('ORIGIN', 'STScI', 'Institution responsible for creating FITS file'),
@@ -1291,7 +1292,7 @@ class TSO(object):
                 ('', '', ''),
                 ('COMMENT', '/ Observation identifiers', ''),
                 ('DATE-OBS', self.obs_date, 'UT date at start of exposure'),
-                ('TIME-OBS', self.obs_date, 'UT time at the start of exposure'),
+                ('TIME-OBS', self.obs_time, 'UT time at the start of exposure'),
                 ('OBS_ID', 'V87600007001P0000000002102', 'Programmatic observation identifier'),
                 ('VISIT_ID', '87600007001', 'Visit identifier'),
                 ('PROGRAM', '87600', 'Program number'),
@@ -1357,12 +1358,15 @@ class TSO(object):
                 ('DURATION', self.time[-1]-self.time[0], 'Total duration of exposure (sec)'),
                 ('NRSTSTRT', self.nresets, 'Number of resets at start of exposure'),
                 ('NRESETS', self.nresets, 'Number of resets between integrations'),
+                ('FWCPOS', float(75.02400207519531), ''),
+                ('PWCPOS', float(245.6344451904297), ''),
                 ('ZEROFRAM', False, 'Zero frame was downlinkws separately'),
                 ('DATAPROB', False, 'Science telemetry indicated a problem'),
                 ('SCA_NUM', 496, 'Sensor Chip Assembly number'),
                 ('DATAMODE', 91, 'post-processing method used in FPAP'),
                 ('COMPRSSD', False, 'data compressed on-board (T/F)'),
-                ('SUBARRAY', self.subarray, 'Subarray pattern name'),
+                ('SUBARRAY', True, 'Subarray pattern name'),
+                # ('SUBARRAY', self.subarray, 'Subarray pattern name'),
                 ('SUBSTRT1', 1, 'Starting pixel in axis 1 direction'),
                 ('SUBSTRT2', 1793, 'Starting pixel in axis 2 direction'),
                 ('SUBSIZE1', self.ncols, 'Number of pixels in axis 1 direction'),
@@ -1424,20 +1428,23 @@ class TSO(object):
                 ('VISITEND', '2017-03-02 15:58:45.36', 'Observatory UTC time when the visit st'),
                 ('WFSCFLAG', '', 'Wavefront sensing and control visit indicator'),
                 ('BSCALE', 1, ''),
-                ('BZERO', 32768, '')]
+                ('BZERO', 32768, ''),
+                ('NCOLS', float(self.nrows-1), ''),
+                ('NROWS', float(self.ncols-1), '')]
         
         # Make the header
         prihdr = fits.Header()
         for card in cards:
             prihdr.append(card, end=True)
-        
+            
         # Store the header in the object too
         self.header = prihdr
         
+        # Put data into detector coordinates
+        data = np.swapaxes(self.tso, 1, 2)[:, ::-1, ::-1]
+        
         # Make the HDUList
-        prihdu  = fits.PrimaryHDU(header=prihdr)
-        sci_hdu = fits.ImageHDU(data=self.tso, name='SCI')
-        hdulist = fits.HDUList([prihdu, sci_hdu])
+        prihdu = fits.PrimaryHDU(data=data, header=prihdr)
         
         # Write the file
         hdulist.writeto(outfile, overwrite=True)
