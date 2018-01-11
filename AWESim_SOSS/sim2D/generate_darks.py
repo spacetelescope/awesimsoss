@@ -76,7 +76,8 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, da
     np.random.seed(dark_seed)
         
     # Make empty data array
-    simulated_data = np.zeros([nints*ngrps,256,2048], dtype=np.float32)
+    nrows, ncols = darksignal.shape
+    simulated_data = np.zeros([nints*ngrps,nrows,ncols], dtype=np.float32)
     
     # Define some constants
     pedestal = 18.30
@@ -93,7 +94,7 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, da
     bias_offset = offset*gain
     
     # Define the HXRGN instance to make a SUSBSTRIP256 array (in detector coordinates)
-    noisecube = ng.HXRGNoise(naxis1=256, naxis2=2048, naxis3=ngrps, pca0_file=pca0_file, x0=0, y0=0, det_size=2048, verbose=False)
+    noisecube = ng.HXRGNoise(naxis1=nrows, naxis2=ncols, naxis3=ngrps, pca0_file=pca0_file, x0=0, y0=0, det_size=2048, verbose=False)
     
     # iterate over integrations
     for loop in range(nints):
@@ -101,7 +102,7 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, da
         ramp = noisecube.mknoise(c_pink=c_pink, u_pink=u_pink, bias_amp=bias_amp, bias_offset=bias_offset, acn=acn, pca0_amp=pca0_amp, rd_noise=rd_noise, pedestal=pedestal, dark_current=dark_current, dc_seed=dc_seed, noise_seed=seed1, gain=gain)
         ramp = np.transpose(ramp,(0,2,1))
         ramp = ramp[::,::-1,::-1]
-        ramp = add_dark_current(ramp,dc_seed,gain,darksignal)
+        ramp = add_dark_current(ramp, dc_seed, gain, darksignal)
         simulated_data[loop*ngrps:(loop+1)*ngrps,:,:] = np.copy(ramp)
         ramp = 0
         

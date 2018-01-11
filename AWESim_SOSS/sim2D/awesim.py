@@ -994,17 +994,18 @@ class TSO(object):
             The dark current offset
         """
         print('Adding noise to TSO...')
+        start = time.time()
         
         # Get the separated orders
         orders = np.asarray([self.tso_order1_ideal,self.tso_order2_ideal])
         
         # Load all the reference files
-        photon_yield = fits.getdata(DIR_PATH+'/files/photon_yield_dms.fits')
+        photon_yield = fits.getdata(DIR_PATH+'/files/photon_yield_dms.fits')[:,:self.nrows]
         pca0_file = DIR_PATH+'/files/niriss_pca0.fits'
-        zodi = fits.getdata(DIR_PATH+'/files/soss_zodiacal_background_scaled.fits')
-        nonlinearity = fits.getdata(DIR_PATH+'/files/substrip256_forward_coefficients_dms.fits')
-        pedestal = fits.getdata(DIR_PATH+'/files/substrip256pedestaldms.fits')
-        darksignal = fits.getdata(DIR_PATH+'/files/substrip256signaldms.fits')*self.gain
+        zodi = fits.getdata(DIR_PATH+'/files/soss_zodiacal_background_scaled.fits')[:self.nrows]
+        nonlinearity = fits.getdata(DIR_PATH+'/files/substrip256_forward_coefficients_dms.fits')[:,:self.nrows]
+        pedestal = fits.getdata(DIR_PATH+'/files/substrip256pedestaldms.fits')[:self.nrows]
+        darksignal = fits.getdata(DIR_PATH+'/files/substrip256signaldms.fits')[:self.nrows]*self.gain
         
         # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
@@ -1029,6 +1030,8 @@ class TSO(object):
             
             # Update the TSO with one containing noise
             self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
+            
+        print('Noise model finished:', time.time()-start)
         
     def plot_frame(self, frame='', scale='linear', order='', noise=True, cmap=cm.jet):
         """
@@ -1048,7 +1051,7 @@ class TSO(object):
             The color map to use
         """
         if order:
-            tso = getattr(self, 'tso_order{}'.format(order))
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             if noise:
                 tso = self.tso
@@ -1125,7 +1128,7 @@ class TSO(object):
             The frame number to plot
         """
         if order:
-            tso = getattr(self, 'tso_order{}'.format(order))
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             tso = self.tso
             
@@ -1198,7 +1201,7 @@ class TSO(object):
             The frame number to plot
         """
         if order:
-            tso = getattr(self, 'tso_order{}'.format(order))
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             tso = self.tso
         
