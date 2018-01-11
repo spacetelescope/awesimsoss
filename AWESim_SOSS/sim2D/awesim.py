@@ -3,6 +3,7 @@ A module to generate simulated 2D time-series SOSS data
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
+
 import os
 import sys
 import numpy as np
@@ -36,398 +37,136 @@ DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
-def dist(p0, Poly):
-    """
-    Calculate the minimum Euclidean distance from a point to a given polynomial
-    
-    Parameters
-    ----------
-    p0: sequence
-        The (x,y) coordinate of the point
-    Poly: sequence
-        The (X,Y) coordinates of the trace center in each column
-    
-    Returns
-    -------
-    float
-        The minimum distance from pixel (x,y) to the polynomial points (X,Y)
-    """
-    # Calculate the distance from each point on the line to p0
-    distances = np.sqrt((p0[0]-Poly[0])**2 + (p0[1]-Poly[1])**2)
-    d_min = np.min(distances)
-    
-    # Check if above or below the polynomial
-    d_min *= float(np.sign(p0[1] - Poly[1][np.argmin(distances)]))
-    
-    return d_min
+# ================================================================================
+# This is WIP code to alternately generate the SOSS trace using 2D webbpsf models
+# ================================================================================
+from skimage.transform import PiecewiseAffineTransform, warp
+from skimage import data
 
-def distance_map(order, coeffs='', subarr='SUBSTRIP256', generate=False, plot=False):
+def monochromatic(wavelength, filt, star_spectrum, star_params='', model_grid='', planet_spectrum='', planet_params=''):
     """
-    Generate a map where each pixel is the distance from the trace polynomial
+    For a given wavelength, generate the 2D psf an observer would see
     
     Parameters
     ----------
-    order: int
-        The order
-    coeffs: sequence (optional)
-        Custom polynomial coefficients of the trace
-    subarr: str
-        The subarray to use, ['SUBSTRIP96','SUBSTRIP256','FULL']
-    plot: bool
-        Plot the distance map
-    
-    Returns
-    -------
-    np.ndarray
-        An array the same shape as masked_data
-    
-    Example
-    -------
-    The default polynomials for CV3 data are
-    order1 = [1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01]
-    order2 = [2.35705513e-13, -2.62302311e-08, 1.65517682e-04, -3.19677081e-01, 2.81349581e+02]
-    """
-    # Set the polynomial coefficients to use
-    if not coeffs:
-            
-        if order==1:
-            coeffs = [1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01]
-        elif order==2:
-            coeffs = [2.35705513e-13, -2.62302311e-08, 1.65517682e-04, -3.19677081e-01, 2.81349581e+02]
-        else:
-            print('Order {} not supported.'.format(order))
-            
-    # If coefficients are provided, generate a new map
-    if isinstance(coeffs, (list, tuple, np.ndarray)) and generate:
-        
-        print('Generating distance map for order {} with coefficients {}...'.format(order,coeffs))
-        
-        # Get the dimensions
-        dims = (2048, SUBARRAY_Y[subarr])
-        
-        # Generate an array of pixel coordinates
-        flat = np.zeros(list(dims)+[2])
-        for i in range(4,2044):
-            for j in range(dims[1]):
-                flat[i,j] = (i,j)
-        flat = flat.reshape(np.prod(dims),2)
-        
-        # Make the (X,Y) coordinates of the polynomial on an oversampled grid
-        X = np.arange(4, 2044, 0.1)
-        Y = np.polyval(coeffs, X)
-        
-        # Set pixel independent inputs of distance function
-        func = partial(dist, Poly=(X,Y))
-        
-        # Run multiprocessing
-        pool = multiprocessing.Pool(8)
-        
-        # Generate the distance at each pixel
-        d_map = pool.map(func, flat)
-        
-        # Close the pool
-        pool.close()
-        pool.join()
-        
-        # Reshape into frame
-        d_map = np.asarray(d_map).reshape(dims).T
-        
-        # Write to file
-        joblib.dump(d_map, DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
-        
-    # Or just use the stored map
-    else:
-        d_map = joblib.load(DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
-        
-    if plot:
-        plt.figure(figsize=(13,2))
-        plt.title('Order {}'.format(order))
-        plt.imshow(d_map, interpolation='none', origin='lower')
-        try:
-            plt.plot(X, Y)
-            plt.xlim(0,2048)
-            plt.ylim(0,dims[1])
-        except:
-            pass
-        plt.colorbar()
-    
-    return d_map
-
-def generate_psf(filt, wavelength, oversample=4, to1D=False, plot=False, save=''):
-    """
-    Generate the SOSS psf with 'CLEAR' or 'F277W' filter
-    
-    Parameters
-    ----------
+    wavelength: astropy.units.quantity.Quantity
+        The wavelength value
     filt: str
         The filter to use, 'CLEAR' or 'F277W'
-    wavelength: float, sequence
-        The wavelength in microns
-    oversample: int
-        The factor by which the pixel grid will be mode finely sampled
-    plot: bool
-        Plot the 1D and 2D psf for visual inspection
-    
-    Returns
-    -------
-    np.ndarray
-        The 1D psf
+    stellar_params: sequence
+        The [Teff, logg, FeH] of the simulated star
+    model_grid: str, ExoCTK.core.ModelGrid
+        The model grid to use
     """
-    print("Generating the psf with {} filter and GR700XD pupil mask...".format(filt))
+    # Get the psf from webbpsf
+    psf2d = generate_psf(filt, wavelength.to(q.um))
     
-    # Get the NIRISS class from webbpsf and set the filter
-    ns = webbpsf.NIRISS()
-    ns.filter = filt
-    ns.pupil_mask = 'GR700XD'
-    
-    # For case where one wavelength is specified
-    if isinstance(wavelength, (int,float)):
-        wavelength = [wavelength]
-    
-    # Make an array for all psfs
-    psfs = []
-    for w in wavelength:
-        print('... at {} um ...'.format(w))
-        psf2D = ns.calcPSF(monochromatic=w*1E-6, oversample=oversample)[0].data
-        psfs.append(psf2D)
-    psfs = np.asarray(psfs)
-        
-    # Collapse to 1D
-    if to1D:
-        psfs = np.sum(psfs, axis=-2)
-        
-    # # Plot it
-    # if plot:
-    #     plt.figure(figsize=(6,9))
-    #     plt.suptitle('PSF for NIRISS GR700XD and {} filter'.format(filt))
-    #     gs = matplotlib.gridspec.GridSpec(2, 1, height_ratios=[3, 1])
-    #     ax1 = plt.subplot(gs[0])
-    #     ax1.imshow(psf2D)
-    #
-    #     ax2 = plt.subplot(gs[1])
-    #     ax2.plot(psf1D)
-    #     ax2.set_xlim(0,psf2D.shape[0])
-    #
-    #     plt.tight_layout()
-    
-    return psfs.squeeze()
+    # Get the limb darkening coefficients from ExoCTK.ldc
+    teff, logg, feh = stellar_params
+    ldcs = lf.ldc(teff, logg, feh, model_grid)
 
-def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
+def trace_from_webbpsf(psf_file, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01], plot=True):
     """
-    Calculate a time axis for the exposure in the given SOSS subarray
+    Construct the trace from the 2D psf generated by webbpsf at each wavelength
     
     Parameters
     ----------
-    subarray: str
-        The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
-    ngrps: int
-        The number of groups per integration
-    nints: int
-        The number of integrations for the exposure
-    t0: float
-        The start time of the exposure
-    nresets: int
-        The number of reset frames per integration
-    
-    Returns
-    -------
-    sequence
-        The time of each frame
-    """
-    # Check the subarray
-    if subarray not in ['SUBSTRIP256','SUBSTRIP96','FULL']:
-        subarray = 'SUBSTRIP256'
-        print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
-    
-    # Get the appropriate frame time
-    ft = FRAME_TIMES[subarray]
-    
-    # Generate the time axis, removing reset frames
-    time_axis = []
-    t = t0
-    for _ in range(nints):
-        times = t+np.arange(nresets+ngrps)*ft
-        t = times[-1]+ft
-        time_axis.append(times[nresets:])
-    
-    time_axis = np.concatenate(time_axis)
-    
-    return time_axis
-
-def psf_position(distance, filt='CLEAR', generate=False, plot=False):
-    """
-    Scale the flux based on the pixel's distance from the center of the cross dispersed psf
-    
-    Parameters
-    ----------
-    distance: float
-        The distance from the center of the pdf
-    filt: str
-        The filter used, 'CLEAR' or 'F277W'
-    generate: bool
-        Generate the psf from webbosf
+    psf_file: str, np.ndarray
+        The path to the numpy file with the psf at each wavelength
+    offset: int
+        A placeholder to set the trace in the center of the image
     plot: bool
-        Plot the psf and the interpolated position
+        Plot the trace
     
-    Returns
-    -------
-    float
-        The interpolated value from the psf
+    # TODO: Input a polynomial and then convolve the psf in each column with the trace center
     """
-    # Generate the PSF from webbpsf
-    if generate:
-        
-        # Generate the 1D psf
-        psf1D = generate_psf(filt)
-        
-    # Or just use these
+    # Load the psfs
+    if isinstance(psf_file, str):
+        psfs = np.load(psf_file)
+    elif isinstance(psf_file, np.ndarray):
+        psfs = psf_file
     else:
+        print('Cannot read that data. Please input a .npy file or 3D numpy array.')
+        return
         
-        if filt=='F277W':
-            psf1D = np.array([ 0.00019988, 0.0002117 , 0.00021934, 0.00023641, 0.00026375, 0.0003073 , 0.00033975, 0.0003496 , 0.00038376, 0.00044702, 0.00047626, 0.00046785, 0.0004981 , 0.000573 , 0.00067364, 0.00076275, 0.00088491, 0.00100102, 0.00111439, 0.00132894, 0.00162288, 0.00188021, 0.00240184, 0.00370172, 0.00555634, 0.0072683 , 0.01021882, 0.01486976, 0.02364649, 0.03089798, 0.03602238, 0.03632454, 0.02973947, 0.0199811 , 0.01537851, 0.01493862, 0.01572836, 0.02018245, 0.01958941, 0.01427322, 0.01350232, 0.01688971, 0.02418887, 0.03537919, 0.03975415, 0.03609305, 0.02878872, 0.02192827, 0.01334616, 0.00835515, 0.00543218, 0.00380858, 0.00249234, 0.00204165, 0.00180445, 0.00132019, 0.00095559, 0.00082456, 0.0008002 , 0.00074513, 0.00068732, 0.00060487, 0.00050018, 0.00046889, 0.00045214, 0.00042667, 0.00038588, 0.00037849, 0.00036246, 0.00032832, 0.00030491, 0.00028396, 0.00026219, 0.00023077, 0.00021248, 0.0001944 ])
-            
-        else:
-            psf1D = np.array([ 0.00013901, 0.00016542, 0.00015689, 0.00015623, 0.00017186, 0.00016965, 0.00018987, 0.00019185, 0.00023556, 0.00023899, 0.00029408, 0.00029346, 0.00035087, 0.00038025, 0.00042468, 0.00051199, 0.00066475, 0.00065935, 0.00089182, 0.00121465, 0.00148197, 0.00200335, 0.00266229, 0.00321626, 0.00485754, 0.00829491, 0.01690362, 0.02678705, 0.03461085, 0.03111909, 0.03046135, 0.02457325, 0.01972383, 0.02033947, 0.01575621, 0.01368122, 0.01234645, 0.01643781, 0.0200006 , 0.01972283, 0.0190382 , 0.02177633, 0.02355946, 0.02783534, 0.02869785, 0.03584818, 0.0343261 , 0.02788289, 0.0176711 , 0.00835883, 0.00510581, 0.0038801 , 0.00286961, 0.00192759, 0.00153765, 0.00103414, 0.00083634, 0.00078 , 0.00067393, 0.00050412, 0.00049817, 0.00041538, 0.00037431, 0.00035373, 0.00027228, 0.00027909, 0.00019483, 0.00020813, 0.00019951, 0.00017749, 0.00016526, 0.00016733, 0.00015403, 0.00013206, 0.00013329, 0.00011637])
-            
-    # Scale the transmission to 1
-    psf = psf1D/np.trapz(psf1D)
+    # Get the psf center (1/2 the 4x oversampled image = 1/8)
+    c = int(psfs.shape[1]/8)
     
-    # Shift the psf so that the points go from -38 to 38
-    l = len(psf)
-    x = np.linspace(-1*l/2., l/2., l)
+    # Empty trace (with padding for overflow)
+    final = np.zeros((2048+2*c,256))
     
-    # Interpolate lpsf to distance
-    val = np.interp(distance, x, psf)
+    # Place wavelength dependent psf in each column (i.e. wavelength)
+    for n,p in enumerate(psfs):
+        
+        # Downsample
+        z = zoom(p, 0.25)
+        
+        # Place the trace center in the correct column
+        final[n:n+c*2,:c*2] += z
+        
+    # Transpose to DMS orientation
+    final = final.T
+    
+    # Trim off padding
+    final = final[:,c:-c]
+    
+    # Add curvature from polynomial
+    final = warped(final, coeffs)
+    
+    # Plot it
+    if plot:
+        plt.figure(figsize=(13,2))
+        plt.imshow(final, origin='lower')
+        plt.xlim(0,2048)
+        plt.ylim(0,256)
+        
+    return final
+    
+def warped(image, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01], downsample=50, plot=False):
+    """
+    Warp a 2D image 
+    
+    Or perhaps use skimage.transform.estimate_transform to find the transformation
+    parameters between the wave_map and one where the columns are iso-wavelengths.
+    Then use this to transform the input linear image.
+    """
+    # Get the image dimensions
+    rows, cols = image.shape
+    
+    # Generate the control points
+    src_cols = np.linspace(0, cols, cols//downsample)
+    src_rows = np.linspace(0, rows, rows//downsample)
+    src_rows, src_cols = np.meshgrid(src_rows, src_cols)
+    src = np.dstack([src_cols.flat, src_rows.flat])[0]
+    
+    # Calculate the y-intercept of the curved trace
+    y_int = coeffs[-1]+2*76
+    
+    # Add curvature to control points
+    dst_cols = src[:,0]
+    dst_rows = src[:,1]+np.polyval(coeffs, dst_cols)-y_int
+    dst = np.vstack([dst_cols, dst_rows]).T
+    
+    # Perform transform
+    tform = PiecewiseAffineTransform()
+    tform.estimate(src, dst)
+    out = warp(image, tform, output_shape=(rows, cols))
+    
+    # DMS coordinates
+    out = out[::-1,::-1]
+    
+    # Fill in background with smallest non-zero value
+    out[out==0] = np.min(out[out>0])
     
     if plot:
-        plt.plot(x, psf)
-        plt.scatter(distance, val, c='r', zorder=5)
+        plt.figure()
+        plt.imshow(out, origin='lower', norm=matplotlib.colors.LogNorm())
         
-    return val
+    return out
 
-def lambda_lightcurve(wavelength, response, psf_loc, pfd2adu, ld_coeffs, ld_profile, star, planet, time, params, filt, trace_radius=25, snr=100, floor=2, plot=False, verbose=False):
-    """
-    Generate a lightcurve for a given wavelength
-    
-    Parameters
-    ----------
-    wavelength: float
-        The wavelength value in microns
-    response: float
-        The spectral response of the detector at the given wavelength
-    psf_loc: float
-        The location on the psf given the Euclidean distance from the trace center
-    ld_coeffs: array-like
-        A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
-    ld_profile: str
-        The limb darkening profile to use
-    pfd2adu: sequence
-        The factor that converts photon flux density to ADU/s
-    star: sequence
-        The wavelength and flux of the star
-    planet: sequence
-        The wavelength and Rp/R* of the planet at t=0 
-    t: sequence
-        The time axis for the TSO
-    params: batman.transitmodel.TransitParams
-        The transit parameters of the planet
-    filt: str
-        The filter to apply, ['CLEAR','F277W']
-    throughput: float
-        The CLEAR or F277W filter throughput at the given wavelength
-    trace_radius: int
-        The radius of the trace
-    snr: float
-        The signal-to-noise for the observations
-    floor: int
-        The noise floor in counts
-    extend: int
-        The number of points to extend the lpsf wings by
-    plot: bool
-        Plot the lightcurve
-    verbose: bool
-        Print some details
-    
-    Returns
-    -------
-    sequence
-        A 1D array of the lightcurve with the same length as *t* 
-    """
-    nframes = len(time)
-    
-    if not isinstance(ld_coeffs, list) or not isinstance(ld_coeffs, np.ndarray):
-        ld_coeffs  = [ld_coeffs]
-        ld_profile = 'linear'
-    
-    # If it's a background pixel, it's just noise
-    if psf_loc>trace_radius \
-    or psf_loc<-trace_radius \
-    or wavelength<np.nanmin(star[0].value) \
-    or (filt=='F277W' and wavelength<2.36989) \
-    or (filt=='F277W' and wavelength>3.22972):
-        
-        # flux = np.abs(np.random.normal(loc=floor, scale=1, size=nframes))
-        flux = np.repeat(floor, nframes)
-        
-    else:
-        
-        # I = (Stellar Flux)*(LDC)*(Transit Depth)*(Filter Throughput)*(PSF position)
-        # Don't use astropy units! It quadruples the computing time!
-        
-        # Get the energy flux density [erg/s/cm2/A] at the given wavelength [um] at t=t0
-        flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)
-        if verbose:
-            print('Energy Flux Density [erg/s/cm2/A]:',flux0)
-        
-        # Convert from energy flux density [erg/s/cm2/A] to photon flux density
-        # [photons/s/cm2/A] by multiplying by (lambda/h*c)
-        flux0 *= wavelength*503411665111.4543 # [1/erg*um]
-        if verbose:
-            print('Photon Flux Density [1/s/cm2/A]:',flux0)
-        
-        # Convert from photon flux density to ADU/s by multiplying by the wavelength 
-        # interval [um/pixel] and primary mirror area [cm2], and dividing by the gain [e-/ADU]
-        flux0 *= pfd2adu
-        if verbose:
-            print('Count Rate [ADU/s * 1/e-]:',flux0)
-        
-        # Expand to shape of time axis
-        flux = np.repeat(flux0, nframes)
-        
-        # If there is a transiting planet...
-        if not isinstance(planet,str):
-            
-            # Set the wavelength dependent orbital parameters
-            params.limb_dark = ld_profile
-            params.u = ld_coeffs
-            
-            # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
-            tdepth = np.interp(wavelength, planet[0], planet[1])
-            params.rp = np.sqrt(tdepth)
-            
-            # Generate the light curve for this pixel
-            model = batman.TransitModel(params, time) 
-            lightcurve = model.light_curve(params)
-            
-            # Scale the flux with the lightcurve
-            flux *= lightcurve
-            
-        # Apply the filter response
-        flux *= response
-        
-        # Scale pixel based on distance from the center of the cross-dispersed psf
-        flux *= psf_loc
-        
-        # Replace very low signal pixels with noise floor
-        flux[flux<floor] += np.repeat(floor, len(flux[flux<floor]))
-        
-        # Plot
-        if plot:
-            plt.plot(t, flux)
-            plt.xlabel("Time from central transit")
-            plt.ylabel("Flux Density [photons/s/cm2/A]")
-        
-    return flux
+# ================================================================================
+# ================================================================================
+# ================================================================================
 
 def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
     """
@@ -604,6 +343,445 @@ def ld_coefficient_map(lookup_file, subarray='SUBSTRIP256', save=''):
         
         return ld_coeffs
 
+def trace_polynomial(trace, start=4, end=2040, order=4):
+    # Make a scatter plot where the pixels in each column are offset by a small amount
+    x, y = [], []
+    for n,col in enumerate(trace.T):
+        vals = np.where(~col)
+        if vals:
+            v = list(vals[0])
+            y += v
+            x += list(np.random.normal(n, 1E-16, size=len(v)))
+            
+    # Now fit a polynomial to it!
+    height, length = trace.shape
+    coeffs = np.polyfit(x[start:], y[start:], order)
+    print(coeffs)
+    X = np.arange(start, length, 1)
+    Y = np.polyval(coeffs, X)
+    
+    return X, Y
+
+def distance_map(order, coeffs='', subarr='SUBSTRIP256', generate=False, plot=False):
+    """
+    Generate a map where each pixel is the distance from the trace polynomial
+    
+    Parameters
+    ----------
+    order: int
+        The order
+    coeffs: sequence (optional)
+        Custom polynomial coefficients of the trace
+    subarr: str
+        The subarray to use, ['SUBSTRIP96','SUBSTRIP256','FULL']
+    plot: bool
+        Plot the distance map
+    
+    Returns
+    -------
+    np.ndarray
+        An array the same shape as masked_data
+    
+    Example
+    -------
+    The default polynomials for CV3 data are
+    order1 = [1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01]
+    order2 = [2.35705513e-13, -2.62302311e-08, 1.65517682e-04, -3.19677081e-01, 2.81349581e+02]
+    """
+    # Set the polynomial coefficients to use
+    if not coeffs:
+            
+        if order==1:
+            coeffs = [1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01]
+        elif order==2:
+            coeffs = [2.35705513e-13, -2.62302311e-08, 1.65517682e-04, -3.19677081e-01, 2.81349581e+02]
+        else:
+            print('Order {} not supported.'.format(order))
+            
+    # If coefficients are provided, generate a new map
+    if isinstance(coeffs, (list, tuple, np.ndarray)) and generate:
+        
+        print('Generating distance map for order {} with coefficients {}...'.format(order,coeffs))
+        
+        # Get the dimensions
+        dims = (2048, SUBARRAY_Y[subarr])
+        
+        # Generate an array of pixel coordinates
+        flat = np.zeros(list(dims)+[2])
+        for i in range(4,2044):
+            for j in range(dims[1]):
+                flat[i,j] = (i,j)
+        flat = flat.reshape(np.prod(dims),2)
+        
+        # Make the (X,Y) coordinates of the polynomial on an oversampled grid
+        X = np.arange(4, 2044, 0.1)
+        Y = np.polyval(coeffs, X)
+        
+        # Set pixel independent inputs of distance function
+        func = partial(dist, Poly=(X,Y))
+        
+        # Run multiprocessing
+        pool = multiprocessing.Pool(8)
+        
+        # Generate the distance at each pixel
+        d_map = pool.map(func, flat)
+        
+        # Close the pool
+        pool.close()
+        pool.join()
+        
+        # Reshape into frame
+        d_map = np.asarray(d_map).reshape(dims).T
+        
+        # Write to file
+        joblib.dump(d_map, DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
+        
+    # Or just use the stored map
+    else:
+        d_map = joblib.load(DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
+        
+    if plot:
+        plt.figure(figsize=(13,2))
+        plt.title('Order {}'.format(order))
+        plt.imshow(d_map, interpolation='none', origin='lower')
+        try:
+            plt.plot(X, Y)
+            plt.xlim(0,2048)
+            plt.ylim(0,dims[1])
+        except:
+            pass
+        plt.colorbar()
+    
+    return d_map
+
+def dist(p0, Poly):
+    """
+    Calculate the minimum Euclidean distance from a point to a given polynomial
+    
+    Parameters
+    ----------
+    p0: sequence
+        The (x,y) coordinate of the point
+    Poly: sequence
+        The (X,Y) coordinates of the trace center in each column
+    
+    Returns
+    -------
+    float
+        The minimum distance from pixel (x,y) to the polynomial points (X,Y)
+    """
+    # Calculate the distance from each point on the line to p0
+    distances = np.sqrt((p0[0]-Poly[0])**2 + (p0[1]-Poly[1])**2)
+    d_min = np.min(distances)
+    
+    # Check if above or below the polynomial
+    d_min *= float(np.sign(p0[1] - Poly[1][np.argmin(distances)]))
+    
+    return d_min
+
+def generate_psf(filt, wavelength, oversample=4, to1D=False, plot=False, save=''):
+    """
+    Generate the SOSS psf with 'CLEAR' or 'F277W' filter
+    
+    Parameters
+    ----------
+    filt: str
+        The filter to use, 'CLEAR' or 'F277W'
+    wavelength: float, sequence
+        The wavelength in microns
+    oversample: int
+        The factor by which the pixel grid will be mode finely sampled
+    plot: bool
+        Plot the 1D and 2D psf for visual inspection
+    
+    Returns
+    -------
+    np.ndarray
+        The 1D psf
+    """
+    print("Generating the psf with {} filter and GR700XD pupil mask...".format(filt))
+    
+    # Get the NIRISS class from webbpsf and set the filter
+    ns = webbpsf.NIRISS()
+    ns.filter = filt
+    ns.pupil_mask = 'GR700XD'
+    
+    # For case where one wavelength is specified
+    if isinstance(wavelength, (int,float)):
+        wavelength = [wavelength]
+    
+    # Make an array for all psfs
+    psfs = []
+    for w in wavelength:
+        print('... at {} um ...'.format(w))
+        psf2D = ns.calcPSF(monochromatic=w*1E-6, oversample=oversample)[0].data
+        psfs.append(psf2D)
+    psfs = np.asarray(psfs)
+        
+    # Collapse to 1D
+    if to1D:
+        psfs = np.sum(psfs, axis=-2)
+        
+    # # Plot it
+    # if plot:
+    #     plt.figure(figsize=(6,9))
+    #     plt.suptitle('PSF for NIRISS GR700XD and {} filter'.format(filt))
+    #     gs = matplotlib.gridspec.GridSpec(2, 1, height_ratios=[3, 1])
+    #     ax1 = plt.subplot(gs[0])
+    #     ax1.imshow(psf2D)
+    #
+    #     ax2 = plt.subplot(gs[1])
+    #     ax2.plot(psf1D)
+    #     ax2.set_xlim(0,psf2D.shape[0])
+    #
+    #     plt.tight_layout()
+    
+    return psfs.squeeze()
+
+def psf_position(distance, filt='CLEAR', generate=False, plot=False):
+    """
+    Scale the flux based on the pixel's distance from the center of the cross dispersed psf
+    
+    Parameters
+    ----------
+    distance: float
+        The distance from the center of the pdf
+    filt: str
+        The filter used, 'CLEAR' or 'F277W'
+    generate: bool
+        Generate the psf from webbosf
+    plot: bool
+        Plot the psf and the interpolated position
+    
+    Returns
+    -------
+    float
+        The interpolated value from the psf
+    """
+    # Generate the PSF from webbpsf
+    if generate:
+        
+        # Generate the 1D psf
+        psf1D = generate_psf(filt)
+        
+    # Or just use these
+    else:
+        
+        if filt=='F277W':
+            psf1D = np.array([ 0.00019988, 0.0002117 , 0.00021934, 0.00023641, 0.00026375, 0.0003073 , 0.00033975, 0.0003496 , 0.00038376, 0.00044702, 0.00047626, 0.00046785, 0.0004981 , 0.000573 , 0.00067364, 0.00076275, 0.00088491, 0.00100102, 0.00111439, 0.00132894, 0.00162288, 0.00188021, 0.00240184, 0.00370172, 0.00555634, 0.0072683 , 0.01021882, 0.01486976, 0.02364649, 0.03089798, 0.03602238, 0.03632454, 0.02973947, 0.0199811 , 0.01537851, 0.01493862, 0.01572836, 0.02018245, 0.01958941, 0.01427322, 0.01350232, 0.01688971, 0.02418887, 0.03537919, 0.03975415, 0.03609305, 0.02878872, 0.02192827, 0.01334616, 0.00835515, 0.00543218, 0.00380858, 0.00249234, 0.00204165, 0.00180445, 0.00132019, 0.00095559, 0.00082456, 0.0008002 , 0.00074513, 0.00068732, 0.00060487, 0.00050018, 0.00046889, 0.00045214, 0.00042667, 0.00038588, 0.00037849, 0.00036246, 0.00032832, 0.00030491, 0.00028396, 0.00026219, 0.00023077, 0.00021248, 0.0001944 ])
+            
+        else:
+            psf1D = np.array([ 0.00013901, 0.00016542, 0.00015689, 0.00015623, 0.00017186, 0.00016965, 0.00018987, 0.00019185, 0.00023556, 0.00023899, 0.00029408, 0.00029346, 0.00035087, 0.00038025, 0.00042468, 0.00051199, 0.00066475, 0.00065935, 0.00089182, 0.00121465, 0.00148197, 0.00200335, 0.00266229, 0.00321626, 0.00485754, 0.00829491, 0.01690362, 0.02678705, 0.03461085, 0.03111909, 0.03046135, 0.02457325, 0.01972383, 0.02033947, 0.01575621, 0.01368122, 0.01234645, 0.01643781, 0.0200006 , 0.01972283, 0.0190382 , 0.02177633, 0.02355946, 0.02783534, 0.02869785, 0.03584818, 0.0343261 , 0.02788289, 0.0176711 , 0.00835883, 0.00510581, 0.0038801 , 0.00286961, 0.00192759, 0.00153765, 0.00103414, 0.00083634, 0.00078 , 0.00067393, 0.00050412, 0.00049817, 0.00041538, 0.00037431, 0.00035373, 0.00027228, 0.00027909, 0.00019483, 0.00020813, 0.00019951, 0.00017749, 0.00016526, 0.00016733, 0.00015403, 0.00013206, 0.00013329, 0.00011637])
+            
+    # Scale the transmission to 1
+    psf = psf1D/np.trapz(psf1D)
+    
+    # Shift the psf so that the points go from -38 to 38
+    l = len(psf)
+    x = np.linspace(-1*l/2., l/2., l)
+    
+    # Interpolate lpsf to distance
+    val = np.interp(distance, x, psf)
+    
+    if plot:
+        plt.plot(x, psf)
+        plt.scatter(distance, val, c='r', zorder=5)
+        
+    return val
+
+def lambda_lightcurve(wavelength, response, psf_loc, pfd2adu, ld_coeffs, ld_profile, star, planet, time, params, filt, trace_radius=25, snr=100, floor=2, plot=False, verbose=False):
+    """
+    Generate a lightcurve for a given wavelength
+    
+    Parameters
+    ----------
+    wavelength: float
+        The wavelength value in microns
+    response: float
+        The spectral response of the detector at the given wavelength
+    psf_loc: float
+        The location on the psf given the Euclidean distance from the trace center
+    ld_coeffs: array-like
+        A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
+    ld_profile: str
+        The limb darkening profile to use
+    pfd2adu: sequence
+        The factor that converts photon flux density to ADU/s
+    star: sequence
+        The wavelength and flux of the star
+    planet: sequence
+        The wavelength and Rp/R* of the planet at t=0 
+    t: sequence
+        The time axis for the TSO
+    params: batman.transitmodel.TransitParams
+        The transit parameters of the planet
+    filt: str
+        The filter to apply, ['CLEAR','F277W']
+    throughput: float
+        The CLEAR or F277W filter throughput at the given wavelength
+    trace_radius: int
+        The radius of the trace
+    snr: float
+        The signal-to-noise for the observations
+    floor: int
+        The noise floor in counts
+    extend: int
+        The number of points to extend the lpsf wings by
+    plot: bool
+        Plot the lightcurve
+    verbose: bool
+        Print some details
+    
+    Returns
+    -------
+    sequence
+        A 1D array of the lightcurve with the same length as *t* 
+    """
+    nframes = len(time)
+    
+    if not isinstance(ld_coeffs, list) or not isinstance(ld_coeffs, np.ndarray):
+        ld_coeffs  = [ld_coeffs]
+        ld_profile = 'linear'
+    
+    # If it's a background pixel, it's just noise
+    if psf_loc>trace_radius \
+    or psf_loc<-trace_radius \
+    or wavelength<np.nanmin(star[0].value) \
+    or (filt=='F277W' and wavelength<2.36989) \
+    or (filt=='F277W' and wavelength>3.22972):
+        
+        # flux = np.abs(np.random.normal(loc=floor, scale=1, size=nframes))
+        flux = np.repeat(floor, nframes)
+        
+    else:
+        
+        # I = (Stellar Flux)*(LDC)*(Transit Depth)*(Filter Throughput)*(PSF position)
+        # Don't use astropy units! It quadruples the computing time!
+        
+        # Get the energy flux density [erg/s/cm2/A] at the given wavelength [um] at t=t0
+        flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)
+        if verbose:
+            print('Energy Flux Density [erg/s/cm2/A]:',flux0)
+        
+        # Convert from energy flux density [erg/s/cm2/A] to photon flux density
+        # [photons/s/cm2/A] by multiplying by (lambda/h*c)
+        flux0 *= wavelength*503411665111.4543 # [1/erg*um]
+        if verbose:
+            print('Photon Flux Density [1/s/cm2/A]:',flux0)
+        
+        # Convert from photon flux density to ADU/s by multiplying by the wavelength 
+        # interval [um/pixel] and primary mirror area [cm2], and dividing by the gain [e-/ADU]
+        flux0 *= pfd2adu
+        if verbose:
+            print('Count Rate [ADU/s * 1/e-]:',flux0)
+        
+        # Expand to shape of time axis
+        flux = np.repeat(flux0, nframes)
+        
+        # If there is a transiting planet...
+        if not isinstance(planet,str):
+            
+            # Set the wavelength dependent orbital parameters
+            params.limb_dark = ld_profile
+            params.u = ld_coeffs
+            
+            # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
+            tdepth = np.interp(wavelength, planet[0], planet[1])
+            params.rp = np.sqrt(tdepth)
+            
+            # Generate the light curve for this pixel
+            model = batman.TransitModel(params, time) 
+            lightcurve = model.light_curve(params)
+            
+            # Scale the flux with the lightcurve
+            flux *= lightcurve
+            
+        # Apply the filter response
+        flux *= response
+        
+        # Scale pixel based on distance from the center of the cross-dispersed psf
+        flux *= psf_loc
+        
+        # Replace very low signal pixels with noise floor
+        flux[flux<floor] += np.repeat(floor, len(flux[flux<floor]))
+        
+        # Plot
+        if plot:
+            plt.plot(t, flux)
+            plt.xlabel("Time from central transit")
+            plt.ylabel("Flux Density [photons/s/cm2/A]")
+        
+    return flux
+
+def wave_solutions(subarr, directory=DIR_PATH+'/files/soss_wavelengths_fullframe.fits'):
+    """
+    Get the wavelength maps for SOSS orders 1, 2, and 3
+    This will be obsolete once the apply_wcs step of the JWST pipeline
+    is in place.
+     
+    Parameters
+    ==========
+    subarr: str
+        The subarray to return, accepts '96', '256', or 'full'
+    directory: str
+        The directory containing the wavelength FITS files
+        
+    Returns
+    =======
+    np.ndarray
+        An array of the wavelength solutions for orders 1, 2, and 3
+    """
+    try:
+        idx = int(subarr)
+    except:
+        idx = None
+    
+    wave = fits.getdata(directory).swapaxes(-2,-1)[:,:idx]
+    
+    return wave
+
+def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
+    """
+    Calculate a time axis for the exposure in the given SOSS subarray
+    
+    Parameters
+    ----------
+    subarray: str
+        The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
+    ngrps: int
+        The number of groups per integration
+    nints: int
+        The number of integrations for the exposure
+    t0: float
+        The start time of the exposure
+    nresets: int
+        The number of reset frames per integration
+    
+    Returns
+    -------
+    sequence
+        The time of each frame
+    """
+    # Check the subarray
+    if subarray not in ['SUBSTRIP256','SUBSTRIP96','FULL']:
+        subarray = 'SUBSTRIP256'
+        print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
+    
+    # Get the appropriate frame time
+    ft = FRAME_TIMES[subarray]
+    
+    # Generate the time axis, removing reset frames
+    time_axis = []
+    t = t0
+    for _ in range(nints):
+        times = t+np.arange(nresets+ngrps)*ft
+        t = times[-1]+ft
+        time_axis.append(times[nresets:])
+    
+    time_axis = np.concatenate(time_axis)
+    
+    return time_axis
+
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
@@ -702,13 +880,13 @@ class TSO(object):
             setattr(self, p, getattr(self.params, p))
             
         # Create the empty exposure
-        dims = (self.nframes, self.nrows, self.ncols)
-        self.tso = np.zeros(dims)
-        self.tso_ideal = np.zeros(dims)
-        self.tso_order1 = np.zeros(dims)
-        self.tso_order2 = np.zeros(dims)
+        self.dims = (self.nframes, self.nrows, self.ncols)
+        self.tso = np.zeros(self.dims)
+        self.tso_ideal = np.zeros(self.dims)
+        self.tso_order1_ideal = np.zeros(self.dims)
+        self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, orders=[1,2], filt='CLEAR', noise=True):
+    def run_simulation(self, orders=[1,2], filt='CLEAR'):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -718,9 +896,11 @@ class TSO(object):
             The orders to simulate
         filt: str
             The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
-        noise: bool
-            Run add_noise method to generate ramps with noise
         """
+        # Clear previous results
+        self.tso = np.zeros(self.dims)
+        self.tso_ideal = np.zeros(self.dims)
+        
         # Set single order to list
         if isinstance(orders,int):
             orders = [orders]
@@ -791,21 +971,16 @@ class TSO(object):
             
             # Clean up and time of execution
             tso_order = np.asarray(lightcurves).swapaxes(0,1).reshape([self.nframes, self.nrows, self.ncols])
-            
             print('Order {} light curves finished: '.format(order), time.time()-start)
             
-            # Add to the master TSO
-            self.tso += tso_order
+            # Save the individual order
+            setattr(self, 'tso_order{}_ideal'.format(order), tso_order)
             
-            # Add it to the individual order
-            setattr(self, 'tso_order{}'.format(order), tso_order)
-            
-        # Add noise to the observations using Kevin Volk's dark ramp simulator
-        self.tso_ideal = self.tso.copy()
+        # Combine the orders
+        self.tso_ideal = np.sum([self.tso_order1_ideal,self.tso_order2_ideal], axis=0)
         
         # Add noise and ramps
-        if noise:
-            self.add_noise()
+        self.add_noise()
     
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -821,7 +996,7 @@ class TSO(object):
         print('Adding noise to TSO...')
         
         # Get the separated orders
-        orders = np.asarray([self.tso_order1,self.tso_order2])
+        orders = np.asarray([self.tso_order1_ideal,self.tso_order2_ideal])
         
         # Load all the reference files
         photon_yield = fits.getdata(DIR_PATH+'/files/photon_yield_dms.fits')
@@ -846,10 +1021,10 @@ class TSO(object):
             # Add in the SOSS signal
             ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
             
-            # apply the non-linearity function
+            # Apply the non-linearity function
             ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
             
-            # add the pedestal to each frame in the integration
+            # Add the pedestal to each frame in the integration
             ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
             
             # Update the TSO with one containing noise
@@ -1266,161 +1441,3 @@ class TSO(object):
         hdulist.close()
         
         print('File saved as',outfile)
-
-def wave_solutions(subarr, directory=DIR_PATH+'/files/soss_wavelengths_fullframe.fits'):
-    """
-    Get the wavelength maps for SOSS orders 1, 2, and 3
-    This will be obsolete once the apply_wcs step of the JWST pipeline
-    is in place.
-     
-    Parameters
-    ==========
-    subarr: str
-        The subarray to return, accepts '96', '256', or 'full'
-    directory: str
-        The directory containing the wavelength FITS files
-        
-    Returns
-    =======
-    np.ndarray
-        An array of the wavelength solutions for orders 1, 2, and 3
-    """
-    try:
-        idx = int(subarr)
-    except:
-        idx = None
-    
-    wave = fits.getdata(directory).swapaxes(-2,-1)[:,:idx]
-    
-    return wave
-    
-# ================================================================================
-# This is WIP code to alternately generate the SOSS trace using 2D webbpsf models
-# ================================================================================
-from skimage.transform import PiecewiseAffineTransform, warp
-from skimage import data
-
-def monochromatic(wavelength, filt, star_spectrum, star_params='', model_grid='', planet_spectrum='', planet_params=''):
-    """
-    For a given wavelength, generate the 2D psf an observer would see
-    
-    Parameters
-    ----------
-    wavelength: astropy.units.quantity.Quantity
-        The wavelength value
-    filt: str
-        The filter to use, 'CLEAR' or 'F277W'
-    stellar_params: sequence
-        The [Teff, logg, FeH] of the simulated star
-    model_grid: str, ExoCTK.core.ModelGrid
-        The model grid to use
-    """
-    # Get the psf from webbpsf
-    psf2d = generate_psf(filt, wavelength.to(q.um))
-    
-    # Get the limb darkening coefficients from ExoCTK.ldc
-    teff, logg, feh = stellar_params
-    ldcs = lf.ldc(teff, logg, feh, model_grid)
-
-def trace_from_webbpsf(psf_file, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01], plot=True):
-    """
-    Construct the trace from the 2D psf generated by webbpsf at each wavelength
-    
-    Parameters
-    ----------
-    psf_file: str, np.ndarray
-        The path to the numpy file with the psf at each wavelength
-    offset: int
-        A placeholder to set the trace in the center of the image
-    plot: bool
-        Plot the trace
-    
-    # TODO: Input a polynomial and then convolve the psf in each column with the trace center
-    """
-    # Load the psfs
-    if isinstance(psf_file, str):
-        psfs = np.load(psf_file)
-    elif isinstance(psf_file, np.ndarray):
-        psfs = psf_file
-    else:
-        print('Cannot read that data. Please input a .npy file or 3D numpy array.')
-        return
-        
-    # Get the psf center (1/2 the 4x oversampled image = 1/8)
-    c = int(psfs.shape[1]/8)
-    
-    # Empty trace (with padding for overflow)
-    final = np.zeros((2048+2*c,256))
-    
-    # Place wavelength dependent psf in each column (i.e. wavelength)
-    for n,p in enumerate(psfs):
-        
-        # Downsample
-        z = zoom(p, 0.25)
-        
-        # Place the trace center in the correct column
-        final[n:n+c*2,:c*2] += z
-        
-    # Transpose to DMS orientation
-    final = final.T
-    
-    # Trim off padding
-    final = final[:,c:-c]
-    
-    # Add curvature from polynomial
-    final = warped(final, coeffs)
-    
-    # Plot it
-    if plot:
-        plt.figure(figsize=(13,2))
-        plt.imshow(final, origin='lower')
-        plt.xlim(0,2048)
-        plt.ylim(0,256)
-        
-    return final
-    
-def warped(image, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01], downsample=50, plot=False):
-    """
-    Warp a 2D image 
-    
-    Or perhaps use skimage.transform.estimate_transform to find the transformation
-    parameters between the wave_map and one where the columns are iso-wavelengths.
-    Then use this to transform the input linear image.
-    """
-    # Get the image dimensions
-    rows, cols = image.shape
-    
-    # Generate the control points
-    src_cols = np.linspace(0, cols, cols//downsample)
-    src_rows = np.linspace(0, rows, rows//downsample)
-    src_rows, src_cols = np.meshgrid(src_rows, src_cols)
-    src = np.dstack([src_cols.flat, src_rows.flat])[0]
-    
-    # Calculate the y-intercept of the curved trace
-    y_int = coeffs[-1]+2*76
-    
-    # Add curvature to control points
-    dst_cols = src[:,0]
-    dst_rows = src[:,1]+np.polyval(coeffs, dst_cols)-y_int
-    dst = np.vstack([dst_cols, dst_rows]).T
-    
-    # Perform transform
-    tform = PiecewiseAffineTransform()
-    tform.estimate(src, dst)
-    out = warp(image, tform, output_shape=(rows, cols))
-    
-    # DMS coordinates
-    out = out[::-1,::-1]
-    
-    # Fill in background with smallest non-zero value
-    out[out==0] = np.min(out[out>0])
-    
-    if plot:
-        plt.figure()
-        plt.imshow(out, origin='lower', norm=matplotlib.colors.LogNorm())
-        
-    return out
-
-# ================================================================================
-# ================================================================================
-# ================================================================================
