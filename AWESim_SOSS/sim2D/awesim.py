@@ -1447,7 +1447,6 @@ class TSO(object):
         prihdu = fits.PrimaryHDU(data=data, header=prihdr)
         
         # Write the file
-        hdulist.writeto(outfile, overwrite=True)
-        hdulist.close()
+        prihdu.writeto(outfile, overwrite=True)
         
         print('File saved as',outfile)
