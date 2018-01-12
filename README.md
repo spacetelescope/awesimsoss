@@ -70,8 +70,7 @@ params.w = 90.                                # longitude of periastron (in degr
 Now the code to generate a simulated planetary transit might look like:
 
 ```python
-tso_planet = awesim.TSO(5, 20, star1D, planet1D, params)
-tso_planet.run_simulation()
+tso_planet.run_simulation(planet=planet1D, params=params)
 ```
 
 We can write this to a FITS file directly ingestible by the JWST pipeline with:

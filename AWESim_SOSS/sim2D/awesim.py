@@ -789,15 +789,7 @@ class TSO(object):
     Generate NIRISS SOSS time series observations
     """
 
-    def __init__(self, ngrps, nints, star,
-                        planet      = '', 
-                        params      = '', 
-                        ld_coeffs   = '', 
-                        ld_profile  = 'quadratic',
-                        snr         = 700,
-                        subarray    = 'SUBSTRIP256',
-                        t0          = 0,
-                        target      = ''):
+    def __init__(self, ngrps, nints, star, snr=700, subarray='SUBSTRIP256', t0=0, target=''):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -809,14 +801,6 @@ class TSO(object):
             The number of integrations for the exposure
         star: sequence
             The wavelength and flux of the star
-        planet: sequence (optional)
-            The wavelength and Rp/R* of the planet at t=0 
-        params: batman.transitmodel.TransitParams (optional)
-            The transit parameters of the planet
-        ld_coeffs: array-like (optional)
-            A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
-        ld_profile: str (optional)
-            The limb darkening profile to use
         snr: float
             The signal-to-noise
         subarray: str
@@ -834,6 +818,7 @@ class TSO(object):
         DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
         star = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+        planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
         
         # Simulate star without transiting planet
         tso = awesim.TSO(ngrps=5, nints=20, star=star1D)
@@ -847,8 +832,11 @@ class TSO(object):
         params.inc = 89.8                             # orbital inclination (in degrees)
         params.ecc = 0.                               # eccentricity
         params.w = 90.                                # longitude of periastron (in degrees)
+        params.teff = 3500                            # effective temperature of the host star
+        params.logg = 5                               # log surface gravity of the host star
+        params.feh = 0                                # metallicity of the host star
         tso_planet = awesim.TSO(5, 20, star1D, planet1D, params)
-        tso_planet.run_simulation()
+        tso.run_simulation(planet=planet1D, params=params)
         """
         # Set instance attributes for the exposure
         self.subarray     = subarray
@@ -865,22 +853,15 @@ class TSO(object):
         self.obs_time     = '23:37:52.226'
         self.filter       = 'CLEAR'
         self.header       = ''
-        
-        # ========================================================================
-        # ========================================================================
-        # Change this to accept StellarModel onbject for star and planet and
-        # move planet params and transmission spectrum input to run_simulation()
-        # ========================================================================
-        # ========================================================================
+        self.snr = snr
         
         # Set instance attributes for the target
-        self.star         = star
-        self.planet       = planet
-        self.params       = params
-        self.ld_coeffs    = ld_coeffs or np.zeros((2, self.nrows*self.ncols, 2))
-        self.ld_profile   = ld_profile or 'quadratic'
-        self.snr          = snr
-        self.wave         = wave_solutions(str(self.nrows))
+        self.star = star
+        self.wave = wave_solutions(str(self.nrows))
+        self.planet = ''
+        self.params = ''
+        self.ld_profile = ''
+        self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
         
         # Calculate a map for each order that converts photon flux density to ADU/s
         self.gain = 1.61 # [e-/ADU]
@@ -903,16 +884,24 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, orders=[1,2], filt='CLEAR'):
+    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs=''):
         """
         Generate the simulated 2D data given the initialized TSO object
         
         Parameters
         ----------
-        orders: sequence
-            The orders to simulate
         filt: str
             The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
+        orders: sequence
+            The orders to simulate
+        planet: sequence (optional)
+            The wavelength and Rp/R* of the planet at t=0 
+        params: batman.transitmodel.TransitParams (optional)
+            The transit parameters of the planet
+        ld_profile: str (optional)
+            The limb darkening profile to use
+        ld_coeffs: array-like (optional)
+            A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
         """
         # Clear previous results
         self.tso = np.zeros(self.dims)
@@ -931,7 +920,13 @@ class TSO(object):
             self.filter = 'F277W'
             
         # If there is a planet transmission spectrum but no LDCs, generate them
-        if self.planet!='':
+        if planet!='':
+            
+            # Store planet details
+            self.planet = planet
+            self.params = params
+            self.ld_coeffs = ld_coeffs or np.zeros((2, self.nrows*self.ncols, 2))
+            self.ld_profile = ld_profile or 'quadratic'
             
             # Generate the lookup table
             lookup = ldc_lookup(self.ld_profile, [3300, 4.5, 0])
