@@ -17,7 +17,6 @@ The following packages are needed to run `AWESim_SOSS`:
 First, some imports:
 
 ```python
-# Imports
 import astropy.units as q
 import astropy.constants as ac
 import os
@@ -64,7 +63,7 @@ planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', 
 
 ![planet_input](AWESim_SOSS/img/1D_planet.png "The input transmission spectrum")
 
-And here are some orbital parameters for our star:
+And here are some parameters for our planetary system:
 
 ```python
 params = batman.TransitParams()
