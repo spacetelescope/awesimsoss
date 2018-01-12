@@ -838,20 +838,20 @@ class TSO(object):
         tso.run_simulation(planet=planet1D, params=params)
         """
         # Set instance attributes for the exposure
-        self.subarray     = subarray
-        self.nrows        = 256 if '256' in subarray else 96 if '96' in subarray else 2048
-        self.ncols        = 2048
-        self.ngrps        = ngrps
-        self.nints        = nints
-        self.nresets      = 1
-        self.frame_time   = FRAME_TIMES[subarray]
-        self.time         = get_frame_times(subarray, ngrps, nints, t0, self.nresets)
-        self.nframes      = len(self.time)
-        self.target       = target or 'Simulated Target'
-        self.obs_date     = '2016-01-04'
-        self.obs_time     = '23:37:52.226'
-        self.filter       = 'CLEAR'
-        self.header       = ''
+        self.subarray = subarray
+        self.nrows = 256 if '256' in subarray else 96 if '96' in subarray else 2048
+        self.ncols = 2048
+        self.ngrps = ngrps
+        self.nints = nints
+        self.nresets = 1
+        self.frame_time = FRAME_TIMES[subarray]
+        self.time = get_frame_times(subarray, ngrps, nints, t0, self.nresets)
+        self.nframes = len(self.time)
+        self.target = target or 'Simulated Target'
+        self.obs_date = '2016-01-04'
+        self.obs_time = '23:37:52.226'
+        self.filter = 'CLEAR'
+        self.header = ''
         self.snr = snr
         
         # Set instance attributes for the target
