@@ -828,13 +828,27 @@ class TSO(object):
                         
         Example
         -------
+        # Imports
         from AWESim_SOSS.sim2D import awesim
-        import astropy.units as q, os, AWESim_SOSS
+        import astropy.units as q, astropy.constants as ac, os, AWESim_SOSS, batman
         DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
-        vega = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True) # A0V with Jmag=9
-        vega = [vega[0]*q.um, (vega[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-        tso = awesim.TSO(3, 5, vega)
+        star = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True)
+        star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+        
+        # Simulate star without transiting planet
+        tso = awesim.TSO(ngrps=5, nints=20, star=star1D)
         tso.run_simulation()
+        
+        # Simulate star with transiting exoplanet
+        params = batman.TransitParams()
+        params.t0 = 0.                                # time of inferior conjunction
+        params.per = 5.7214742                        # orbital period (days)
+        params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+        params.inc = 89.8                             # orbital inclination (in degrees)
+        params.ecc = 0.                               # eccentricity
+        params.w = 90.                                # longitude of periastron (in degrees)
+        tso_planet = awesim.TSO(5, 20, star1D, planet1D, params)
+        tso_planet.run_simulation()
         """
         # Set instance attributes for the exposure
         self.subarray     = subarray
