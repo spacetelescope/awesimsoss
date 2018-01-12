@@ -835,7 +835,6 @@ class TSO(object):
         params.teff = 3500                            # effective temperature of the host star
         params.logg = 5                               # log surface gravity of the host star
         params.feh = 0                                # metallicity of the host star
-        tso_planet = awesim.TSO(5, 20, star1D, planet1D, params)
         tso.run_simulation(planet=planet1D, params=params)
         """
         # Set instance attributes for the exposure
@@ -929,7 +928,8 @@ class TSO(object):
             self.ld_profile = ld_profile or 'quadratic'
             
             # Generate the lookup table
-            lookup = ldc_lookup(self.ld_profile, [3300, 4.5, 0])
+            stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
+            lookup = ldc_lookup(self.ld_profile, stellar_params)
             
             # Generate the coefficient map
             self.ld_coeffs = ld_coefficient_map(lookup, subarray=self.subarray)

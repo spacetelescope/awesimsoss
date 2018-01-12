@@ -14,14 +14,25 @@ The following packages are needed to run `AWESim_SOSS`:
 
 ### Simulating SOSS Observations
 
+First, some imports:
+
+```python
+# Imports
+import astropy.units as q
+import astropy.constants as ac
+import os
+import numpy as np
+import batman
+import AWESim_SOSS
+from AWESim_SOSS.sim2D import awesim
+DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
+```
+
 Given a 1D spectrum of a target, this module produces a 2D SOSS ramp image with the given number of groups and integrations. For example, if I want to produce 20 integrations of 5 groups each for a J=9 A0 star as seen through SOSS, my code might look like:
 
 ```python
-from AWESim_SOSS.sim2D import awesim
-import astropy.units as q, os, AWESim_SOSS
-DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
-star = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True)
-star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+star1D = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True)
+star1D = [star1D[0]*q.um, (star1D[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
 tso = awesim.TSO(ngrps=5, nints=20, star=star1D)
 tso.run_simulation()
 tso.plot_frame()
@@ -56,8 +67,6 @@ planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', 
 And here are some orbital parameters for our star:
 
 ```python
-import batman
-import astropy.constants as ac
 params = batman.TransitParams()
 params.t0 = 0.                                # time of inferior conjunction
 params.per = 5.7214742                        # orbital period (days)
@@ -65,18 +74,21 @@ params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of ste
 params.inc = 89.8                             # orbital inclination (in degrees)
 params.ecc = 0.                               # eccentricity
 params.w = 90.                                # longitude of periastron (in degrees)
+params.teff = 3500                            # effective temperature of the host star
+params.logg = 5                               # log surface gravity of the host star
+params.feh = 0                                # metallicity of the host star
 ```
 
-Now the code to generate a simulated planetary transit might look like:
+Now the code to generate a simulated planetary transit around our star might look like:
 
 ```python
-tso_planet.run_simulation(planet=planet1D, params=params)
+tso.run_simulation(planet=planet1D, params=params)
 ```
 
 We can write this to a FITS file directly ingestible by the JWST pipeline with:
 
 ```python
-tso_planet.to_fits('my_SOSS_simulation.fits')
+tso.to_fits('my_SOSS_simulation.fits')
 ```
 
 <!--We can verify that the lightcurves are wavelength dependent by plotting a few different columns of the SOSS trace like so:
