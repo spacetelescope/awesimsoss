@@ -281,22 +281,24 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
     
         return lookup
 
-def ld_coefficient_map(lookup_file, subarray='SUBSTRIP256', save=''):
+def ld_coefficient_map(lookup, subarray='SUBSTRIP256', save=''):
     """
     Generate  map of limb darkening coefficients at every NIRISS pixel for all SOSS orders
     
     Parameters
     ----------
-    lookup_file: str
+    lookup: str, array-like
         The path to the lookup table of LDCs
     
     Example
     -------
     ld_coeffs_lookup = ld_coefficient_lookup(1, 'quadratic', star, model_grid)
     """
-    # Get the lookup table
-    ld_profile = os.path.basename(lookup_file).split('_')[0]
-    lookup = joblib.load(lookup_file)
+    if isinstance(lookup, str):
+        
+        # Get the lookup table
+        ld_profile = os.path.basename(lookup).split('_')[0]
+        lookup = joblib.load(lookup)
     
     # Get the wavelength map
     nrows = 256 if subarray=='SUBSTRIP256' else 96 if subarray=='SUBSTRIP96' else 2048
@@ -915,7 +917,7 @@ class TSO(object):
             self.filter = 'F277W'
             
         # If there is a planet transmission spectrum but no LDCs, generate them
-        if not isinstance(self.planet, str) and not any(self.ld_coeffs):
+        if self.planet!='':
             
             # Generate the lookup table
             lookup = ldc_lookup(self.ld_profile, [3300, 4.5, 0])

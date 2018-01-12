@@ -55,8 +55,9 @@ planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', 
 
 And here are some orbital parameters for our star:
 
-```python
+```
 import batman
+import astropy.constants as ac
 params = batman.TransitParams()
 params.t0 = 0.                                # time of inferior conjunction
 params.per = 5.7214742                        # orbital period (days)
