@@ -1452,7 +1452,7 @@ class TSO(object):
         self.header = prihdr
         
         # Put data into detector coordinates
-        data = np.swapaxes(self.tso, 1, 2)[:, ::-1, ::-1]
+        data = np.swapaxes(self.tso, 1, 2)[:,:,::-1]
         
         # Make the HDUList
         prihdu = fits.PrimaryHDU(data=data, header=prihdr)
