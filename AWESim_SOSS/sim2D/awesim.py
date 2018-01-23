@@ -196,10 +196,13 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
     # Get the full wavelength range
     wave_maps = wave_solutions(nrows)
     
+    # Load the model grid
+    model_grid = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6,2.8))
+    
     # Get the grid point
     if isinstance(grid_point, (list,tuple,np.ndarray)):
         
-        grid_point = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6,2.6)).get(*grid_point)
+        grid_point = model_grid.get(*grid_point)
         
     # Abort if no stellar dict
     if not isinstance(grid_point, dict):
@@ -207,7 +210,7 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
         return
         
     # Define function for multiprocessing
-    def gr700xd_ldc(wavelength, delta_w, ld_profile, grid_point, model_grid):
+    def gr700xd_ldc(wavelength, delta_w, ld_profile, grid_point, model_grid, verbose=False):
         """
         Calculate the LCDs for the given wavelength range in the GR700XD grism
         """
@@ -216,10 +219,10 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
             mn = (wavelength-delta_w/2.)*q.um
             mx = (wavelength+delta_w/2.)*q.um
             throughput = np.genfromtxt(DIR_PATH+'/files/NIRISS.GR700XD.1.txt', unpack=True)
-            bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
+            bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=verbose)
             
             # Calculate the LDCs
-            ldcs = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08, verbose=False)
+            ldcs = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08, verbose=verbose)
             coeffs = list(zip(*ldcs[ld_profile]['coeffs']))[1::2]
             coeffs = [coeffs[0][0],coeffs[1][0]]
             
@@ -227,7 +230,8 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
             
         except:
             
-            print(wavelength)
+            if verbose:
+                print(wavelength)
             
             return ('_', None)
             
@@ -243,7 +247,7 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
         
         # Turn off printing
         print('Calculating order {} LDCs at {} wavelengths...'.format(order,len(wavelengths)))
-        sys.stdout = open(os.devnull, 'w')
+        # sys.stdout = open(os.devnull, 'w')
         
         # Pool the LDC calculations across the whole wavelength range
         processes = 8
@@ -254,7 +258,8 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
                        delta_w    = delta_w,
                        ld_profile = ld_profile,
                        grid_point = grid_point,
-                       model_grid = model_grid)
+                       model_grid = model_grid,
+                       verbose    = False)
                        
         # Turn list of coeffs into a dictionary
         order_dict = dict(pool.map(func, wavelengths))
@@ -270,7 +275,7 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
         lookup['order{}'.format(order)] = order_dict
         
         # Turn printing back on
-        sys.stdout = sys.__stdout__
+        # sys.stdout = sys.__stdout__
         print('Order {} LDCs finished: '.format(order), time.time()-start)
         
     if save:
@@ -281,7 +286,7 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
     
         return lookup
 
-def ld_coefficient_map(lookup, subarray='SUBSTRIP256', save=''):
+def ld_coefficient_map(lookup, ld_profile, subarray='SUBSTRIP256', save=''):
     """
     Generate  map of limb darkening coefficients at every NIRISS pixel for all SOSS orders
     
@@ -289,6 +294,8 @@ def ld_coefficient_map(lookup, subarray='SUBSTRIP256', save=''):
     ----------
     lookup: str, array-like
         The path to the lookup table of LDCs
+    ld_profile: str
+        The limb darkening profile name
     
     Example
     -------
@@ -298,8 +305,9 @@ def ld_coefficient_map(lookup, subarray='SUBSTRIP256', save=''):
         
         # Get the lookup table
         ld_profile = os.path.basename(lookup).split('_')[0]
-        lookup = joblib.load(lookup)
-    
+        lookup_file = lookup
+        lookup = joblib.load(lookup_file)
+        
     # Get the wavelength map
     nrows = 256 if subarray=='SUBSTRIP256' else 96 if subarray=='SUBSTRIP96' else 2048
     wave_map = wave_solutions(nrows)
@@ -321,20 +329,14 @@ def ld_coefficient_map(lookup, subarray='SUBSTRIP256', save=''):
         
         # For each bin in the lookup table...
         for bin, coeffs in lkup.items():
+                
+            # Get all the pixels that fall within the bin
+            w = float(bin)
+            idx, = np.where(np.logical_and(wave_list>=w-delta_w,wave_list<=w+delta_w))
             
-            try:
-                
-                # Get all the pixels that fall within the bin
-                w = float(bin)
-                idx, = np.where(np.logical_and(wave_list>=w-delta_w,wave_list<=w+delta_w))
-                
-                # Place them in the coefficient map
-                ld_coeffs[order][idx] = coeffs
-                
-            except:
-                 
-                print(bin)
-                
+            # Place them in the coefficient map
+            ld_coeffs[order][idx] = coeffs
+            
     if save:
         path = lookup_file.replace('lookup','map')
         joblib.dump(ld_coeffs, path)
@@ -641,8 +643,8 @@ def lambda_lightcurve(wavelength, response, psf_loc, pfd2adu, ld_coeffs, ld_prof
     """
     nframes = len(time)
     
-    if not isinstance(ld_coeffs, list) or not isinstance(ld_coeffs, np.ndarray):
-        ld_coeffs  = [ld_coeffs]
+    if not isinstance(ld_coeffs, (list,tuple,np.ndarray)):
+        ld_coeffs  = list(ld_coeffs)
         ld_profile = 'linear'
     
     # If it's a background pixel, it's just noise
@@ -860,6 +862,7 @@ class TSO(object):
         self.planet = ''
         self.params = ''
         self.ld_profile = ''
+        self.ld_lookup = ''
         self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
         
         # Calculate a map for each order that converts photon flux density to ADU/s
@@ -921,19 +924,28 @@ class TSO(object):
         # If there is a planet transmission spectrum but no LDCs, generate them
         if planet!='':
             
+            # Check if the stellar params are the same
+            old_params = [getattr(self.params, p, None) for p in ['teff','logg','feh']]
+            
             # Store planet details
             self.planet = planet
             self.params = params
-            self.ld_coeffs = ld_coeffs or np.zeros((2, self.nrows*self.ncols, 2))
-            self.ld_profile = ld_profile or 'quadratic'
+            self.ld_profile = ld_profile
             
-            # Generate the lookup table
-            stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
-            lookup = ldc_lookup(self.ld_profile, stellar_params)
-            
-            # Generate the coefficient map
-            self.ld_coeffs = ld_coefficient_map(lookup, subarray=self.subarray)
-            
+            # Use input ld coeffs
+            if isinstance(ld_coeffs,np.ndarray):
+                self.ld_coeffs = ld_coeffs
+                
+            # Or generate them if the stellar paramaeters have changed
+            else:
+                # Generate the lookup table if the stallar parameters have changed
+                stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
+                if stellar_params!=old_params:
+                    self.ld_lookup = ldc_lookup(self.ld_profile, stellar_params)
+                    
+                # Generate the coefficient map
+                self.ld_coeffs = ld_coefficient_map(self.ld_lookup, self.ld_profile, subarray=self.subarray)
+                
         # Generate simulation for each order
         for order in orders:
             
@@ -941,7 +953,7 @@ class TSO(object):
             wave = self.wave[order-1].flatten()
             
             # Get limb darkening map
-            ld_coeffs = self.ld_coeffs.copy()[order-1]
+            ld_coeffs = self.ld_coeffs[order-1]
             
             # Get the psf location given the distance from the trace center
             distance = distance_map(order=order).flatten()
@@ -954,8 +966,7 @@ class TSO(object):
             # Get the wavelength interval per pixel map
             pfd2adu = self.pfd2adu[order-1]
             
-            # print(isinstance(ld_coeffs[0], float), ld_coeffs)
-            
+            # Generate a fake array of all the same limb darkening coeff
             if isinstance(ld_coeffs[0], float):
                 ld_coeffs = np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * wave.size)
             
@@ -1177,7 +1188,7 @@ class TSO(object):
             to plot as a light curve
         """
         # Get the scaled flux in each column
-        f = np.nansum(self.tso, axis=1)
+        f = np.nansum(self.tso_ideal, axis=1)
         f = f/np.nanmax(f, axis=1)[:,None]
         
         # Make it into an array
