@@ -20,12 +20,12 @@ import warnings
 import datetime
 import webbpsf
 from . import generate_darks as gd
-from ExoCTK import svo
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
 from astropy.io import fits
 from scipy.optimize import curve_fit
 from scipy.ndimage.interpolation import zoom
+from scipy.interpolate import interp1d, _fitpack
 from functools import partial
 from sklearn.externals import joblib
 from numpy.core.multiarray import interp as compiled_interp
@@ -35,7 +35,6 @@ from skimage import data
 warnings.simplefilter('ignore')
 
 cm = plt.cm
-FILTERS = svo.filters()
 DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
@@ -64,8 +63,8 @@ def trace_from_webbpsf(psf_file, coeffs=[1.71164931e-11, -9.29379122e-08, 1.9142
         print('Cannot read that data. Please input a .npy file or 3D numpy array.')
         return
         
-    # Get the psf center (1/2 the 4x oversampled image = 1/8)
-    c = int(psfs.shape[1]/8)
+    # Get the psf center
+    c = int(psfs.shape[1]/2)
     
     # Empty trace (with padding for overflow)
     final = np.zeros((2048+2*c,256))
@@ -73,11 +72,8 @@ def trace_from_webbpsf(psf_file, coeffs=[1.71164931e-11, -9.29379122e-08, 1.9142
     # Place wavelength dependent psf in each column (i.e. wavelength)
     for n,p in enumerate(psfs):
         
-        # Downsample
-        z = zoom(p, 0.25)
-        
         # Place the trace center in the correct column
-        final[n:n+c*2,:c*2] += z
+        final[n:n+c*2,:c*2] += p
         
     # Transpose to DMS orientation
     final = final.T
@@ -159,215 +155,6 @@ def ADUtoFlux(order):
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling
-
-def norm_to_mag(spectrum, magnitude, bandpass):
-    """
-    Returns the flux of a given *spectrum* [W,F] normalized to the given *magnitude* in the specified photometric *band*
-    """
-    # Get the current magnitude and convert to flux
-    mag, mag_unc = get_mag(spectrum, bandpass, fetch='flux')
-    
-    # Convert input magnitude to flux
-    flx, flx_unc = mag2flux(bandpass.filterID.split('/')[1], magnitude, sig_m='', units=spectrum[1].unit)
-    
-    # Normalize the spectrum
-    spectrum[1] *= np.trapz(bandpass.rsr[1], x=bandpass.rsr[0])*np.sqrt(2)*flx/mag
-    
-    return spectrum
-
-def flux2mag(bandpass, f, sig_f='', photon=False):
-    """
-    For given band and flux returns the magnitude value (and uncertainty if *sig_f*)
-    """
-    eff = bandpass.WavelengthEff
-    zp = bandpass.ZeroPoint
-    unit = q.erg/q.s/q.cm**2/q.AA
-    
-    # Convert to f_lambda if necessary
-    if f.unit == 'Jy':
-        f,  = (ac.c*f/eff**2).to(unit)
-        sig_f = (ac.c*sig_f/eff**2).to(unit)
-    
-    # Convert energy units to photon counts
-    if photon:
-        f = (f*(eff/(ac.h*ac.c)).to(1/q.erg)).to(unit/q.erg), 
-        sig_f = (sig_f*(eff/(ac.h*ac.c)).to(1/q.erg)).to(unit/q.erg)
-    
-    # Calculate magnitude
-    m = -2.5*np.log10((f/zp).value)
-    sig_m = (2.5/np.log(10))*(sig_f/f).value if sig_f else ''
-    
-    return [m, sig_m]
-
-def mag2flux(band, mag, sig_m='', units=q.erg/q.s/q.cm**2/q.AA):
-    """
-    Caluclate the flux for a given magnitude
-    
-    Parameters
-    ----------
-    band: str, svo.Filter
-        The bandpass
-    mag: float, astropy.unit.quantity.Quantity
-        The magnitude
-    sig_m: float, astropy.unit.quantity.Quantity
-        The magnitude uncertainty
-    units: astropy.unit.quantity.Quantity
-        The unit for the output flux
-    """
-    try:
-        # Get the band info
-        filt = FILTERS.loc[band]
-        
-        # Make mag unitless
-        if hasattr(mag,'unit'):
-            mag = mag.value
-        if hasattr(sig_m,'unit'):
-            sig_m = sig_m.value
-        
-        # Calculate the flux density
-        zp = q.Quantity(filt['ZeroPoint'], filt['ZeroPointUnit'])
-        f = zp*10**(mag/-2.5)
-        
-        if isinstance(sig_m,str):
-            sig_m = np.nan
-        
-        sig_f = f*sig_m*np.log(10)/2.5
-            
-        return [f, sig_f]
-        
-    except IOError:
-        return [np.nan, np.nan]
-
-def rebin_spec(spec, wavnew, oversamp=100, plot=False):
-    """
-    Rebin a spectrum to a new wavelength array while preserving 
-    the total flux
-    
-    Parameters
-    ----------
-    spec: array-like
-        The wavelength and flux to be binned
-    wavenew: array-like
-        The new wavelength array
-        
-    Returns
-    -------
-    np.ndarray
-        The rebinned flux
-    
-    """
-    nlam = len(spec[0])
-    x0 = np.arange(nlam, dtype=float)
-    x0int = np.arange((nlam-1.)*oversamp + 1., dtype=float)/oversamp
-    w0int = np.interp(x0int, x0, spec[0])
-    spec0int = np.interp(w0int, spec[0], spec[1])/oversamp
-    try:
-        err0int = np.interp(w0int, spec[0], spec[2])/oversamp
-    except:
-        err0int = ''
-        
-    # Set up the bin edges for down-binning
-    maxdiffw1 = np.diff(wavnew).max()
-    w1bins = np.concatenate(([wavnew[0]-maxdiffw1], .5*(wavnew[1::]+wavnew[0:-1]), [wavnew[-1]+maxdiffw1]))
-    
-    # Bin down the interpolated spectrum:
-    w1bins = np.sort(w1bins)
-    nbins = len(w1bins)-1
-    specnew = np.zeros(nbins)
-    errnew = np.zeros(nbins)
-    inds2 = [[w0int.searchsorted(w1bins[ii], side='left'), w0int.searchsorted(w1bins[ii+1], side='left')] for ii in range(nbins)]
-
-    for ii in range(nbins):
-        specnew[ii] = np.sum(spec0int[inds2[ii][0]:inds2[ii][1]])
-        try:
-            errnew[ii] = np.sum(err0int[inds2[ii][0]:inds2[ii][1]])
-        except:
-            pass
-            
-    if plot:
-        plt.figure()
-        plt.loglog(spec[0], spec[1], c='b')    
-        plt.loglog(wavnew, specnew, c='r')
-        
-    return [wavnew,specnew,errnew]
-
-def get_mag(spectrum, bandpass, exclude=[], fetch='mag', photon=False, Flam=False, plot=False):
-    """
-    Returns the integrated flux of the given spectrum in the given band
-    
-    Parameters
-    ---------
-    spectrum: array-like
-        The [w,f,e] of the spectrum with astropy.units
-    bandpass: str, svo_filters.svo.Filter
-        The bandpass to calculate
-    exclude: sequecne
-        The wavelength ranges to exclude by linear interpolation between gap edges
-    photon: bool
-        Use units of photons rather than energy
-    Flam: bool
-        Use flux units rather than the default flux density units
-    plot: bool
-        Plot it
-    
-    Returns
-    -------
-    list
-        The integrated flux of the spectrum in the given band
-    """
-    # Get the Filter object if necessary
-    if isinstance(bandpass, str):
-        bandpass = svo.Filter(bandpass)
-        
-    # Get filter data in order
-    unit = q.Unit(bandpass.WavelengthUnit)
-    mn = bandpass.WavelengthMin*unit
-    mx = bandpass.WavelengthMax*unit
-    wav, rsr = bandpass.raw
-    wav = wav*unit
-    
-    # Unit handling
-    a = (1 if photon else q.erg)/q.s/q.cm**2/(1 if Flam else q.AA)
-    b = (1 if photon else q.erg)/q.s/q.cm**2/q.AA
-    c = 1/q.erg
-    
-    # Test if the bandpass has full spectral coverage
-    if np.logical_and(mx < np.max(spectrum[0]), mn > np.min(spectrum[0])) \
-    and all([np.logical_or(all([i<mn for i in rng]), all([i>mx for i in rng])) for rng in exclude]):
-        
-        # Rebin spectrum to bandpass wavelengths
-        w, f, sig_f = rebin_spec([i.value for i in spectrum], wav.value)*spectrum[1].unit
-        
-        # Calculate the integrated flux, subtracting the filter shape
-        F = (np.trapz((f*rsr*((wav/(ac.h*ac.c)).to(c) if photon else 1)).to(b), x=wav)/(np.trapz(rsr, x=wav))).to(a)
-        
-        # Caluclate the uncertainty
-        if sig_f:
-            sig_F = np.sqrt(np.sum(((sig_f*rsr*np.gradient(wav).value*((wav/(ac.h*ac.c)).to(c) if photon else 1))**2).to(a**2)))
-        else:
-            sig_F = ''
-            
-        # Make a plot
-        if plot:
-            plt.figure()
-            plt.step(spectrum[0], spectrum[1], color='k', label='Spectrum')
-            plt.errorbar(bandpass.WavelengthEff, F.value, yerr=sig_F.value, marker='o', label='Magnitude')
-            try:
-                plt.fill_between(spectrum[0], spectrum[1]+spectrum[2], spectrum[1]+spectrum[2], color='k', alpha=0.1)
-            except:
-                pass
-            plt.plot(bandpass.rsr[0], bandpass.rsr[1]*F, label='Bandpass')
-            plt.xlabel(unit)
-            plt.ylabel(a)
-            plt.legend(loc=0, frameon=False)
-            
-        # Get magnitude from flux
-        m, sig_m = flux2mag(bandpass, F, sig_f=sig_F)
-        
-        return [m, sig_m, F, sig_F] if fetch=='both' else [F, sig_F] if fetch=='flux' else [m, sig_m]
-        
-    else:
-        return ['']*4 if fetch=='both' else ['']*2
 
 def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
     """
@@ -563,216 +350,72 @@ def trace_polynomial(trace, start=4, end=2040, order=4):
     
     return X, Y
 
-def distance_map(order, coeffs='', subarr='SUBSTRIP256', generate=False, plot=False):
-    """
-    Generate a map where each pixel is the distance from the trace polynomial
-    
-    Parameters
-    ----------
-    order: int
-        The order
-    coeffs: sequence (optional)
-        Custom polynomial coefficients of the trace
-    subarr: str
-        The subarray to use, ['SUBSTRIP96','SUBSTRIP256','FULL']
-    plot: bool
-        Plot the distance map
-    
-    Returns
-    -------
-    np.ndarray
-        An array the same shape as masked_data
-    
-    Example
-    -------
-    The default polynomials for CV3 data are
-    order1 = [1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01]
-    order2 = [2.35705513e-13, -2.62302311e-08, 1.65517682e-04, -3.19677081e-01, 2.81349581e+02]
-    """
-    # Set the polynomial coefficients to use
-    if not coeffs:
-            
-        if order==1:
-            coeffs = [1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01]
-        elif order==2:
-            coeffs = [2.35705513e-13, -2.62302311e-08, 1.65517682e-04, -3.19677081e-01, 2.81349581e+02]
-        else:
-            print('Order {} not supported.'.format(order))
-            
-    # If coefficients are provided, generate a new map
-    if isinstance(coeffs, (list, tuple, np.ndarray)) and generate:
-        
-        print('Generating distance map for order {} with coefficients {}...'.format(order,coeffs))
-        
-        # Get the dimensions
-        dims = (2048, SUBARRAY_Y[subarr])
-        
-        # Generate an array of pixel coordinates
-        flat = np.zeros(list(dims)+[2])
-        for i in range(4,2044):
-            for j in range(dims[1]):
-                flat[i,j] = (i,j)
-        flat = flat.reshape(np.prod(dims),2)
-        
-        # Make the (X,Y) coordinates of the polynomial on an oversampled grid
-        X = np.arange(4, 2044, 0.1)
-        Y = np.polyval(coeffs, X)
-        
-        # Set pixel independent inputs of distance function
-        func = partial(dist, Poly=(X,Y))
-        
-        # Run multiprocessing
-        pool = multiprocessing.Pool(8)
-        
-        # Generate the distance at each pixel
-        d_map = pool.map(func, flat)
-        
-        # Close the pool
-        pool.close()
-        pool.join()
-        
-        # Reshape into frame
-        d_map = np.asarray(d_map).reshape(dims).T
-        
-        # Write to file
-        joblib.dump(d_map, DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
-        
-    # Or just use the stored map
-    else:
-        d_map = joblib.load(DIR_PATH+'/files/order_{}_distance_map.save'.format(order))
-        
-    if plot:
-        plt.figure(figsize=(13,2))
-        plt.title('Order {}'.format(order))
-        plt.imshow(d_map, interpolation='none', origin='lower')
-        try:
-            plt.plot(X, Y)
-            plt.xlim(0,2048)
-            plt.ylim(0,dims[1])
-        except:
-            pass
-        plt.colorbar()
-    
-    return d_map
-
-def dist(p0, Poly):
-    """
-    Calculate the minimum Euclidean distance from a point to a given polynomial
-    
-    Parameters
-    ----------
-    p0: sequence
-        The (x,y) coordinate of the point
-    Poly: sequence
-        The (X,Y) coordinates of the trace center in each column
-    
-    Returns
-    -------
-    float
-        The minimum distance from pixel (x,y) to the polynomial points (X,Y)
-    """
-    # Calculate the distance from each point on the line to p0
-    distances = np.sqrt((p0[0]-Poly[0])**2 + (p0[1]-Poly[1])**2)
-    d_min = np.min(distances)
-    
-    # Check if above or below the polynomial
-    d_min *= float(np.sign(p0[1] - Poly[1][np.argmin(distances)]))
-    
-    return d_min
-
-def generate_psf(filt, wavelength, oversample=4, to1D=False, plot=False, save=''):
+def generate_psf(wavelength, ns, filt='CLEAR', oversample=1):
     """
     Generate the SOSS psf with 'CLEAR' or 'F277W' filter
     
     Parameters
     ----------
-    filt: str
-        The filter to use, 'CLEAR' or 'F277W'
+    ns: webbpsf.webbpsf_core.NIRISS
+        The webbpsf NIRISS class
     wavelength: float, sequence
         The wavelength in microns
+    filt: str
+        The filter to use, 'CLEAR' or 'F277W'
     oversample: int
         The factor by which the pixel grid will be mode finely sampled
-    plot: bool
-        Plot the 1D and 2D psf for visual inspection
     
     Returns
     -------
     np.ndarray
-        The 1D psf
+        The 2D psf
     """
-    print("Generating the psf with {} filter and GR700XD pupil mask...".format(filt))
-    
-    # Get the NIRISS class from webbpsf and set the filter
-    ns = webbpsf.NIRISS()
-    ns.filter = filt
-    ns.pupil_mask = 'GR700XD'
-    
-    # For case where one wavelength is specified
-    if isinstance(wavelength, (int,float)):
-        wavelength = [wavelength]
-    
-    # Make an array for all psfs
-    psfs = []
-    for w in wavelength:
-        print('... at {} um ...'.format(w))
-        psf2D = ns.calcPSF(monochromatic=w*1E-6, oversample=oversample)[0].data
-        psfs.append(psf2D)
-    psfs = np.asarray(psfs)
-        
-    # Collapse to 1D
-    if to1D:
-        psfs = np.sum(psfs, axis=-2)
-        
-    # # Plot it
-    # if plot:
-    #     plt.figure(figsize=(6,9))
-    #     plt.suptitle('PSF for NIRISS GR700XD and {} filter'.format(filt))
-    #     gs = matplotlib.gridspec.GridSpec(2, 1, height_ratios=[3, 1])
-    #     ax1 = plt.subplot(gs[0])
-    #     ax1.imshow(psf2D)
-    #
-    #     ax2 = plt.subplot(gs[1])
-    #     ax2.plot(psf1D)
-    #     ax2.set_xlim(0,psf2D.shape[0])
-    #
-    #     plt.tight_layout()
-    
-    return psfs.squeeze()
+    return ns.calcPSF(monochromatic=wavelength*1E-6, oversample=oversample)[0].data
 
-def psf_position(distance, extend=25, generate=False, filt='CLEAR', plot=False):
+def psf_cube(file, wavelength='', filt='CLEAR', subarr=256, n_psfs=100):
     """
-    Scale the flux based on the pixel's distance from the center of the cross dispersed psf
+    Generate/retrieve a data cube of shape (n_psfs, 76, 76) 
+    
+    Parameters
+    ----------
+    file: str
+        The filepath
+    filt: str
+        The filter to use, ['CLEAR','F277W']
+    subarr: int
+        The subarray size [96,256]
+    n_psfs: int
+        The number of wavelengths to calculate
+    generate: bool
+        Generate a new cube
     """
-    # Generate the PSF from webbpsf
-    if generate:
+    # Get the wavelengths
+    wavelengths = np.linspace(0.6, 2.8, n_psfs)
+    
+    if wavelength:
         
-        # Generate the 1D psf
-        psf1D = generate_psf(filt)
+        # Load the psf cube
+        cube = fits.getdata(file)
         
-    # Or just use these
+        # Initilize interpolator
+        psfs = interp1d(wavelengths, cube, axis=0, kind=3)
+        
+        return psfs(wavelength)
+        
     else:
         
-        if filt=='F277W':
-            psf1D = np.array([ 0.00019988, 0.0002117 , 0.00021934, 0.00023641, 0.00026375, 0.0003073 , 0.00033975, 0.0003496 , 0.00038376, 0.00044702, 0.00047626, 0.00046785, 0.0004981 , 0.000573 , 0.00067364, 0.00076275, 0.00088491, 0.00100102, 0.00111439, 0.00132894, 0.00162288, 0.00188021, 0.00240184, 0.00370172, 0.00555634, 0.0072683 , 0.01021882, 0.01486976, 0.02364649, 0.03089798, 0.03602238, 0.03632454, 0.02973947, 0.0199811 , 0.01537851, 0.01493862, 0.01572836, 0.02018245, 0.01958941, 0.01427322, 0.01350232, 0.01688971, 0.02418887, 0.03537919, 0.03975415, 0.03609305, 0.02878872, 0.02192827, 0.01334616, 0.00835515, 0.00543218, 0.00380858, 0.00249234, 0.00204165, 0.00180445, 0.00132019, 0.00095559, 0.00082456, 0.0008002 , 0.00074513, 0.00068732, 0.00060487, 0.00050018, 0.00046889, 0.00045214, 0.00042667, 0.00038588, 0.00037849, 0.00036246, 0.00032832, 0.00030491, 0.00028396, 0.00026219, 0.00023077, 0.00021248, 0.0001944 ])
-            
-        else:
-            psf1D = np.array([ 0.00013901, 0.00016542, 0.00015689, 0.00015623, 0.00017186, 0.00016965, 0.00018987, 0.00019185, 0.00023556, 0.00023899, 0.00029408, 0.00029346, 0.00035087, 0.00038025, 0.00042468, 0.00051199, 0.00066475, 0.00065935, 0.00089182, 0.00121465, 0.00148197, 0.00200335, 0.00266229, 0.00321626, 0.00485754, 0.00829491, 0.01690362, 0.02678705, 0.03461085, 0.03111909, 0.03046135, 0.02457325, 0.01972383, 0.02033947, 0.01575621, 0.01368122, 0.01234645, 0.01643781, 0.0200006 , 0.01972283, 0.0190382 , 0.02177633, 0.02355946, 0.02783534, 0.02869785, 0.03584818, 0.0343261 , 0.02788289, 0.0176711 , 0.00835883, 0.00510581, 0.0038801 , 0.00286961, 0.00192759, 0.00153765, 0.00103414, 0.00083634, 0.00078 , 0.00067393, 0.00050412, 0.00049817, 0.00041538, 0.00037431, 0.00035373, 0.00027228, 0.00027909, 0.00019483, 0.00020813, 0.00019951, 0.00017749, 0.00016526, 0.00016733, 0.00015403, 0.00013206, 0.00013329, 0.00011637])
-            
-    # Scale the transmission to 1
-    psf = psf1D/np.trapz(psf1D)
-    
-    # Shift the psf so that the points go from -38 to 38
-    l = len(psf)
-    x = np.linspace(-1*l/2., l/2., l)
-    
-    # Interpolate lpsf to distance
-    val = np.interp(distance, x, psf)
-    
-    if plot:
-        plt.plot(x, psf)
-        plt.scatter(distance, val, c='r', zorder=5)
+        # Get the NIRISS class from webbpsf and set the filter
+        ns = webbpsf.NIRISS()
+        ns.filter = filt
+        ns.pupil_mask = 'GR700XD'
         
-    return val
+        # Run datacube
+        print('Calculating {} SOSS psfs for {} filter...'.format(n_psfs,filt))
+        start = time.time()
+        PSF = ns.calc_datacube(wavelengths*1E-6, oversample=1)
+        print('Finished in {} seconds.'.format(time.time()-start))
+        
+        fits.HDUList(PSF).writeto(file, overwrite=True)
 
 def lambda_lightcurve(wavelength, response, psf_loc, pfd2adu, ld_coeffs, ld_profile, star, planet, time, params, filt, trace_radius=25, snr=100, floor=2, extend=25, plot=False):
     """
