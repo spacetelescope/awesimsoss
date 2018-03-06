@@ -372,23 +372,22 @@ def generate_psf(wavelength, ns, filt='CLEAR', oversample=1):
     """
     return ns.calcPSF(monochromatic=wavelength*1E-6, oversample=oversample)[0].data
 
-def psf_cube(file, wavelength='', filt='CLEAR', subarr=256, n_psfs=100):
+def psf_cube(wavelength='', filt='CLEAR', n_psfs=100):
     """
     Generate/retrieve a data cube of shape (n_psfs, 76, 76) 
     
     Parameters
     ----------
-    file: str
-        The filepath
     filt: str
         The filter to use, ['CLEAR','F277W']
-    subarr: int
-        The subarray size [96,256]
     n_psfs: int
         The number of wavelengths to calculate
     generate: bool
         Generate a new cube
     """
+    # Get the file
+    file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_PSF.fits'.format(filt))
+    
     # Get the wavelengths
     wavelengths = np.linspace(0.6, 2.8, n_psfs)
     
