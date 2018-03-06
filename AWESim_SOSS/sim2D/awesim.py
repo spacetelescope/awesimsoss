@@ -19,6 +19,7 @@ import inspect
 import warnings
 import datetime
 import webbpsf
+import pkg_resources
 from . import generate_darks as gd
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
@@ -35,7 +36,6 @@ from skimage import data
 warnings.simplefilter('ignore')
 
 cm = plt.cm
-DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
@@ -151,7 +151,7 @@ def ADUtoFlux(order):
         Arrays to convert the given order trace from ADUs to units of flux
     """
     ADU2mJy, mJy2erg = 7.586031e-05, 2.680489e-15
-    scaling = np.genfromtxt(DIR_PATH+'/files/GR700XD_{}.txt'.format(order), unpack=True)
+    scaling = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/GR700XD_{}.txt'.format(order)), unpack=True)
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling
@@ -203,7 +203,7 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
             # Get the bandpass in that wavelength range
             mn = (wavelength-delta_w/2.)*q.um
             mx = (wavelength+delta_w/2.)*q.um
-            throughput = np.genfromtxt(DIR_PATH+'/files/NIRISS.GR700XD.1.txt', unpack=True)
+            throughput = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/NIRISS.GR700XD.1.txt'), unpack=True)
             bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
             
             # Calculate the LDCs
@@ -538,7 +538,7 @@ def lambda_lightcurve(wavelength, response, psf_loc, pfd2adu, ld_coeffs, ld_prof
         
     return flux
 
-def wave_solutions(subarr, directory=DIR_PATH+'/files/soss_wavelengths_fullframe.fits'):
+def wave_solutions(subarr, directory=pkg_resources.resource_filename('AWESim_SOSS', '/files/soss_wavelengths_fullframe.fits')):
     """
     Get the wavelength maps for SOSS orders 1, 2, and 3
     This will be obsolete once the apply_wcs step of the JWST pipeline
@@ -768,7 +768,7 @@ class TSO(object):
             local_psf_loc = psf_position(local_distance, filt=self.filter)
             
             # Get relative spectral response map
-            throughput = np.genfromtxt(DIR_PATH+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order), unpack=True)
+            throughput = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/gr700xd_{}_order{}.dat'.format(self.filter,order)), unpack=True)
             local_response = np.interp(local_wave, throughput[0], throughput[-1], left=0, right=0)
             
             # Get the wavelength interval per pixel map
@@ -838,12 +838,12 @@ class TSO(object):
         orders = np.asarray([self.tso_order1,self.tso_order2])
         
         # Load all the reference files
-        photon_yield = fits.getdata(DIR_PATH+'/files/photon_yield_dms.fits')
-        pca0_file = DIR_PATH+'/files/niriss_pca0.fits'
-        zodi = fits.getdata(DIR_PATH+'/files/soss_zodiacal_background_scaled.fits')
-        nonlinearity = fits.getdata(DIR_PATH+'/files/substrip256_forward_coefficients_dms.fits')
-        pedestal = fits.getdata(DIR_PATH+'/files/substrip256pedestaldms.fits')
-        darksignal = fits.getdata(DIR_PATH+'/files/substrip256signaldms.fits')*self.gain
+        photon_yield = fits.getdata(pkg_resources.resource_filename('AWESim_SOSS', 'files/photon_yield_dms.fits'))
+        pca0_file = pkg_resources.resource_filename('AWESim_SOSS', 'files/niriss_pca0.fits')
+        zodi = fits.getdata(pkg_resources.resource_filename('AWESim_SOSS', 'files/soss_zodiacal_background_scaled.fits'))
+        nonlinearity = fits.getdata(pkg_resources.resource_filename('AWESim_SOSS', 'files/substrip256_forward_coefficients_dms.fits'))
+        pedestal = fits.getdata(pkg_resources.resource_filename('AWESim_SOSS', 'files/substrip256pedestaldms.fits'))
+        darksignal = fits.getdata(pkg_resources.resource_filename('AWESim_SOSS', 'files/substrip256signaldms.fits'))*self.gain
         
         # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
@@ -1046,7 +1046,7 @@ class TSO(object):
         flux = np.sum(tso[frame].data, axis=0)
         
         # Deconvolve with the grism
-        throughput = np.genfromtxt(DIR_PATH+'/files/gr700xd_{}_order{}.dat'.format(self.filter,order or 1), unpack=True)
+        throughput = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/gr700xd_{}_order{}.dat'.format(self.filter,order or 1)), unpack=True)
         flux *= np.interp(wave, throughput[0], throughput[-1], left=0, right=0)
         
         # Convert from ADU/s to photon flux density
