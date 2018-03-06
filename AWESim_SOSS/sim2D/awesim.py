@@ -30,7 +30,7 @@ from scipy.interpolate import interp1d, _fitpack
 from functools import partial
 from sklearn.externals import joblib
 from numpy.core.multiarray import interp as compiled_interp
-from skimage.transform import PiecewiseAffineTransform, warp
+from skimage.transform import PiecewiseAffineTransform, warp, estimate_transform
 from skimage import data
 
 warnings.simplefilter('ignore')
@@ -93,6 +93,24 @@ def trace_from_webbpsf(psf_file, coeffs=[1.71164931e-11, -9.29379122e-08, 1.9142
         
     return final
     
+def map_warp(image):
+    
+    # Get the warped (derived) wave_map and create a linear wave_map
+    # dst = np.array([range(i,i+2048) for i in range(256)])
+    dst = wave_solutions(256)[0]
+    src = np.tile(np.mean(dst, axis=0), (256,1))
+    
+    # Estimate the transform between the two
+    tform = estimate_transform('affine', src, dst)
+    
+    # Transform the input image
+    out = warp(image, tform)
+    
+    plt.figure()
+    plt.imshow(out, origin='lower')
+    
+    return tform,out
+    
 def warped(image, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43527531e-01, 7.13727478e+01], downsample=50, plot=False):
     """
     Warp a 2D image 
@@ -111,7 +129,7 @@ def warped(image, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43
     src = np.dstack([src_cols.flat, src_rows.flat])[0]
     
     # Calculate the y-intercept of the curved trace
-    y_int = coeffs[-1]+2*76
+    y_int = coeffs[-1]
     
     # Add curvature to control points
     dst_cols = src[:,0]
@@ -121,17 +139,23 @@ def warped(image, coeffs=[1.71164931e-11, -9.29379122e-08, 1.91429367e-04, -1.43
     # Perform transform
     tform = PiecewiseAffineTransform()
     tform.estimate(src, dst)
-    out = warp(image, tform, output_shape=(rows, cols))
+    # out = warp(image, tform, output_shape=(rows, cols))
+    out = warp(image, tform)
     
     # DMS coordinates
-    out = out[::-1,::-1]
+    out = out[::-1]
     
     # Fill in background with smallest non-zero value
-    out[out==0] = np.min(out[out>0])
+    # out[out==0] = np.min(out[out>0])
     
     if plot:
         plt.figure()
-        plt.imshow(out, origin='lower', norm=matplotlib.colors.LogNorm())
+        plt.imshow(out, origin='lower', alpha=0.3)
+        plt.scatter(dst_cols, dst_rows, color='r')
+        plt.plot(range(cols), np.polyval(coeffs, range(cols)))
+        # plt.figure()
+        # plt.imshow(image, alpha=0.3)
+        # plt.scatter(src_cols, src_rows, color='b')
         
     return out
 
