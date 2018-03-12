@@ -17,6 +17,8 @@ The following packages are needed to run `AWESim_SOSS`:
 Given a 1D spectrum of a target, this module produces a 2D SOSS ramp image with the given number of groups and integrations. For example, if I want to produce 20 integrations of 5 groups each for a J=9 A0 star as seen through SOSS, my code might look like:
 
 ```python
+import numpy as np
+import matplotlib.pyplot as plt
 from AWESim_SOSS.sim2D import awesim
 import astropy.units as q, os, AWESim_SOSS
 DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
