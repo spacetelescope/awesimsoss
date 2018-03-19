@@ -31,7 +31,6 @@ from functools import partial
 from sklearn.externals import joblib
 from numpy.core.multiarray import interp as compiled_interp
 from skimage.transform import PiecewiseAffineTransform, warp, estimate_transform
-from skimage import data
 
 warnings.simplefilter('ignore')
 
@@ -129,6 +128,7 @@ def ADUtoFlux(order):
     scaling[1] *= ADU2mJy*mJy2erg
     
     return scaling
+
 
 def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
     """
@@ -243,22 +243,24 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
     
         return lookup
 
-def ld_coefficient_map(lookup_file, subarray='SUBSTRIP256', save=''):
+def ld_coefficient_map(lookup, subarray='SUBSTRIP256', save=''):
     """
     Generate  map of limb darkening coefficients at every NIRISS pixel for all SOSS orders
     
     Parameters
     ----------
-    lookup_file: str
+    lookup: str, array-like
         The path to the lookup table of LDCs
     
     Example
     -------
     ld_coeffs_lookup = ld_coefficient_lookup(1, 'quadratic', star, model_grid)
     """
-    # Get the lookup table
-    ld_profile = os.path.basename(lookup_file).split('_')[0]
-    lookup = joblib.load(lookup_file)
+    if isinstance(lookup, str):
+        
+        # Get the lookup table
+        ld_profile = os.path.basename(lookup).split('_')[0]
+        lookup = joblib.load(lookup)
     
     # Get the wavelength map
     nrows = 256 if subarray=='SUBSTRIP256' else 96 if subarray=='SUBSTRIP96' else 2048
@@ -466,6 +468,8 @@ def psf_lightcurve(wavelength, psf, response, pfd2adu, ld_coeffs, ld_profile, st
         The noise floor in counts
     plot: bool
         Plot the lightcurve
+    verbose: bool
+        Print some details
     
     Returns
     -------
@@ -612,8 +616,7 @@ class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
-
-    def __init__(self, ngrps, nints, star, planet='', params= '', ld_coeffs='', ld_profile='quadratic', snr=700, subarray='SUBSTRIP256', t0=0, target=''):
+    def __init__(self, ngrps, nints, star, snr=700, subarray='SUBSTRIP256', t0=0, target=''):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -625,14 +628,6 @@ class TSO(object):
             The number of integrations for the exposure
         star: sequence
             The wavelength and flux of the star
-        planet: sequence (optional)
-            The wavelength and Rp/R* of the planet at t=0 
-        params: batman.transitmodel.TransitParams (optional)
-            The transit parameters of the planet
-        ld_coeffs: array-like (optional)
-            A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
-        ld_profile: str (optional)
-            The limb darkening profile to use
         snr: float
             The signal-to-noise
         subarray: str
@@ -644,14 +639,30 @@ class TSO(object):
                         
         Example
         -------
+        # Imports
         from AWESim_SOSS.sim2D import awesim
-        import astropy.units as q, os, AWESim_SOSS
+        import astropy.units as q, astropy.constants as ac, os, AWESim_SOSS, batman
         DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
-        vega = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True) # A0V with Jmag=9
-        w = vega[0]*q.um
-        f = (vega[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)
-        tso = awesim.TSO(3, 5, [w, f])
+        star = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True)
+        star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+        planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+        
+        # Simulate star without transiting planet
+        tso = awesim.TSO(ngrps=5, nints=20, star=star1D)
         tso.run_simulation()
+        
+        # Simulate star with transiting exoplanet
+        params = batman.TransitParams()
+        params.t0 = 0.                                # time of inferior conjunction
+        params.per = 5.7214742                        # orbital period (days)
+        params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+        params.inc = 89.8                             # orbital inclination (in degrees)
+        params.ecc = 0.                               # eccentricity
+        params.w = 90.                                # longitude of periastron (in degrees)
+        params.teff = 3500                            # effective temperature of the host star
+        params.logg = 5                               # log surface gravity of the host star
+        params.feh = 0                                # metallicity of the host star
+        tso.run_simulation(planet=planet1D, params=params)
         """
         # Set instance attributes for the exposure
         self.subarray = subarray
@@ -664,24 +675,19 @@ class TSO(object):
         self.time = get_frame_times(subarray, ngrps, nints, t0, self.nresets)
         self.nframes = len(self.time)
         self.target = target or 'Simulated Target'
-        self.obs_date = ''
+        self.obs_date = '2016-01-04'
+        self.obs_time = '23:37:52.226'
         self.filter = 'CLEAR'
         self.header = ''
-        
-        # ========================================================================
-        # ========================================================================
-        # Change this to accept StellarModel onbject for star and planet and
-        # move planet params and transmission spectrum input to run_simulation()
-        # ========================================================================
-        # ========================================================================
+        self.snr = snr
         
         # Set instance attributes for the target
         self.star = star
-        self.planet = planet
-        self.params = params
-        self.ld_coeffs = ld_coeffs or np.zeros((3, self.ncols, 2))
-        self.ld_profile = ld_profile or 'quadratic'
         self.wave = wave_solutions(str(self.nrows))
+        self.planet = ''
+        self.params = ''
+        self.ld_profile = ''
+        self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
         
         # Calculate a map for each order that converts photon flux density to ADU/s
         self.gain = 1.61 # [e-/ADU]
@@ -692,31 +698,41 @@ class TSO(object):
             coeffs = np.polyfit(aw[:-1], np.diff(aw), 1)
             wave_int = (np.polyval(coeffs, self.avg_wave[n])*q.um).to(q.AA)
             self.pfd2adu[n] = (wave_int*self.primary_mirror*q.cm**2/self.gain).to(q.cm**2*q.AA).value.flatten()
-        
+            
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
             setattr(self, p, getattr(self.params, p))
-        
+            
         # Create the empty exposure
-        dims = (self.nframes, self.nrows, self.ncols)
-        self.tso = np.zeros(dims)
-        self.tso_ideal = np.zeros(dims)
-        self.tso_order1 = np.zeros(dims)
-        self.tso_order2 = np.zeros(dims)
+        self.dims = (self.nframes, self.nrows, self.ncols)
+        self.tso = np.zeros(self.dims)
+        self.tso_ideal = np.zeros(self.dims)
+        self.tso_order1_ideal = np.zeros(self.dims)
+        self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, orders=1, filt='CLEAR', noise=True, verbose=True):
+    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs=''):
         """
         Generate the simulated 2D data given the initialized TSO object
         
         Parameters
         ----------
-        orders: sequence
-            The orders to simulate
         filt: str
             The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
-        noise: bool
-            Run add_noise method to generate ramps with noise
+        orders: sequence
+            The orders to simulate
+        planet: sequence (optional)
+            The wavelength and Rp/R* of the planet at t=0 
+        params: batman.transitmodel.TransitParams (optional)
+            The transit parameters of the planet
+        ld_profile: str (optional)
+            The limb darkening profile to use
+        ld_coeffs: array-like (optional)
+            A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
         """
+        # Clear previous results
+        self.tso = np.zeros(self.dims)
+        self.tso_ideal = np.zeros(self.dims)
+        
         # Set single order to list
         if isinstance(orders,int):
             orders = [orders]
@@ -730,14 +746,21 @@ class TSO(object):
             self.filter = 'F277W'
             
         # If there is a planet transmission spectrum but no LDCs, generate them
-        if not isinstance(self.planet, str) and not any(self.ld_coeffs):
+        if planet!='':
+            
+            # Store planet details
+            self.planet = planet
+            self.params = params
+            self.ld_coeffs = ld_coeffs or np.zeros((2, self.nrows*self.ncols, 2))
+            self.ld_profile = ld_profile or 'quadratic'
             
             if verbose:
                 print('Calculating limb darkening coefficients...')
                 start = time.time()
             
             # Generate the lookup table
-            lookup = ldc_lookup(self.ld_profile, [3300, 4.5, 0])
+            stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
+            lookup = ldc_lookup(self.ld_profile, stellar_params)
             
             # Generate the coefficient map
             self.ld_coeffs = ld_coefficient_map(lookup, subarray=self.subarray)
@@ -827,8 +850,7 @@ class TSO(object):
         self.tso_ideal = self.tso.copy()
         
         # Add noise and ramps
-        if noise:
-            self.add_noise()
+        self.add_noise()
     
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -842,9 +864,10 @@ class TSO(object):
             The dark current offset
         """
         print('Adding noise to TSO...')
+        start = time.time()
         
         # Get the separated orders
-        orders = np.asarray([self.tso_order1,self.tso_order2])
+        orders = np.asarray([self.tso_order1_ideal,self.tso_order2_ideal])
         
         # Load all the reference files
         photon_yield = fits.getdata(pkg_resources.resource_filename('AWESim_SOSS', 'files/photon_yield_dms.fits'))
@@ -869,14 +892,16 @@ class TSO(object):
             # Add in the SOSS signal
             ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
             
-            # apply the non-linearity function
+            # Apply the non-linearity function
             ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
             
-            # add the pedestal to each frame in the integration
+            # Add the pedestal to each frame in the integration
             ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
             
             # Update the TSO with one containing noise
             self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
+            
+        print('Noise model finished:', time.time()-start)
         
     def plot_frame(self, frame='', scale='linear', order='', noise=True, cmap=cm.jet):
         """
@@ -896,7 +921,7 @@ class TSO(object):
             The color map to use
         """
         if order:
-            tso = getattr(self, 'tso_order{}'.format(order))
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             if noise:
                 tso = self.tso
@@ -973,7 +998,7 @@ class TSO(object):
             The frame number to plot
         """
         if order:
-            tso = getattr(self, 'tso_order{}'.format(order))
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             tso = self.tso
             
@@ -1046,11 +1071,11 @@ class TSO(object):
             The frame number to plot
         """
         if order:
-            tso = getattr(self, 'tso_order{}'.format(order))
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             tso = self.tso
         
-        # Get extracted spectrum
+        # Get extracted spectrum (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
         flux = np.sum(tso[frame].data, axis=0)
         
@@ -1066,9 +1091,11 @@ class TSO(object):
         flux /= wave*503411665111.4543 # [1/erg*um]
         
         # Plot it along with input spectrum
-        plt.figure(figsize=(13,2))
-        plt.plot(wave, flux, label='Extracted')
-        plt.plot(*self.star, label='Injected')
+        plt.figure(figsize=(13,5))
+        plt.loglog(wave, flux, label='Extracted')
+        plt.loglog(*self.star, label='Injected')
+        plt.xlim(wave[0]*0.95,wave[-1]*1.05)
+        plt.legend()
     
     def save(self, filename='dummy.save'):
         """
@@ -1113,7 +1140,7 @@ class TSO(object):
             The path of the output file
         """
         # Make the cards
-        cards = [('DATE', datetime.datetime.now().strftime("%Y-%m-%d%H:%M:%S"), 'Date file created yyyy-mm-ddThh:mm:ss, UTC'),
+        cards = [('DATE', datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), 'Date file created yyyy-mm-ddThh:mm:ss, UTC'),
                 ('FILENAME', outfile, 'Name of the file'),
                 ('DATAMODL', 'RampModel', 'Type of data model'),
                 ('ORIGIN', 'STScI', 'Institution responsible for creating FITS file'),
@@ -1134,7 +1161,7 @@ class TSO(object):
                 ('', '', ''),
                 ('COMMENT', '/ Observation identifiers', ''),
                 ('DATE-OBS', self.obs_date, 'UT date at start of exposure'),
-                ('TIME-OBS', self.obs_date, 'UT time at the start of exposure'),
+                ('TIME-OBS', self.obs_time, 'UT time at the start of exposure'),
                 ('OBS_ID', 'V87600007001P0000000002102', 'Programmatic observation identifier'),
                 ('VISIT_ID', '87600007001', 'Visit identifier'),
                 ('PROGRAM', '87600', 'Program number'),
@@ -1200,12 +1227,15 @@ class TSO(object):
                 ('DURATION', self.time[-1]-self.time[0], 'Total duration of exposure (sec)'),
                 ('NRSTSTRT', self.nresets, 'Number of resets at start of exposure'),
                 ('NRESETS', self.nresets, 'Number of resets between integrations'),
+                ('FWCPOS', float(75.02400207519531), ''),
+                ('PWCPOS', float(245.6344451904297), ''),
                 ('ZEROFRAM', False, 'Zero frame was downlinkws separately'),
                 ('DATAPROB', False, 'Science telemetry indicated a problem'),
                 ('SCA_NUM', 496, 'Sensor Chip Assembly number'),
                 ('DATAMODE', 91, 'post-processing method used in FPAP'),
                 ('COMPRSSD', False, 'data compressed on-board (T/F)'),
-                ('SUBARRAY', 'SUBSTRIP256', 'Subarray pattern name'),
+                ('SUBARRAY', True, 'Subarray pattern name'),
+                # ('SUBARRAY', self.subarray, 'Subarray pattern name'),
                 ('SUBSTRT1', 1, 'Starting pixel in axis 1 direction'),
                 ('SUBSTRT2', 1793, 'Starting pixel in axis 2 direction'),
                 ('SUBSIZE1', self.ncols, 'Number of pixels in axis 1 direction'),
@@ -1267,23 +1297,25 @@ class TSO(object):
                 ('VISITEND', '2017-03-02 15:58:45.36', 'Observatory UTC time when the visit st'),
                 ('WFSCFLAG', '', 'Wavefront sensing and control visit indicator'),
                 ('BSCALE', 1, ''),
-                ('BZERO', 32768, '')]
+                ('BZERO', 32768, ''),
+                ('NCOLS', float(self.nrows-1), ''),
+                ('NROWS', float(self.ncols-1), '')]
         
         # Make the header
         prihdr = fits.Header()
         for card in cards:
             prihdr.append(card, end=True)
-        
+            
         # Store the header in the object too
         self.header = prihdr
         
+        # Put data into detector coordinates
+        data = np.swapaxes(self.tso, 1, 2)[:,:,::-1]
+        
         # Make the HDUList
-        prihdu  = fits.PrimaryHDU(header=prihdr)
-        sci_hdu = fits.ImageHDU(data=self.tso, name='SCI')
-        hdulist = fits.HDUList([prihdu, sci_hdu])
+        prihdu = fits.PrimaryHDU(data=data, header=prihdr)
         
         # Write the file
-        hdulist.writeto(outfile, overwrite=True)
-        hdulist.close()
+        prihdu.writeto(outfile, overwrite=True)
         
         print('File saved as',outfile)
