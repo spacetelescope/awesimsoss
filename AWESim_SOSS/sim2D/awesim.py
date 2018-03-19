@@ -51,9 +51,6 @@ def make_linear_SOSS_trace(psfs, plot=False):
     plot: bool
         Plot the trace
     """
-    # Reshape
-    psfs = psfs.swapaxes(0,1)
-    
     # Get dimensions
     n_frames, n_waves, x, y = psfs.shape
     
@@ -61,7 +58,7 @@ def make_linear_SOSS_trace(psfs, plot=False):
     c = int(x/2)
     
     # Empty trace (with padding for overflow)
-    linear_trace = np.zeros((n_frames, 2048+2*c, 256))
+    linear_trace = np.zeros((n_frames, n_waves+x, 256))
     
     # For each frame in the exposure...
     for N,frame in enumerate(psfs):
@@ -70,21 +67,20 @@ def make_linear_SOSS_trace(psfs, plot=False):
         for n,wave in enumerate(frame):
             
             # Place the trace center in the correct column
-            linear_trace[N,n:n+c*2,:c*2] += wave
+            linear_trace[N,n:n+x,:y] += wave
             
-    # Transpose to DMS orientation
-    # linear_trace = linear_trace.T
-    
     # Trim off padding
-    # linear_trace = linear_trace[:,c:-c]
-    linear_trace = linear_trace[:,c:-c,:]
-    
+    linear_trace = linear_trace[:,c:-c]
+   
+    # Transpose to DMS orientation
+    linear_trace = linear_trace.swapaxes(1,2)
+   
     # Plot it
     if plot:
         plt.figure(figsize=(13,2))
-        plt.imshow(linear_trace, origin='lower')
-        plt.xlim(0,2048)
-        plt.ylim(0,256)
+        plt.imshow(linear_trace[0], origin='lower', norm=matplotlib.colors.LogNorm())
+        # plt.xlim(0,2048)
+        # plt.ylim(0,256)
         
     return linear_trace
     
@@ -708,7 +704,7 @@ class TSO(object):
         self.tso_order1 = np.zeros(dims)
         self.tso_order2 = np.zeros(dims)
     
-    def run_simulation(self, orders=1, filt='CLEAR', noise=False, verbose=True):
+    def run_simulation(self, orders=1, filt='CLEAR', noise=True, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -756,8 +752,8 @@ class TSO(object):
             wave = self.avg_wave[order-1]
             
             # Get the psf cube
-            cube = psf_cube(filt=self.filter, order=order-1)
-                
+            cube = SOSS_psf_cube(filt=filt, order=order, generate=False)
+            
             # Get limb darkening map
             ld_coeffs = self.ld_coeffs[order-1]
             
@@ -788,6 +784,8 @@ class TSO(object):
             
             # Generate the lightcurves at each wavelength
             psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, pfd2adu, ld_coeffs))))
+            psfs = psfs.swapaxes(0,1)
+            psfs = psfs.swapaxes(2,3)
             
             # Close the pool
             pool.close()
@@ -806,27 +804,25 @@ class TSO(object):
                 print('Constructing order {} warped traces...'.format(order))
                 start = time.time()
             pool = multiprocessing.Pool(8)
-            
+
             # Load the warp function with the precomputed transform
-            func = partial(warp, inverse_map=tform.inverse, output_shape=(self.nrows, self.ncols))
-            
+            func = partial(warp, inverse_map=tform.inverse)#, output_shape=(self.nrows, self.ncols))
+
             # Generate the warped trace at each frame
             tso_order = np.asarray(pool.map(func, frames))
-            
+
             # Close the pool
             pool.close()
             pool.join()
             if verbose:
                 print('Order {} warped traces finished:'.format(order), time.time()-start)
                 
-            return(tso_order)
-            
-            # Add to the master TSO
-            self.tso += tso_order
-            
             # Add it to the individual order
             setattr(self, 'tso_order{}'.format(order), tso_order)
             
+        # Add to the master TSO
+        self.tso = np.sum([getattr(self, 'tso_order{}'.format(order)) for order in orders], axis=0)
+        
         # Add noise to the observations using Kevin Volk's dark ramp simulator
         self.tso_ideal = self.tso.copy()
         
