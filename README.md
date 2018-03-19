@@ -42,7 +42,7 @@ tso.plot_frame()
 The 96 subarray is also supported:
 
 ```python
-tso = awesim.TSO(ngrps=5, nints=20, star=star1D, subarray='SUBSTRIP96')
+tso = awesim.TSO(ngrps=5, nints=20, star=spec1D, subarray='SUBSTRIP96')
 ```
 
 The default filter is CLEAR but you can also simulate observations with the F277W filter like so:
