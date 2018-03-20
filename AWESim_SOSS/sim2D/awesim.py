@@ -710,7 +710,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs=''):
+    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs='', verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -850,7 +850,7 @@ class TSO(object):
         self.tso_ideal = self.tso.copy()
         
         # Add noise and ramps
-        self.add_noise()
+        # self.add_noise()
     
     def add_noise(self, zodi_scale=1., offset=500):
         """
