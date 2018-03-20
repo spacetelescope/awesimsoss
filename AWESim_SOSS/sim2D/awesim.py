@@ -761,7 +761,7 @@ class TSO(object):
         """
         # Set instance attributes for the exposure
         self.subarray = subarray
-        self.nrows = 256 if '256' in subarray else 96 if '96' in subarray else 2048
+        self.nrows = SUBARRAY_Y[subarray]
         self.ncols = 2048
         self.ngrps = ngrps
         self.nints = nints
