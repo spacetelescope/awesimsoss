@@ -77,11 +77,8 @@ def make_linear_SOSS_trace(psfs, subarray='SUBSTRIP256', plot=False):
             # Place the trace center in the correct column
             linear_trace[N,n:n+x,:y] += wave
             
-    # Trim off padding
-    linear_trace = linear_trace[:,c:-c,c:-c]
-   
-    # Transpose to DMS orientation
-    linear_trace = linear_trace.swapaxes(1,2)
+    # Transpose and invert x-axis  DMS orientation
+    linear_trace = linear_trace.swapaxes(1,2)[:,:,::-1]
    
     # Plot it
     if plot:
@@ -898,6 +895,12 @@ class TSO(object):
             # Get limb darkening map
             ld_coeffs = self.ld_coeffs[order-1]
             
+            # # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
+            # calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
+            # caldata = fits.getdata(calfile)
+            # throughput = caldata[(caldata['filter']==self.filter)&(caldata['pupil']=='GR700XD')&(caldata['order']==order)]
+            # response = np.interp(wave, throughput.wavelength[0], throughput.relresponse[0], left=0, right=0)
+            
             # Get relative spectral response map
             throughput = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/gr700xd_{}_order{}.dat'.format(self.filter,order)), unpack=True)
             response = np.interp(wave, throughput[0], throughput[-1], left=0, right=0)
@@ -912,7 +915,7 @@ class TSO(object):
             ld_coeffs = list(map(list, ld_coeffs))
             
             # Caluclate the transform for the desired polynomial
-            tform = transform_from_polynomial(self.nrows, self.ncols, coeffs=trace_polynomials(self.subarray, generate=False)[order-1])
+            tform = transform_from_polynomial(self.nrows+76, self.ncols+76, coeffs=trace_polynomials(self.subarray, generate=False)[order-1])
             
             # Run multiprocessing to generate lightcurves
             if verbose:
@@ -951,7 +954,10 @@ class TSO(object):
 
             # Generate the warped trace at each frame
             tso_order = np.asarray(pool.map(func, frames))
-
+            
+            # Trim off padding
+            tso_order = tso_order[:,38:-38,38:-38]
+            
             # Close the pool
             pool.close()
             pool.join()
