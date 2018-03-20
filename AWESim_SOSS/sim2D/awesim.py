@@ -859,30 +859,35 @@ class TSO(object):
         if 'F277W' in filt.upper():
             orders = [1]
             self.filter = 'F277W'
-            
+                
         # If there is a planet transmission spectrum but no LDCs, generate them
         if planet!='':
+            
+            # Check if the stellar params are the same
+            old_params = [getattr(self.params, p, None) for p in ['teff','logg','feh']]
             
             # Store planet details
             self.planet = planet
             self.params = params
-            self.ld_coeffs = ld_coeffs or np.zeros((2, self.nrows*self.ncols, 2))
-            self.ld_profile = ld_profile or 'quadratic'
+            self.ld_profile = ld_profile
             
-            if verbose:
-                print('Calculating limb darkening coefficients...')
-                start = time.time()
+            # Set time of inferior conjunction to time axis midpoint
+            self.params.t0 = self.time[self.nframes//2]
             
-            # Generate the lookup table
-            stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
-            lookup = ldc_lookup(self.ld_profile, stellar_params)
-            
-            # Generate the coefficient map
-            self.ld_coeffs = ld_coefficient_map(lookup, subarray=self.subarray)
-            
-            if verbose:
-                print('Finished limb darkening coefficients:',start-time.time())
-            
+            # Use input ld coeffs
+            if isinstance(ld_coeffs,np.ndarray):
+                self.ld_coeffs = ld_coeffs
+                
+            # Or generate them if the stellar paramaeters have changed
+            else:
+                # Generate the lookup table if the stallar parameters have changed
+                stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
+                if stellar_params!=old_params:
+                    self.ld_lookup = ldc_lookup(self.ld_profile, stellar_params)
+                    
+                # Generate the coefficient map
+                self.ld_coeffs = ld_coefficient_map(self.ld_lookup, self.ld_profile, subarray=self.subarray)
+                
         # Generate simulation for each order
         for order in orders:
             
