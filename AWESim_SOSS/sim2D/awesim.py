@@ -491,7 +491,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=''):
         
     return psf
 
-def psf_lightcurve(wavelength, psf, response, pfd2adu, ld_coeffs, ld_profile, star, planet, time, params, filt, floor=2, plot=False):
+def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, planet, time, params, filt, floor=2, plot=False):
     """
     Generate a lightcurve for a given wavelength
     
@@ -499,19 +499,19 @@ def psf_lightcurve(wavelength, psf, response, pfd2adu, ld_coeffs, ld_profile, st
     ----------
     wavelength: float
         The wavelength value in microns
+    psf: sequencs
+        The psf from webbpsf for the given wavelength
     response: float
         The spectral response of the detector at the given wavelength
     ld_coeffs: array-like
         A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
     ld_profile: str
         The limb darkening profile to use
-    pfd2adu: sequence
-        The factor that converts photon flux density to ADU/s
     star: sequence
         The wavelength and flux of the star
     planet: sequence
         The wavelength and Rp/R* of the planet at t=0 
-    t: sequence
+    time: sequence
         The time axis for the TSO
     params: batman.transitmodel.TransitParams
         The transit parameters of the planet
@@ -521,8 +521,6 @@ def psf_lightcurve(wavelength, psf, response, pfd2adu, ld_coeffs, ld_profile, st
         The noise floor in counts
     plot: bool
         Plot the lightcurve
-    verbose: bool
-        Print some details
     
     Returns
     -------
@@ -543,22 +541,8 @@ def psf_lightcurve(wavelength, psf, response, pfd2adu, ld_coeffs, ld_profile, st
         ld_coeffs  = [ld_coeffs]
         ld_profile = 'linear'
         
-    # I = (Stellar Flux)*(LDC)*(Transit Depth)*(Filter Throughput)*(PSF position)
-    # Don't use astropy units! It quadruples the computing time!
-    
     # Get the energy flux density [erg/s/cm2/A] at the given wavelength [um] at t=t0
     flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)*psf
-    # print('Energy Flux Density [erg/s/cm2/A]:',flux0)
-    
-    # Convert from energy flux density to photon flux density [photons/s/cm2/A]
-    # by multiplying by (lambda/h*c)
-    flux0 *= wavelength*503411665111.4543 # [1/erg*um]
-    # print('Photon Flux Density [1/s/cm2/A]:',flux0)
-    
-    # Convert from photon flux density to ADU/s by multiplying by the wavelength 
-    # interval [um/pixel] and primary mirror area [cm2], and dividing by the gain [e-/ADU]
-    flux0 *= pfd2adu
-    # print('Count Rate [ADU/s * 1/e-]:',flux0)
     
     # Expand to shape of time axis
     flux = np.tile(flux0, (len(time),1,1))
@@ -581,7 +565,7 @@ def psf_lightcurve(wavelength, psf, response, pfd2adu, ld_coeffs, ld_profile, st
         # Scale the flux with the lightcurve
         flux *= lightcurve
         
-    # Apply the filter response
+    # Apply the filter response to convert to [ADU/s]
     flux *= response
     
     # Replace very low signal pixels with noise floor
@@ -779,20 +763,16 @@ class TSO(object):
         # Set instance attributes for the target
         self.star = star
         self.wave = wave_solutions(str(self.nrows))
+        self.avg_wave = np.mean(self.wave, axis=1)
         self.planet = ''
         self.params = ''
         self.ld_profile = ''
         self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
         
-        # Calculate a map for each order that converts photon flux density to ADU/s
-        self.gain = 1.61 # [e-/ADU]
-        self.primary_mirror = 253260 # [cm2]
-        self.avg_wave = np.mean(self.wave, axis=1)
-        self.pfd2adu = np.ones((3,self.ncols))
-        for n,aw in enumerate(self.avg_wave):
-            coeffs = np.polyfit(aw[:-1], np.diff(aw), 1)
-            wave_int = (np.polyval(coeffs, self.avg_wave[n])*q.um).to(q.AA)
-            self.pfd2adu[n] = (wave_int*self.primary_mirror*q.cm**2/self.gain).to(q.cm**2*q.AA).value.flatten()
+        # Get absolute calibration reference file
+        calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
+        caldata = fits.getdata(calfile)
+        self.photom = caldata[(caldata['filter']==self.filter)&(caldata['pupil']=='GR700XD')]
             
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
@@ -847,6 +827,8 @@ class TSO(object):
         # Clear previous results
         self.tso = np.zeros(self.dims)
         self.tso_ideal = np.zeros(self.dims)
+        self.tso_order1_ideal = np.zeros(self.dims)
+        self.tso_order2_ideal = np.zeros(self.dims)
         
         # Set single order to list
         if isinstance(orders,int):
@@ -900,18 +882,15 @@ class TSO(object):
             # Get limb darkening map
             ld_coeffs = self.ld_coeffs[order-1]
             
-            # # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
-            # calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
-            # caldata = fits.getdata(calfile)
-            # throughput = caldata[(caldata['filter']==self.filter)&(caldata['pupil']=='GR700XD')&(caldata['order']==order)]
-            # response = np.interp(wave, throughput.wavelength[0], throughput.relresponse[0], left=0, right=0)
+            # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
+            throughput = self.photom[self.photom['order']==order]
+            ph_wave = throughput.wavelength[throughput.wavelength>0][1:-2]
+            ph_resp = throughput.relresponse[throughput.wavelength>0][1:-2]
+            response = np.interp(wave, ph_wave, ph_resp)
             
-            # Get relative spectral response map
-            throughput = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/gr700xd_{}_order{}.dat'.format(self.filter,order)), unpack=True)
-            response = np.interp(wave, throughput[0], throughput[-1], left=0, right=0)
-            
-            # Get the wavelength interval per pixel map
-            pfd2adu = self.pfd2adu[order-1]
+            # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
+            response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
+            setattr(self, 'photom_order1', response)
             
             if isinstance(ld_coeffs[0], float):
                 ld_coeffs = np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * wave.size)
@@ -932,13 +911,17 @@ class TSO(object):
             func = partial(psf_lightcurve, ld_profile=self.ld_profile, star=self.star, planet=self.planet, time=self.time, params=self.params, filt=self.filter)
             
             # Generate the lightcurves at each wavelength
-            psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, pfd2adu, ld_coeffs))))
+            psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs))))
             psfs = psfs.swapaxes(0,1)
             psfs = psfs.swapaxes(2,3)
             
             # Close the pool
             pool.close()
             pool.join()
+            
+            # Multiply by the frame time to convert to [ADU]
+            ft = np.tile(self.time[:self.ngrps], self.nints)
+            psfs *= ft[:,None,None,None]
             
             # Generate TSO frames with linear traces
             if verbose:
@@ -953,14 +936,14 @@ class TSO(object):
                 print('Constructing order {} warped traces...'.format(order))
                 start = time.time()
             pool = multiprocessing.Pool(8)
-
+            
             # Load the warp function with the precomputed transform
-            func = partial(warp, inverse_map=tform.inverse)#, output_shape=(self.nrows, self.ncols))
-
+            func = partial(warp, inverse_map=tform.inverse)
+            
             # Generate the warped trace at each frame
             tso_order = np.asarray(pool.map(func, frames))
             
-            # Trim off padding
+            # Trim off padding (webbpsf dimensions are 76x76 pixels)
             tso_order = tso_order[:,38:-38,38:-38]
             
             # Close the pool
@@ -1059,14 +1042,18 @@ class TSO(object):
                 tso = self.tso
             else:
                 tso = self.tso_ideal
+                
+        # Get data for plotting
+        vmax = int(np.nanmax(tso[tso<np.inf]))
+        frame = np.array(tso[frame or self.nframes//2].data)
         
-        vmax = int(np.nanmax(tso))
-        
+        # Draw plot
         plt.figure(figsize=(13,2))
         if scale=='log':
-            plt.imshow(tso[frame or self.nframes//2].data, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
+            frame[frame<1.] = 1.
+            plt.imshow(frame, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
         else:
-            plt.imshow(tso[frame or self.nframes//2].data, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+            plt.imshow(frame, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
         plt.colorbar()
         plt.title('Injected Spectrum')
     
@@ -1210,17 +1197,10 @@ class TSO(object):
         # Get extracted spectrum (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
         flux = np.sum(tso[frame].data, axis=0)
+        response = 1./self.photom_order1
         
-        # Deconvolve with the grism
-        throughput = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/gr700xd_{}_order{}.dat'.format(self.filter,order or 1)), unpack=True)
-        flux *= np.interp(wave, throughput[0], throughput[-1], left=0, right=0)
-        
-        # Convert from ADU/s to photon flux density
-        wave_int = np.diff(wave)*q.um.to(q.AA)
-        flux /= (np.array(list(wave_int)+[wave_int[-1]])*self.primary_mirror*q.cm**2/self.gain).value.flatten()
-        
-        # Convert from photon flux density to energy flux density
-        flux /= wave*503411665111.4543 # [1/erg*um]
+        # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
+        flux *= response*self.time[np.mod(self.ngrps, frame)]
         
         # Plot it along with input spectrum
         plt.figure(figsize=(13,5))
