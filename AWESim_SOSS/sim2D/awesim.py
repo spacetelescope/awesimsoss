@@ -211,8 +211,7 @@ def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
             # Get the bandpass in that wavelength range
             mn = (wavelength-delta_w/2.)*q.um
             mx = (wavelength+delta_w/2.)*q.um
-            throughput = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/NIRISS.GR700XD.1.txt'), unpack=True)
-            bandpass = svo.Filter('GR700XD', throughput, n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
+            bandpass = svo.Filter('NIRISS.GR700XD', n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
             
             # Calculate the LDCs
             ldcs = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08, verbose=False)
