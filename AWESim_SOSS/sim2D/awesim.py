@@ -26,7 +26,7 @@ from ExoCTK.ldc import ldcfit as lf
 from astropy.io import fits
 from scipy.optimize import curve_fit
 from scipy.ndimage.interpolation import zoom
-from scipy.interpolate import interp1d, _fitpack
+from scipy.interpolate import interp1d, _fitpack, splrep, splev
 from functools import partial
 from sklearn.externals import joblib
 from numpy.core.multiarray import interp as compiled_interp
@@ -37,6 +37,98 @@ warnings.simplefilter('ignore')
 cm = plt.cm
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
+
+def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=38, plot=False):
+    """
+    Calculate the Affine transform that takes into account the curvature of the trace
+    
+    Parameters
+    ----------
+    coeffs: sequence
+        The polynomial coefficients
+    cols: int
+        The number of columns of control points
+    rows: int
+        The number of rows of control points
+    delta_row: float
+        The distance between rows of control points (default=38 since the webbpsf frame is (76,76))
+    plot: bool
+        Plot the control points
+    
+    Returns
+    -------
+    sequence
+        The (x,y) coordinates of the control points
+    """
+    # Get the polynomial and evaluate
+    X = np.linspace(0, 2048, cols)
+    Y = np.polyval(coeffs, X)
+    
+    # Make linear control points with min(Y) as the middle row
+    lin_X = np.tile(X, (rows,1))
+    lin_Y = np.tile(np.min(Y), (rows,cols))
+    lin_Y[0] -= delta_row
+    lin_Y[-1] += delta_row
+    src_points = np.array([(lx,ly) for lx,ly in zip(lin_X.flatten(),lin_Y.flatten())])
+    
+    # Interpolate the data with a spline
+    spl = splrep(X, Y)
+    
+    if plot:
+        plt.figure(figsize=(15,2))
+        plt.plot(X, Y, alpha=0.3)
+        
+    x_ctl, y_ctl = [], []
+    dst_points = []
+    for x0 in X:
+        small_t = np.arange(x0-delta_row, x0+delta_row)
+        fa = splev(x0, spl, der=0)     # f(a)
+        fprime = splev(x0, spl, der=1) # f'(a)
+        # tan = fa+fprime*(small_t-x0) # tangent
+        m = -1./fprime # slope of normal line
+        norm = m*(small_t-x0)+fa # normal
+        
+        # Define start, center, and end points of normal line
+        y0 = norm[delta_row]
+        xi, yi = small_t[-1], norm[-1]
+        xf, yf = small_t[0], norm[0]
+        
+        # Calculate the hypotenuses
+        df = np.sqrt((x0-xf)**2 + (y0-yf)**2)
+        di = np.sqrt((x0-xi)**2 + (y0-yi)**2)
+        dp = delta_row
+        
+        # Calculate the coordinates on either side of the trace along the normal
+        xpi = x0 - dp/np.sqrt(1+m**2)
+        ypi = m*(xpi-x0)+y0
+        xpf = x0 + dp/np.sqrt(1+m**2)
+        ypf = m*(xpf-x0)+y0
+        
+        # Add the control points to the list
+        dst_points += [(xpi,ypi), (x0, y0), (xpf, ypf)]
+        
+        if plot:
+            plt.plot(small_t, norm, '--g', lw=2)
+            plt.plot(xpi, ypi, 'sg')
+            plt.plot(xpf, ypf, 'sg')
+            plt.plot(x0, fa, 'om')
+            plt.axvline(x0)
+            
+    if plot:
+        plt.plot(*src_points.T, 'dr')
+        plt.xlim(0,2048)
+        plt.ylim(0,256)
+        
+    # Put into an array
+    dst_points = np.array(dst_points)
+    
+    # return src_points, dst_points
+    
+    # Perform transform
+    tform = PiecewiseAffineTransform()
+    tform.estimate(src_points, dst_points)
+        
+    return tform
 
 def make_linear_SOSS_trace(psfs, subarray='SUBSTRIP256', plot=False):
     """
@@ -89,58 +181,60 @@ def make_linear_SOSS_trace(psfs, subarray='SUBSTRIP256', plot=False):
         
     return linear_trace
     
-def transform_from_polynomial(rows, cols, coeffs, downsample_rows=20, downsample_cols=50, plot=False):
-    """
-    Calculate the transform needed to warp one image into another
-    
-    Parameters
-    ----------
-    rows: int
-        The number of rows
-    cols: int
-        The number of cols
-    coeffs: sequence
-        The list of polynomial coefficients (highest order first)
-    downsample_rows: int
-        The number of control points in the row direction
-    downsample_cols: int
-        The number of control points in the col direction
-    plot: bool
-        Plot for visual inspection
-    
-    Returns
-    -------
-    transform object
-        The transform between the two sets of points
-    """
-    # Generate the control points
-    src_cols = np.linspace(0, cols, cols//downsample_cols)
-    src_rows = np.linspace(0, rows, rows//downsample_rows)
-    src_rows, src_cols = np.meshgrid(src_rows, src_cols)
-    src = np.dstack([src_cols.flat, src_rows.flat])[0]
-    
-    # Calculate the bottom of the curved trace
-    # x_vals = np.arange(cols)
-    # y_min = np.nanmin(np.polyval(coeffs, x_vals))
-    
-    # Add curvature to control points
-    dst_cols = src[:,0]
-    dst_rows = src[:,1]+np.polyval(coeffs, dst_cols)#-y_min
-    dst = np.vstack([dst_cols, dst_rows]).T
-    
-    if plot:
-        plt.figure(figsize=(13,2))
-        plt.scatter(src_cols, src_rows, c='b', label='src')
-        plt.scatter(dst_cols, dst_rows, c='r', label='dst')
-        plt.xlim(0,cols)
-        plt.ylim(0,rows)
-        plt.legend(loc=0)
-        
-    # Perform transform
-    tform = PiecewiseAffineTransform()
-    tform.estimate(src, dst)
-        
-    return tform
+# def transform_from_polynomial(coeffs, cols=100, rows=3, downsample_rows=20, downsample_cols=50, plot=False):
+#     """
+#     Calculate the transform needed to warp one image into another
+#
+#     Parameters
+#     ----------
+#     cols: int
+#         The number of cols
+#     rows: int
+#         The number of rows
+#     coeffs: sequence
+#         The list of polynomial coefficients (highest order first)
+#     downsample_rows: int
+#         The number of control points in the row direction
+#     downsample_cols: int
+#         The number of control points in the col direction
+#     plot: bool
+#         Plot for visual inspection
+#
+#     Returns
+#     -------
+#     transform object
+#         The transform between the two sets of points
+#     """
+#     # Generate the control points
+#     src_cols = np.linspace(0, cols, cols//downsample_cols)
+#     src_rows = np.linspace(0, rows, rows//downsample_rows)
+#     src_rows, src_cols = np.meshgrid(src_rows, src_cols)
+#     src = np.dstack([src_cols.flat, src_rows.flat])[0]
+#
+#     # Calculate the bottom of the curved trace
+#     # x_vals = np.arange(cols)
+#     # y_min = np.nanmin(np.polyval(coeffs, x_vals))
+#
+#     # Add curvature to control points
+#     dst_cols = src[:,0]
+#     dst_rows = src[:,1]+np.polyval(coeffs, dst_cols)#-y_min
+#     dst = np.vstack([dst_cols, dst_rows]).T
+#
+#     dst = control_points(coeffs, cols, rows)
+#
+#     if plot:
+#         plt.figure(figsize=(13,2))
+#         plt.scatter(src_cols, src_rows, c='b', label='src')
+#         plt.scatter(dst_cols, dst_rows, c='r', label='dst')
+#         plt.xlim(0,cols)
+#         plt.ylim(0,rows)
+#         plt.legend(loc=0)
+#
+#     # Perform transform
+#     tform = PiecewiseAffineTransform()
+#     tform.estimate(src, dst)
+#
+#     return tform
 
 def ADUtoFlux(order):
     """
@@ -898,7 +992,9 @@ class TSO(object):
             ld_coeffs = list(map(list, ld_coeffs))
             
             # Caluclate the transform for the desired polynomial
-            tform = transform_from_polynomial(self.nrows+76, self.ncols+76, coeffs=trace_polynomials(self.subarray, generate=False)[order-1])
+            # tform = transform_from_polynomial(self.nrows+76, self.ncols+76, coeffs=trace_polynomials(self.subarray, generate=False)[order-1])
+            trace_coeffs = trace_polynomials(self.subarray, generate=False)[order-1]
+            tform = transform_from_polynomial(trace_coeffs)
             
             # Run multiprocessing to generate lightcurves
             if verbose:
