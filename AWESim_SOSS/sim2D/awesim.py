@@ -122,12 +122,10 @@ def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=38, plot=False
     # Put into an array
     dst_points = np.array(dst_points)
     
-    # return src_points, dst_points
-    
     # Perform transform
     tform = PiecewiseAffineTransform()
     tform.estimate(src_points, dst_points)
-        
+    
     return tform
 
 def make_linear_SOSS_trace(psfs, subarray='SUBSTRIP256', plot=False):
@@ -180,61 +178,6 @@ def make_linear_SOSS_trace(psfs, subarray='SUBSTRIP256', plot=False):
         plt.ylim(0,Y)
         
     return linear_trace
-    
-# def transform_from_polynomial(coeffs, cols=100, rows=3, downsample_rows=20, downsample_cols=50, plot=False):
-#     """
-#     Calculate the transform needed to warp one image into another
-#
-#     Parameters
-#     ----------
-#     cols: int
-#         The number of cols
-#     rows: int
-#         The number of rows
-#     coeffs: sequence
-#         The list of polynomial coefficients (highest order first)
-#     downsample_rows: int
-#         The number of control points in the row direction
-#     downsample_cols: int
-#         The number of control points in the col direction
-#     plot: bool
-#         Plot for visual inspection
-#
-#     Returns
-#     -------
-#     transform object
-#         The transform between the two sets of points
-#     """
-#     # Generate the control points
-#     src_cols = np.linspace(0, cols, cols//downsample_cols)
-#     src_rows = np.linspace(0, rows, rows//downsample_rows)
-#     src_rows, src_cols = np.meshgrid(src_rows, src_cols)
-#     src = np.dstack([src_cols.flat, src_rows.flat])[0]
-#
-#     # Calculate the bottom of the curved trace
-#     # x_vals = np.arange(cols)
-#     # y_min = np.nanmin(np.polyval(coeffs, x_vals))
-#
-#     # Add curvature to control points
-#     dst_cols = src[:,0]
-#     dst_rows = src[:,1]+np.polyval(coeffs, dst_cols)#-y_min
-#     dst = np.vstack([dst_cols, dst_rows]).T
-#
-#     dst = control_points(coeffs, cols, rows)
-#
-#     if plot:
-#         plt.figure(figsize=(13,2))
-#         plt.scatter(src_cols, src_rows, c='b', label='src')
-#         plt.scatter(dst_cols, dst_rows, c='r', label='dst')
-#         plt.xlim(0,cols)
-#         plt.ylim(0,rows)
-#         plt.legend(loc=0)
-#
-#     # Perform transform
-#     tform = PiecewiseAffineTransform()
-#     tform.estimate(src, dst)
-#
-#     return tform
 
 def ADUtoFlux(order):
     """
@@ -993,7 +936,7 @@ class TSO(object):
             
             # Caluclate the transform for the desired polynomial
             # tform = transform_from_polynomial(self.nrows+76, self.ncols+76, coeffs=trace_polynomials(self.subarray, generate=False)[order-1])
-            trace_coeffs = trace_polynomials(self.subarray, generate=False)[order-1]
+            trace_coeffs = trace_polynomials(self.subarray)[order-1]
             tform = transform_from_polynomial(trace_coeffs)
             
             # Run multiprocessing to generate lightcurves
