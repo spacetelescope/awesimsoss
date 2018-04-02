@@ -541,7 +541,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=''):
     # Check the wavelength
     if wavelength<psfs.x[0]:
         wavelength = psfs.x[0]
-        
+
     if wavelength>psfs.x[-1]:
         wavelength = psfs.x[-1]
         
@@ -878,7 +878,7 @@ class TSO(object):
         # Get absolute calibration reference file
         calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
         caldata = fits.getdata(calfile)
-        self.photom = caldata[(caldata['filter']==self.filter)&(caldata['pupil']=='GR700XD')]
+        self.photom = caldata[caldata['pupil']=='GR700XD']
             
         # Add the orbital parameters as attributes
         for p in [i for i in dir(self.params) if not i.startswith('_')]:
@@ -989,14 +989,14 @@ class TSO(object):
             ld_coeffs = self.ld_coeffs[order-1]
             
             # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
-            throughput = self.photom[self.photom['order']==order]
+            throughput = self.photom[(self.photom['order']==order)&(self.photom['filter']==self.filter)]
             ph_wave = throughput.wavelength[throughput.wavelength>0][1:-2]
             ph_resp = throughput.relresponse[throughput.wavelength>0][1:-2]
             response = np.interp(wave, ph_wave, ph_resp)
             
             # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
             response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
-            setattr(self, 'photom_order1', response)
+            setattr(self, 'photom_order{}'.format(order), response)
             
             if isinstance(ld_coeffs[0], float):
                 ld_coeffs = np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * wave.size)
