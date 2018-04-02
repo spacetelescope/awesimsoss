@@ -1036,7 +1036,7 @@ class TSO(object):
                 print('Lightcurves finished:',time.time()-start)
                 print('Constructing order {} linear traces...'.format(order))
                 start = time.time()
-            frames = make_linear_SOSS_trace(psfs)
+            frames = make_linear_SOSS_trace(psfs, subarray=self.subarray)
             
             # Run multiprocessing to construct trace
             if verbose:
