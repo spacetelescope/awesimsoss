@@ -38,7 +38,27 @@ cm = plt.cm
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
-def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=38, plot=False):
+def wave_map_tform(order, **kwargs):
+    """
+    Apply the inverse transform to the wave_map to get the vertical placement of the trace and the average wavelength of each column
+    """
+    # Get the order coeffs
+    coeffs = trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False)[order-1]
+    
+    # Get the transform
+    tform = transform_from_polynomial(coeffs, **kwargs)
+    
+    # Transform the wave_map
+    wave_map = wave_solutions(256)[order-1].astype(float)
+    
+    # Warp it and plot!
+    linear_wave_map = warp(wave_map, inverse_map=tform)
+    
+    # Test that the std in each column has decreased
+    print('Input wave map average std:',np.mean(np.std(wave_map, axis=(0))))
+    print('Output wave map average std:',np.mean(np.std(linear_wave_map, axis=(0))))
+
+def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=38, test_point=197, plot=True):
     """
     Calculate the Affine transform that takes into account the curvature of the trace
     
@@ -52,6 +72,8 @@ def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=38, plot=False
         The number of rows of control points
     delta_row: float
         The distance between rows of control points (default=38 since the webbpsf frame is (76,76))
+    test_point: int
+        Plot a test point to show which scr and dst points correspond to each other
     plot: bool
         Plot the control points
     
@@ -63,64 +85,64 @@ def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=38, plot=False
     # Get the polynomial and evaluate
     X = np.linspace(0, 2048, cols)
     Y = np.polyval(coeffs, X)
-    
-    # Make linear control points with min(Y) as the middle row
-    lin_X = np.tile(X, (rows,1))
-    lin_Y = np.tile(np.min(Y), (rows,cols))
-    lin_Y[0] -= delta_row
-    lin_Y[-1] += delta_row
-    src_points = np.array([(lx,ly) for lx,ly in zip(lin_X.flatten(),lin_Y.flatten())])
+    idx = np.arange(-1, rows-1)
     
     # Interpolate the data with a spline
     spl = splrep(X, Y)
     
     if plot:
         plt.figure(figsize=(15,2))
-        plt.plot(X, Y, alpha=0.3)
+        plt.plot(X, Y, c='r')
         
-    x_ctl, y_ctl = [], []
+    # Calculate all dst and src points
+    src_points = []
     dst_points = []
-    for x0 in X:
-        small_t = np.arange(x0-delta_row, x0+delta_row)
-        fa = splev(x0, spl, der=0)     # f(a)
-        fprime = splev(x0, spl, der=1) # f'(a)
-        # tan = fa+fprime*(small_t-x0) # tangent
-        m = -1./fprime # slope of normal line
-        norm = m*(small_t-x0)+fa # normal
+    for N0,x0 in enumerate(X):
         
-        # Define start, center, and end points of normal line
-        y0 = norm[delta_row]
-        xi, yi = small_t[-1], norm[-1]
-        xf, yf = small_t[0], norm[0]
+        # Evaluate f(x0) and f'(x0) and the slope of the normal line
+        f = splev(x0, spl, der=0)
+        fprime = splev(x0, spl, der=1)
+        m = -1./fprime
         
-        # Calculate the hypotenuses
-        df = np.sqrt((x0-xf)**2 + (y0-yf)**2)
-        di = np.sqrt((x0-xi)**2 + (y0-yi)**2)
-        dp = delta_row
+        # Calculate the normal line to the dst points
+        x = np.arange(x0-delta_row, x0+delta_row)
+        normal = m*(x-x0)+f
+        y0 = normal[delta_row]
         
-        # Calculate the coordinates on either side of the trace along the normal
-        xpi = x0 - dp/np.sqrt(1+m**2)
-        ypi = m*(xpi-x0)+y0
-        xpf = x0 + dp/np.sqrt(1+m**2)
-        ypf = m*(xpf-x0)+y0
-        
-        # Add the control points to the list
-        dst_points += [(xpi,ypi), (x0, y0), (xpf, ypf)]
-        
-        if plot:
-            plt.plot(small_t, norm, '--g', lw=2)
-            plt.plot(xpi, ypi, 'sg')
-            plt.plot(xpf, ypf, 'sg')
-            plt.plot(x0, fa, 'om')
-            plt.axvline(x0)
+        # Generate (x,y) of each control point row
+        for N1,i in enumerate(idx):
             
-    if plot:
-        plt.plot(*src_points.T, 'dr')
-        plt.xlim(0,2048)
-        plt.ylim(0,256)
-        
+            # Calculate the dst point
+            xp = x0 + (-1 if x0>1460 else 1)*i*delta_row*np.sqrt(1/(1+m**2))
+            yp = m*(xp-x0) + y0
+            dst_points.append((xp,yp))
+            
+            # Calculate the src point
+            yl = np.min(Y)+i*delta_row
+            src_points.append((x0,yl))
+            
+            # Plot both points
+            if plot:
+                plt.plot(x, normal, '--g', lw=2)
+                plt.plot(xp, yp, 'sg')
+                plt.plot(x0, yl, 'ob')
+                
+                # Plot a test point for visual inspection
+                if N0*len(idx)+N1==test_point:
+                    plt.plot(xp, yp, 'sr', markersize=10)
+                    plt.plot(x0, yl, 'or', markersize=10)
+                    
+        # Plot the normal line to the src points
+        if plot:
+            plt.axvline(x0, c='b')
+            
     # Put into an array
     dst_points = np.array(dst_points)
+    src_points = np.array(src_points)
+    
+    if plot:
+        plt.xlim(0,2048)
+        plt.ylim(0,256)
     
     # Perform transform
     tform = PiecewiseAffineTransform()
@@ -128,7 +150,7 @@ def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=38, plot=False
     
     return tform
 
-def make_linear_SOSS_trace(psfs, subarray='SUBSTRIP256', plot=False):
+def make_linear_SOSS_trace(psfs, offset=27, subarray='SUBSTRIP256', plot=True):
     """
     Construct the trace from the 2D psf generated by webbpsf at each wavelength
     
@@ -136,6 +158,8 @@ def make_linear_SOSS_trace(psfs, subarray='SUBSTRIP256', plot=False):
     ----------
     psfs: np.ndarray
         The data cube of shape (n_wavelengths, n_frames, x, y)
+    offset: int
+        The y-offset for placement of the 76x76 psf on the linear trace
     subarray: str
         The subarray to use
     plot: bool
@@ -165,7 +189,7 @@ def make_linear_SOSS_trace(psfs, subarray='SUBSTRIP256', plot=False):
         for n,wave in enumerate(frame):
             
             # Place the trace center in the correct column
-            linear_trace[N,n:n+x,:y] += wave
+            linear_trace[N,n:n+x,offset:y+offset] += wave
             
     # Transpose and invert x-axis  DMS orientation
     linear_trace = linear_trace.swapaxes(1,2)[:,:,::-1]
