@@ -282,7 +282,6 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
         
     return np.array(coeffs).T
 
-
 def generate_SOSS_psfs(filt):
     """
     Gnerate a cube of the psf at 100 wavelengths from the min to the max wavelength
@@ -717,7 +716,6 @@ def warp_frames(frames, tform, multiprocess=False):
 
     return warped
 
-
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
@@ -851,9 +849,9 @@ class TSO(object):
         orders = list(set(orders))
         
         # Check if it's F277W to speed up calculation
-        if 'F277W' in filt.upper():
+        self.filter = filt.upper()
+        if self.filter = 'F277W':
             orders = [1]
-            self.filter = 'F277W'
                 
         # If there is a planet transmission spectrum but no LDCs, generate them
         if planet!='':
@@ -890,7 +888,7 @@ class TSO(object):
             wave = self.avg_wave[order-1]
             
             # Get the psf cube
-            cube = SOSS_psf_cube(filt=filt, order=order, generate=False)
+            cube = SOSS_psf_cube(filt=self.filter, order=order, generate=False)
             
             # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
