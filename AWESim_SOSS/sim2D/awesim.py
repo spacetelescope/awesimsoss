@@ -779,7 +779,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs='', verbose=True):
+    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs='', model_grid='', verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -795,6 +795,10 @@ class TSO(object):
             The limb darkening profile to use
         ld_coeffs: array-like (optional)
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
+        model_grid: ExoCTK.core.ModelGrid (optional)
+            The model atmosphere grid to calculate LDCs
+        verbose: bool
+            Print helpful stuff
         
         Example
         -------
@@ -851,18 +855,18 @@ class TSO(object):
             self.params.t0 = self.time[self.nframes//2]
             
             # Use input ld coeffs
-            if isinstance(ld_coeffs,np.ndarray):
+            if isinstance(ld_coeffs[0], float):
+                self.ld_coeffs = [np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * self.avg_wave[order-1].size) for order in orders]
+                
+            # Use input ld coeff array
+            elif isinstance(ld_coeffs, np.ndarray):
                 self.ld_coeffs = ld_coeffs
                 
             # Or generate them if the stellar paramaeters have changed
             else:
-                # Generate the lookup table if the stallar parameters have changed
                 stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
                 if stellar_params!=old_params:
-                    self.ld_lookup = ldc_lookup(self.ld_profile, stellar_params)
-                    
-                # Generate the coefficient map
-                self.ld_coeffs = ld_coefficient_map(self.ld_lookup, self.ld_profile, subarray=self.subarray)
+                    self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], self.ld_profile, stellar_params, model_grid=model_grid, n_bins=100) for order in orders]
                 
         # Generate simulation for each order
         for order in orders:
@@ -873,8 +877,9 @@ class TSO(object):
             # Get the psf cube
             cube = SOSS_psf_cube(filt=filt, order=order, generate=False)
             
-            # Get limb darkening map
+            # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
+            ld_coeffs = list(map(list, ld_coeffs))
             
             # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
             throughput = self.photom[(self.photom['order']==order)&(self.photom['filter']==self.filter)]
@@ -885,12 +890,6 @@ class TSO(object):
             # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
             response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
             setattr(self, 'photom_order{}'.format(order), response)
-            
-            if isinstance(ld_coeffs[0], float):
-                ld_coeffs = np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * wave.size)
-                
-            # Make sure the ld_coeffs are lists
-            ld_coeffs = list(map(list, ld_coeffs))
             
             # Caluclate the transform for the desired polynomial
             # tform = transform_from_polynomial(self.nrows+76, self.ncols+76, coeffs=trace_polynomials(self.subarray, generate=False)[order-1])
