@@ -100,6 +100,8 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, da
     for loop in range(nints):
         seed1 = noise_seed+24*int(loop)
         ramp = noisecube.mknoise(c_pink=c_pink, u_pink=u_pink, bias_amp=bias_amp, bias_offset=bias_offset, acn=acn, pca0_amp=pca0_amp, rd_noise=rd_noise, pedestal=pedestal, dark_current=dark_current, dc_seed=dc_seed, noise_seed=seed1, gain=gain)
+        if len(ramp.shape)==2:
+            ramp = ramp[np.newaxis,:,:]
         ramp = np.transpose(ramp,(0,2,1))
         ramp = ramp[::,::-1,::-1]
         ramp = add_dark_current(ramp, dc_seed, gain, darksignal)

@@ -251,6 +251,9 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
     if not isinstance(model_grid, core.ModelGrid):
         model_grid = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700)
     
+    # Load the model grid
+    model_grid = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6,2.8))
+    
     # Get the grid point
     if isinstance(grid_point, (list,tuple,np.ndarray)):
         grid_point = model_grid.get(*grid_point)
@@ -572,7 +575,7 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     if subarray not in ['SUBSTRIP256','SUBSTRIP96','FULL']:
         subarray = 'SUBSTRIP256'
         print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
-    
+        
     # Get the appropriate frame time
     ft = FRAME_TIMES[subarray]
     
@@ -580,11 +583,20 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     time_axis = []
     t = t0
     for _ in range(nints):
+        
+        # Generate a time for each group in the integration
         times = t+np.arange(nresets+ngrps)*ft
-        t = times[-1]+ft
         time_axis.append(times[nresets:])
+        
+        # Update the start time of the next integration
+        t = times[-1]+ft
     
+    # Flatten the times of each integration
     time_axis = np.concatenate(time_axis)
+    
+    # Convert time axis from seconds to days
+    # since the period is input as days
+    time_axis /= 86400
     
     return time_axis
 
@@ -712,7 +724,7 @@ class TSO(object):
         subarray: str
             The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
         t0: float
-            The start time of the exposure
+            The start time of the exposure [days]
         target: str (optional)
             The name of the target
                         
@@ -752,16 +764,13 @@ class TSO(object):
         self.planet = ''
         self.params = ''
         self.ld_profile = ''
+        self.ld_lookup = ''
         self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
         
         # Get absolute calibration reference file
         calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
         caldata = fits.getdata(calfile)
         self.photom = caldata[caldata['pupil']=='GR700XD']
-            
-        # Add the orbital parameters as attributes
-        for p in [i for i in dir(self.params) if not i.startswith('_')]:
-            setattr(self, p, getattr(self.params, p))
             
         # Create the empty exposure
         self.dims = (self.nframes, self.nrows, self.ncols)
@@ -1133,8 +1142,8 @@ class TSO(object):
             The integer column index(es) or float wavelength(s) in microns 
             to plot as a light curve
         """
-        # Get the scaled flux in each column
-        f = np.nansum(self.tso, axis=1)
+        # Get the scaled flux in each column for the last group in each integration
+        f = np.nansum(self.tso_ideal[self.ngrps::self.ngrps], axis=1)
         f = f/np.nanmax(f, axis=1)[:,None]
         
         # Make it into an array
@@ -1158,7 +1167,7 @@ class TSO(object):
                 print('Please enter an index, astropy quantity, or array thereof.')
                 return
             
-            plt.plot(self.time, lc, label=label, marker='.', ls='None')
+            plt.plot(self.time[self.ngrps::self.ngrps], lc, label=label, marker='.', ls='None')
             
         plt.legend(loc=0, frameon=False)
         
