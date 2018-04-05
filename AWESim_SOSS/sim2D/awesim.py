@@ -850,7 +850,7 @@ class TSO(object):
         
         # Check if it's F277W to speed up calculation
         self.filter = filt.upper()
-        if self.filter = 'F277W':
+        if self.filter=='F277W':
             orders = [1]
                 
         # If there is a planet transmission spectrum but no LDCs, generate them
