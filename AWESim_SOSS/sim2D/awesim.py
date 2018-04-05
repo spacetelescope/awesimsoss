@@ -469,15 +469,34 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
     sequence
         A 1D array of the lightcurve with the same length as *t* 
     
-    Example
-    -------
+    Example 1
+    ---------
+    # No planet
     from AWESim_SOSS.sim2D import awesim
     import astropy.units as q, os, AWESim_SOSS
     DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
     vega = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True) # A0V with Jmag=9
     w = vega[0]*q.um
     f = (vega[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)
-    lc = awesim.psf_lightcurve(0.97, 1, 1, 1, '', [w,f], '', np.arange(10), '', 'CLEAR', plot=True)
+    psf = np.ones((76,76))
+    time = np.linspace(-0.2, 0.2, 200)
+    lc = awesim.psf_lightcurve(0.97, psf, 1, 1, '', [w,f], '', time, '', 'CLEAR', plot=True)
+    
+    Example 2
+    ---------
+    # With a planet
+    planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+    params = batman.TransitParams()
+    params.t0 = 0.                                # time of inferior conjunction
+    params.per = 5.7214742                        # orbital period (days)
+    params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+    params.inc = 89.8                             # orbital inclination (in degrees)
+    params.ecc = 0.                               # eccentricity
+    params.w = 90.                                # longitude of periastron (in degrees)
+    params.teff = 3500                            # effective temperature of the host star
+    params.logg = 5                               # log surface gravity of the host star
+    params.feh = 0                                # metallicity of the host star
+    lc = awesim.psf_lightcurve(0.97, psf, 1, 1, 'quadratic', [w,f], planet1D, time, params, 'CLEAR', plot=True)
     """
     if not isinstance(ld_coeffs, list) or not isinstance(ld_coeffs, np.ndarray):
         ld_coeffs  = [ld_coeffs]
@@ -490,7 +509,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
     flux = np.tile(flux0, (len(time),1,1))
     
     # If there is a transiting planet...
-    if not isinstance(planet,str):
+    if not isinstance(planet, str):
         
         # Set the wavelength dependent orbital parameters
         params.limb_dark = ld_profile
@@ -505,14 +524,10 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
         lightcurve = model.light_curve(params)
         
         # Scale the flux with the lightcurve
-        flux *= lightcurve
+        flux *= lightcurve[:, None, None]
         
     # Apply the filter response to convert to [ADU/s]
     flux *= response
-    
-    # Replace very low signal pixels with noise floor
-    # flux[flux<floor] += np.random.normal(loc=floor, scale=1, size=len(flux[flux<floor]))
-    # flux[flux<floor] += np.repeat(floor, len(flux[flux<floor]))
     
     # Plot
     if plot:
@@ -761,11 +776,11 @@ class TSO(object):
         self.star = star
         self.wave = wave_solutions(str(self.nrows))
         self.avg_wave = np.mean(self.wave, axis=1)
+        self.ld_coeffs = np.zeros((3, 2048, 2))
         self.planet = ''
         self.params = ''
         self.ld_profile = ''
         self.ld_lookup = ''
-        self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
         
         # Get absolute calibration reference file
         calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
@@ -866,7 +881,7 @@ class TSO(object):
             else:
                 stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
                 if stellar_params!=old_params:
-                    self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], self.ld_profile, stellar_params, model_grid=model_grid, n_bins=100) for order in orders]
+                    self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], self.ld_profile, stellar_params, model_grid=model_grid) for order in orders]
                 
         # Generate simulation for each order
         for order in orders:
