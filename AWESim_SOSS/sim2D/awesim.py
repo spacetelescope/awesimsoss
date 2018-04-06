@@ -20,6 +20,7 @@ import warnings
 import datetime
 import webbpsf
 import pkg_resources
+from svo_filters import svo
 from . import generate_darks as gd
 from ExoCTK import core
 from ExoCTK.ldc import ldcfit as lf
@@ -91,7 +92,7 @@ def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=38, test_point
     spl = splrep(X, Y)
     
     if plot:
-        plt.figure(figsize=(15,2))
+        plt.figure(figsize=(20,8))
         plt.plot(X, Y, c='r')
         
     # Calculate all dst and src points
@@ -113,7 +114,8 @@ def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=38, test_point
         for N1,i in enumerate(idx):
             
             # Calculate the dst point
-            xp = x0 + (-1 if x0>1460 else 1)*i*delta_row*np.sqrt(1/(1+m**2))
+            # xp = x0 + (-1 if x0>1460 else 1)*i*delta_row*np.sqrt(1/(1+m**2))
+            xp = x0 + (m/abs(m))*i*delta_row*np.sqrt(1/(1+m**2))
             yp = m*(xp-x0) + y0
             dst_points.append((xp,yp))
             
@@ -224,182 +226,62 @@ def ADUtoFlux(order):
     
     return scaling
 
-
-def ldc_lookup(ld_profile, grid_point, delta_w=0.005, nrows=256, save=''):
+def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
     """
     Generate a lookup table of limb darkening coefficients for full SOSS wavelength range
     
     Parameters
     ----------
+    wavelengths: sequence
+        The wavelengths at which to calculate the LDCs
     ld_profile: str
         A limb darkening profile name supported by `ExoCTK.ldc.ldcfit.ld_profile()`
     grid_point: dict, sequence
         The stellar parameters [Teff, logg, FeH] or stellar model dictionary from `ExoCTK.core.ModelGrid.get()`
-    delta_w: float
-        The width of the wavelength bins in microns
+    n_bins: int
+        The number of bins to break up the grism into
     save: str
         The path to save to file to
     
     Example
     -------
     from AWESim_SOSS.sim2D import awesim
-    lookup = awesim.ldc_lookup('quadratic', [3300, 4.5, 0])
+    lookup = awesim.soss_ldc('quadratic', [3300, 4.5, 0])
     """
-    print("Go get a coffee! This takes about 5 minutes to run.")
+    # Get the model grid
+    if not isinstance(model_grid, core.ModelGrid):
+        model_grid = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700)
     
-    # Initialize the lookup table
-    lookup = {}
-    
-    # Get the full wavelength range
-    wave_maps = wave_solutions(nrows)
+    # Load the model grid
+    model_grid = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6,2.8))
     
     # Get the grid point
     if isinstance(grid_point, (list,tuple,np.ndarray)):
-        
-        grid_point = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6,2.6)).get(*grid_point)
+        grid_point = model_grid.get(*grid_point)
         
     # Abort if no stellar dict
     if not isinstance(grid_point, dict):
         print('Please provide the grid_point argument as [Teff, logg, FeH] or ExoCTK.core.ModelGrid.get(Teff, logg, FeH).')
         return
         
-    # Define function for multiprocessing
-    def gr700xd_ldc(wavelength, delta_w, ld_profile, grid_point, model_grid):
-        """
-        Calculate the LCDs for the given wavelength range in the GR700XD grism
-        """
-        try:
-            # Get the bandpass in that wavelength range
-            mn = (wavelength-delta_w/2.)*q.um
-            mx = (wavelength+delta_w/2.)*q.um
-            bandpass = svo.Filter('NIRISS.GR700XD', n_bins=1, wl_min=mn, wl_max=mx, verbose=False)
-            
-            # Calculate the LDCs
-            ldcs = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08, verbose=False)
-            coeffs = list(zip(*ldcs[ld_profile]['coeffs']))[1::2]
-            coeffs = [coeffs[0][0],coeffs[1][0]]
-            
-            return ('{:.9f}'.format(wavelength), coeffs)
-            
-        except:
-            
-            print(wavelength)
-            
-            return ('_', None)
-            
-    # Pool the LDC calculations across the whole wavelength range for each order
-    for order in [1,2]:
-        
-        # Get the wavelength limits for this order
-        min_wave = np.nanmin(wave_maps[order-1][wave_maps[order-1]>0])
-        max_wave = np.nanmax(wave_maps[order-1][wave_maps[order-1]>0])
-        
-        # Generate list of binned wavelengths
-        wavelengths = np.arange(min_wave, max_wave, delta_w)
-        
-        # Turn off printing
-        print('Calculating order {} LDCs at {} wavelengths...'.format(order,len(wavelengths)))
-        sys.stdout = open(os.devnull, 'w')
-        
-        # Pool the LDC calculations across the whole wavelength range
-        processes = 8
-        start = time.time()
-        pool = multiprocessing.pool.ThreadPool(processes)
-        
-        func = partial(gr700xd_ldc, 
-                       delta_w    = delta_w,
-                       ld_profile = ld_profile,
-                       grid_point = grid_point,
-                       model_grid = model_grid)
-                       
-        # Turn list of coeffs into a dictionary
-        order_dict = dict(pool.map(func, wavelengths))
-        
-        pool.close()
-        pool.join()
-        
-        # Add the dict to the master
-        try:
-            order_dict.pop('_')
-        except:
-            pass
-        lookup['order{}'.format(order)] = order_dict
-        
-        # Turn printing back on
-        sys.stdout = sys.__stdout__
-        print('Order {} LDCs finished: '.format(order), time.time()-start)
-        
-    if save:
-        t, g, m = grid_point['Teff'], grid_point['logg'], grid_point['FeH']
-        joblib.dump(lookup, save+'/{}_ldc_lookup_{}_{}_{}.save'.format(ld_profile,t,g,m))
-        
-    else:
+    # Break the bandpass up into n_bins pieces
+    bandpass = svo.Filter('NIRISS.GR700XD', n_bins=n_bins, verbose=False)
     
-        return lookup
-
-def ld_coefficient_map(lookup, subarray='SUBSTRIP256', save=''):
-    """
-    Generate  map of limb darkening coefficients at every NIRISS pixel for all SOSS orders
+    # Calculate the LDCs
+    ldc_results = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08, verbose=False)
     
-    Parameters
-    ----------
-    lookup: str, array-like
-        The path to the lookup table of LDCs
+    # Interpolate the LDCs to the desired wavelengths
+    coeff_table = ldc_results[ld_profile]['coeffs']
+    coeff_cols = [c for c in coeff_table.colnames if c.startswith('c')]
+    coeffs = [np.interp(wavelengths, coeff_table['wavelength'], coeff_table[c]) for c in coeff_cols]
     
-    Example
-    -------
-    ld_coeffs_lookup = ld_coefficient_lookup(1, 'quadratic', star, model_grid)
-    """
-    if isinstance(lookup, str):
+    # Compare
+    if plot:
+        plt.figure()
+        plt.scatter(coeff_table['c1'], coeff_table['c2'], c=coeff_table['wavelength'], marker='x')
+        plt.scatter(coeffs[0], coeffs[1], c=wavelengths, marker='o')
         
-        # Get the lookup table
-        ld_profile = os.path.basename(lookup).split('_')[0]
-        lookup = joblib.load(lookup)
-    
-    # Get the wavelength map
-    nrows = 256 if subarray=='SUBSTRIP256' else 96 if subarray=='SUBSTRIP96' else 2048
-    wave_map = wave_solutions(nrows)
-        
-    # Make dummy array for LDC map results
-    ldfunc = lf.ld_profile(ld_profile)
-    ncoeffs = len(inspect.signature(ldfunc).parameters)-1
-    ld_coeffs = np.zeros((3, nrows*2048, ncoeffs))
-    
-    # Calculate the coefficients at each pixel for each order
-    for order,wavelengths in enumerate(wave_map[:1]):
-        
-        # Get a flat list of all wavelengths for this order
-        wave_list = wavelengths.flatten()
-        lkup = lookup['order{}'.format(order+1)]
-        
-        # Get the bin size
-        delta_w = np.mean(np.diff(sorted(np.array(list(map(float,lkup))))))/2.
-        
-        # For each bin in the lookup table...
-        for bin, coeffs in lkup.items():
-            
-            try:
-                
-                # Get all the pixels that fall within the bin
-                w = float(bin)
-                idx, = np.where(np.logical_and(wave_list>=w-delta_w,wave_list<=w+delta_w))
-                
-                # Place them in the coefficient map
-                ld_coeffs[order][idx] = coeffs
-                
-            except:
-                 
-                print(bin)
-                
-    if save:
-        path = lookup_file.replace('lookup','map')
-        joblib.dump(ld_coeffs, path)
-        
-        print('LDC coefficient map saved at',path)
-        
-    else:
-        
-        return ld_coeffs
+    return np.array(coeffs).T
 
 def generate_SOSS_psfs(filt):
     """
@@ -587,15 +469,34 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
     sequence
         A 1D array of the lightcurve with the same length as *t* 
     
-    Example
-    -------
+    Example 1
+    ---------
+    # No planet
     from AWESim_SOSS.sim2D import awesim
     import astropy.units as q, os, AWESim_SOSS
     DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
     vega = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True) # A0V with Jmag=9
     w = vega[0]*q.um
     f = (vega[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)
-    lc = awesim.psf_lightcurve(0.97, 1, 1, 1, '', [w,f], '', np.arange(10), '', 'CLEAR', plot=True)
+    psf = np.ones((76,76))
+    time = np.linspace(-0.2, 0.2, 200)
+    lc = awesim.psf_lightcurve(0.97, psf, 1, 1, '', [w,f], '', time, '', 'CLEAR', plot=True)
+    
+    Example 2
+    ---------
+    # With a planet
+    planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+    params = batman.TransitParams()
+    params.t0 = 0.                                # time of inferior conjunction
+    params.per = 5.7214742                        # orbital period (days)
+    params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+    params.inc = 89.8                             # orbital inclination (in degrees)
+    params.ecc = 0.                               # eccentricity
+    params.w = 90.                                # longitude of periastron (in degrees)
+    params.teff = 3500                            # effective temperature of the host star
+    params.logg = 5                               # log surface gravity of the host star
+    params.feh = 0                                # metallicity of the host star
+    lc = awesim.psf_lightcurve(0.97, psf, 1, 1, 'quadratic', [w,f], planet1D, time, params, 'CLEAR', plot=True)
     """
     if not isinstance(ld_coeffs, list) or not isinstance(ld_coeffs, np.ndarray):
         ld_coeffs  = [ld_coeffs]
@@ -608,7 +509,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
     flux = np.tile(flux0, (len(time),1,1))
     
     # If there is a transiting planet...
-    if not isinstance(planet,str):
+    if not isinstance(planet, str):
         
         # Set the wavelength dependent orbital parameters
         params.limb_dark = ld_profile
@@ -623,14 +524,10 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
         lightcurve = model.light_curve(params)
         
         # Scale the flux with the lightcurve
-        flux *= lightcurve
+        flux *= lightcurve[:, None, None]
         
     # Apply the filter response to convert to [ADU/s]
     flux *= response
-    
-    # Replace very low signal pixels with noise floor
-    # flux[flux<floor] += np.random.normal(loc=floor, scale=1, size=len(flux[flux<floor]))
-    # flux[flux<floor] += np.repeat(floor, len(flux[flux<floor]))
     
     # Plot
     if plot:
@@ -708,6 +605,57 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     time_axis = np.concatenate(time_axis)
     
     return time_axis
+
+# def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
+#     """
+#     Calculate a time axis for the exposure in the given SOSS subarray
+#
+#     Parameters
+#     ----------
+#     subarray: str
+#         The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
+#     ngrps: int
+#         The number of groups per integration
+#     nints: int
+#         The number of integrations for the exposure
+#     t0: float
+#         The start time of the exposure
+#     nresets: int
+#         The number of reset frames per integration
+#
+#     Returns
+#     -------
+#     sequence
+#         The time of each frame
+#     """
+#     # Check the subarray
+#     if subarray not in ['SUBSTRIP256','SUBSTRIP96','FULL']:
+#         subarray = 'SUBSTRIP256'
+#         print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
+#
+#     # Get the appropriate frame time
+#     ft = FRAME_TIMES[subarray]
+#
+#     # Generate the time axis, removing reset frames
+#     time_axis = []
+#     t = t0
+#     for _ in range(nints):
+#
+#         # Generate a time for each group in the integration
+#         times = t+np.arange(nresets+ngrps)*ft
+#         time_axis.append(times[nresets:])
+#
+#         # Update the start time of the next integration
+#         t = times[-1]+ft
+#
+#     # Flatten the times of each integration
+#     time_axis = np.concatenate(time_axis)
+#
+#     # Convert time axis from seconds to days
+#     # since the period is input as days
+#     time_axis /= 86400
+#
+#     return time_axis
 
 def trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False):
     """
@@ -811,7 +759,6 @@ def warp_frames(frames, tform, multiprocess=False):
 
     return warped
 
-
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
@@ -833,7 +780,7 @@ class TSO(object):
         subarray: str
             The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
         t0: float
-            The start time of the exposure
+            The start time of the exposure [days]
         target: str (optional)
             The name of the target
                         
@@ -870,19 +817,16 @@ class TSO(object):
         self.star = star
         self.wave = wave_solutions(str(self.nrows))
         self.avg_wave = np.mean(self.wave, axis=1)
+        self.ld_coeffs = np.zeros((3, 2048, 2))
         self.planet = ''
         self.params = ''
         self.ld_profile = ''
-        self.ld_coeffs = np.zeros((2, self.nrows*self.ncols, 2))
+        self.ld_lookup = ''
         
         # Get absolute calibration reference file
         calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
         caldata = fits.getdata(calfile)
         self.photom = caldata[caldata['pupil']=='GR700XD']
-            
-        # Add the orbital parameters as attributes
-        for p in [i for i in dir(self.params) if not i.startswith('_')]:
-            setattr(self, p, getattr(self.params, p))
             
         # Create the empty exposure
         self.dims = (self.nframes, self.nrows, self.ncols)
@@ -891,7 +835,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs='', verbose=True):
+    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs='', model_grid='', verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -907,6 +851,10 @@ class TSO(object):
             The limb darkening profile to use
         ld_coeffs: array-like (optional)
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
+        model_grid: ExoCTK.core.ModelGrid (optional)
+            The model atmosphere grid to calculate LDCs
+        verbose: bool
+            Print helpful stuff
         
         Example
         -------
@@ -944,9 +892,9 @@ class TSO(object):
         orders = list(set(orders))
         
         # Check if it's F277W to speed up calculation
-        if 'F277W' in filt.upper():
+        self.filter = filt.upper()
+        if self.filter=='F277W':
             orders = [1]
-            self.filter = 'F277W'
                 
         # If there is a planet transmission spectrum but no LDCs, generate them
         if planet!='':
@@ -963,18 +911,18 @@ class TSO(object):
             self.params.t0 = self.time[self.nframes//2]
             
             # Use input ld coeffs
-            if isinstance(ld_coeffs,np.ndarray):
+            if isinstance(ld_coeffs[0], float):
+                self.ld_coeffs = [np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * self.avg_wave[order-1].size) for order in orders]
+                
+            # Use input ld coeff array
+            elif isinstance(ld_coeffs, np.ndarray):
                 self.ld_coeffs = ld_coeffs
                 
             # Or generate them if the stellar paramaeters have changed
             else:
-                # Generate the lookup table if the stallar parameters have changed
                 stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
                 if stellar_params!=old_params:
-                    self.ld_lookup = ldc_lookup(self.ld_profile, stellar_params)
-                    
-                # Generate the coefficient map
-                self.ld_coeffs = ld_coefficient_map(self.ld_lookup, self.ld_profile, subarray=self.subarray)
+                    self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], self.ld_profile, stellar_params, model_grid=model_grid) for order in orders]
                 
         # Generate simulation for each order
         for order in orders:
@@ -983,10 +931,11 @@ class TSO(object):
             wave = self.avg_wave[order-1]
             
             # Get the psf cube
-            cube = SOSS_psf_cube(filt=filt, order=order, generate=False)
+            cube = SOSS_psf_cube(filt=self.filter, order=order, generate=False)
             
-            # Get limb darkening map
+            # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
+            ld_coeffs = list(map(list, ld_coeffs))
             
             # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
             throughput = self.photom[(self.photom['order']==order)&(self.photom['filter']==self.filter)]
@@ -997,12 +946,6 @@ class TSO(object):
             # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
             response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
             setattr(self, 'photom_order{}'.format(order), response)
-            
-            if isinstance(ld_coeffs[0], float):
-                ld_coeffs = np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * wave.size)
-                
-            # Make sure the ld_coeffs are lists
-            ld_coeffs = list(map(list, ld_coeffs))
             
             # Caluclate the transform for the desired polynomial
             # tform = transform_from_polynomial(self.nrows+76, self.ncols+76, coeffs=trace_polynomials(self.subarray, generate=False)[order-1])
@@ -1254,8 +1197,8 @@ class TSO(object):
             The integer column index(es) or float wavelength(s) in microns 
             to plot as a light curve
         """
-        # Get the scaled flux in each column
-        f = np.nansum(self.tso, axis=1)
+        # Get the scaled flux in each column for the last group in each integration
+        f = np.nansum(self.tso_ideal[self.ngrps::self.ngrps], axis=1)
         f = f/np.nanmax(f, axis=1)[:,None]
         
         # Make it into an array
@@ -1279,7 +1222,7 @@ class TSO(object):
                 print('Please enter an index, astropy quantity, or array thereof.')
                 return
             
-            plt.plot(self.time, lc, label=label, marker='.', ls='None')
+            plt.plot(self.time[self.ngrps::self.ngrps], lc, label=label, marker='.', ls='None')
             
         plt.legend(loc=0, frameon=False)
         
