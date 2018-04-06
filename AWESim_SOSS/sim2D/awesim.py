@@ -589,7 +589,7 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     if subarray not in ['SUBSTRIP256','SUBSTRIP96','FULL']:
         subarray = 'SUBSTRIP256'
         print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
-        
+    
     # Get the appropriate frame time
     ft = FRAME_TIMES[subarray]
     
@@ -597,22 +597,64 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     time_axis = []
     t = t0
     for _ in range(nints):
-        
-        # Generate a time for each group in the integration
         times = t+np.arange(nresets+ngrps)*ft
-        time_axis.append(times[nresets:])
-        
-        # Update the start time of the next integration
         t = times[-1]+ft
+        time_axis.append(times[nresets:])
     
-    # Flatten the times of each integration
     time_axis = np.concatenate(time_axis)
     
-    # Convert time axis from seconds to days
-    # since the period is input as days
-    time_axis /= 86400
-    
     return time_axis
+
+# def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
+#     """
+#     Calculate a time axis for the exposure in the given SOSS subarray
+#
+#     Parameters
+#     ----------
+#     subarray: str
+#         The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
+#     ngrps: int
+#         The number of groups per integration
+#     nints: int
+#         The number of integrations for the exposure
+#     t0: float
+#         The start time of the exposure
+#     nresets: int
+#         The number of reset frames per integration
+#
+#     Returns
+#     -------
+#     sequence
+#         The time of each frame
+#     """
+#     # Check the subarray
+#     if subarray not in ['SUBSTRIP256','SUBSTRIP96','FULL']:
+#         subarray = 'SUBSTRIP256'
+#         print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
+#
+#     # Get the appropriate frame time
+#     ft = FRAME_TIMES[subarray]
+#
+#     # Generate the time axis, removing reset frames
+#     time_axis = []
+#     t = t0
+#     for _ in range(nints):
+#
+#         # Generate a time for each group in the integration
+#         times = t+np.arange(nresets+ngrps)*ft
+#         time_axis.append(times[nresets:])
+#
+#         # Update the start time of the next integration
+#         t = times[-1]+ft
+#
+#     # Flatten the times of each integration
+#     time_axis = np.concatenate(time_axis)
+#
+#     # Convert time axis from seconds to days
+#     # since the period is input as days
+#     time_axis /= 86400
+#
+#     return time_axis
 
 def trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False):
     """
