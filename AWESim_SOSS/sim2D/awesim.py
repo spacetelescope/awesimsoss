@@ -92,7 +92,7 @@ def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=38, test_point
     spl = splrep(X, Y)
     
     if plot:
-        plt.figure(figsize=(15,2))
+        plt.figure(figsize=(20,8))
         plt.plot(X, Y, c='r')
         
     # Calculate all dst and src points
@@ -114,7 +114,8 @@ def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=38, test_point
         for N1,i in enumerate(idx):
             
             # Calculate the dst point
-            xp = x0 + (-1 if x0>1460 else 1)*i*delta_row*np.sqrt(1/(1+m**2))
+            # xp = x0 + (-1 if x0>1460 else 1)*i*delta_row*np.sqrt(1/(1+m**2))
+            xp = x0 + (m/abs(m))*i*delta_row*np.sqrt(1/(1+m**2))
             yp = m*(xp-x0) + y0
             dst_points.append((xp,yp))
             
