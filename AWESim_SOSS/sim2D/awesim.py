@@ -753,7 +753,7 @@ class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
-    def __init__(self, ngrps, nints, star, snr=700, subarray='SUBSTRIP256', t0=0, target=''):
+    def __init__(self, ngrps, nints, star, snr=700, subarray='SUBSTRIP256', t0=0, target=None):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -824,7 +824,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', tmodel='', params='', ld_coeffs='', ld_profile='quadratic', model_grid='', verbose=True):
+    def run_simulation(self, filt='CLEAR', orders=[1,2], planet=None, tmodel=None, params=None, ld_coeffs=None, ld_profile='quadratic', model_grid=None, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -864,7 +864,7 @@ class TSO(object):
         params.feh = 0                                # metallicity of the host star
         params.limb_dark = 'quadratic'                # limb darkening profile to use
         params.u = [1,1]                              # limb darkening coefficients
-        tmodel = batman.TransitModel(params, time)
+        tmodel = batman.TransitModel(params, tso.time)
         tso.run_simulation(planet=planet1D, tmodel=tmodel, params=params)
         """
         if verbose:
@@ -889,15 +889,15 @@ class TSO(object):
             orders = [1]
                 
         # If there is a planet transmission spectrum but no LDCs, generate them
-        if planet!='':
+        if isinstance(planet, np.ndarray):
             
             # Check if the stellar params are the same
             old_params = [getattr(self.params, p, None) for p in ['teff','logg','feh']]
             
             # Store planet details
             self.planet = planet
+            self.params = params
             self.tmodel = tmodel
-            self.ld_profile = ld_profile
             self.params.limb_dark = ld_profile
             self.params.t0 = self.time[self.nframes//2]
             
@@ -913,7 +913,7 @@ class TSO(object):
             else:
                 stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
                 if stellar_params!=old_params:
-                    self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], self.ld_profile, stellar_params, model_grid=model_grid) for order in orders]
+                    self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], self.params.limb_dark, stellar_params, model_grid=model_grid) for order in orders]
                 
         # Generate simulation for each order
         for order in orders:
@@ -954,7 +954,7 @@ class TSO(object):
             pool = multiprocessing.Pool(8)
             
             # Set wavelength independent inputs of lightcurve function
-            func = partial(psf_lightcurve, star=self.star, planet=self.planet, time=self.time, tmodel=self.tmodel)
+            func = partial(psf_lightcurve, star=self.star, planet=self.planet, time=self.time, tmodel=self.tmodel, params=self.params)
             
             # Generate the lightcurves at each wavelength
             psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs, rp))))
