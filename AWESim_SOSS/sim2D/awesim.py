@@ -433,7 +433,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=''):
         
     return psf
 
-def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, planet, time, params, filt, floor=2, plot=False):
+def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, star, planet, time, tmodel, params, plot=False):
     """
     Generate a lightcurve for a given wavelength
     
@@ -445,22 +445,18 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
         The psf from webbpsf for the given wavelength
     response: float
         The spectral response of the detector at the given wavelength
-    ld_coeffs: array-like
-        A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
-    ld_profile: str
-        The limb darkening profile to use
+    ld_coeffs: sequence
+        The limb darkening coefficients to use
+    rp: float
+        The planet radius
     star: sequence
         The wavelength and flux of the star
     planet: sequence
         The wavelength and Rp/R* of the planet at t=0 
     time: sequence
         The time axis for the TSO
-    params: batman.transitmodel.TransitParams
-        The transit parameters of the planet
-    filt: str
-        The filter to apply, ['CLEAR','F277W']
-    floor: int
-        The noise floor in counts
+    tmodel: batman.transitmodel.TransitModel
+        The transit model of the planet
     plot: bool
         Plot the lightcurve
     
@@ -480,7 +476,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
     f = (vega[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)
     psf = np.ones((76,76))
     time = np.linspace(-0.2, 0.2, 200)
-    lc = awesim.psf_lightcurve(0.97, psf, 1, 1, '', [w,f], '', time, '', 'CLEAR', plot=True)
+    lc = awesim.psf_lightcurve(0.97, psf, 1, 1,'', [w,f], '', time, '', '', plot=True)
     
     Example 2
     ---------
@@ -496,12 +492,11 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
     params.teff = 3500                            # effective temperature of the host star
     params.logg = 5                               # log surface gravity of the host star
     params.feh = 0                                # metallicity of the host star
-    lc = awesim.psf_lightcurve(0.97, psf, 1, 1, 'quadratic', [w,f], planet1D, time, params, 'CLEAR', plot=True)
+    params.limb_dark = 'quadratic'                # limb darkening profile to use
+    params.u = [1,1]                              # limb darkening coefficients
+    tmodel = batman.TransitModel(params, time)
+    lc = awesim.psf_lightcurve(0.97, psf, 1, [1,1], 0.05, [w,f], planet1D, time, tmodel, params, plot=True)
     """
-    if not isinstance(ld_coeffs, list) or not isinstance(ld_coeffs, np.ndarray):
-        ld_coeffs  = [ld_coeffs]
-        ld_profile = 'linear'
-        
     # Get the energy flux density [erg/s/cm2/A] at the given wavelength [um] at t=t0
     flux0 = np.interp(wavelength, star[0], star[1], left=0, right=0)*psf
     
@@ -512,16 +507,11 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
     if not isinstance(planet, str):
         
         # Set the wavelength dependent orbital parameters
-        params.limb_dark = ld_profile
         params.u = ld_coeffs
-        
-        # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
-        tdepth = np.interp(wavelength, planet[0], planet[1])
-        params.rp = np.sqrt(tdepth)
+        params.rp = rp
         
         # Generate the light curve for this pixel
-        model = batman.TransitModel(params, time) 
-        lightcurve = model.light_curve(params)
+        lightcurve = tmodel.light_curve(params)
         
         # Scale the flux with the lightcurve
         flux *= lightcurve[:, None, None]
@@ -819,9 +809,8 @@ class TSO(object):
         self.avg_wave = np.mean(self.wave, axis=1)
         self.ld_coeffs = np.zeros((3, 2048, 2))
         self.planet = ''
+        self.tmodel = ''
         self.params = ''
-        self.ld_profile = ''
-        self.ld_lookup = ''
         
         # Get absolute calibration reference file
         calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
@@ -835,7 +824,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', params='', ld_profile='quadratic', ld_coeffs='', model_grid='', verbose=True):
+    def run_simulation(self, filt='CLEAR', orders=[1,2], planet='', tmodel='', params='', ld_coeffs='', ld_profile='quadratic', model_grid='', verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -845,8 +834,8 @@ class TSO(object):
             The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
         planet: sequence (optional)
             The wavelength and Rp/R* of the planet at t=0 
-        params: batman.transitmodel.TransitParams (optional)
-            The transit parameters of the planet
+        tmodel: batman.transitmodel.TransitModel (optional)
+            The transit model of the planet
         ld_profile: str (optional)
             The limb darkening profile to use
         ld_coeffs: array-like (optional)
@@ -873,7 +862,10 @@ class TSO(object):
         params.teff = 3500                            # effective temperature of the host star
         params.logg = 5                               # log surface gravity of the host star
         params.feh = 0                                # metallicity of the host star
-        tso.run_simulation(planet=planet1D, params=params)
+        params.limb_dark = 'quadratic'                # limb darkening profile to use
+        params.u = [1,1]                              # limb darkening coefficients
+        tmodel = batman.TransitModel(params, time)
+        tso.run_simulation(planet=planet1D, tmodel=tmodel, params=params)
         """
         if verbose:
             begin = time.time()
@@ -904,10 +896,9 @@ class TSO(object):
             
             # Store planet details
             self.planet = planet
-            self.params = params
+            self.tmodel = tmodel
             self.ld_profile = ld_profile
-            
-            # Set time of inferior conjunction to time axis midpoint
+            self.params.limb_dark = ld_profile
             self.params.t0 = self.time[self.nframes//2]
             
             # Use input ld coeffs
@@ -937,6 +928,10 @@ class TSO(object):
             ld_coeffs = self.ld_coeffs[order-1]
             ld_coeffs = list(map(list, ld_coeffs))
             
+            # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
+            tdepth = np.interp(wave, planet[0], planet[1])
+            rp = np.sqrt(tdepth)
+            
             # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
             throughput = self.photom[(self.photom['order']==order)&(self.photom['filter']==self.filter)]
             ph_wave = throughput.wavelength[throughput.wavelength>0][1:-2]
@@ -959,10 +954,10 @@ class TSO(object):
             pool = multiprocessing.Pool(8)
             
             # Set wavelength independent inputs of lightcurve function
-            func = partial(psf_lightcurve, ld_profile=self.ld_profile, star=self.star, planet=self.planet, time=self.time, params=self.params, filt=self.filter)
+            func = partial(psf_lightcurve, star=self.star, planet=self.planet, time=self.time, tmodel=self.tmodel)
             
             # Generate the lightcurves at each wavelength
-            psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs))))
+            psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs, rp))))
             psfs = psfs.swapaxes(0,1)
             psfs = psfs.swapaxes(2,3)
             
