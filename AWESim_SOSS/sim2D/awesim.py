@@ -498,7 +498,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, ld_profile, star, plane
     params.feh = 0                                # metallicity of the host star
     lc = awesim.psf_lightcurve(0.97, psf, 1, 1, 'quadratic', [w,f], planet1D, time, params, 'CLEAR', plot=True)
     """
-    if not isinstance(ld_coeffs, list) or not isinstance(ld_coeffs, np.ndarray):
+    if not isinstance(ld_coeffs, (list, np.ndarray)):
         ld_coeffs  = [ld_coeffs]
         ld_profile = 'linear'
         
