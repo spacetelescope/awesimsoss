@@ -936,10 +936,7 @@ class TSO(object):
             ld_coeffs = list(map(list, ld_coeffs))
             
             # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
-            if planet!=None:
-                tdepth = np.interp(wave, planet[0], planet[1])
-            else:
-                tdepth = np.ones_like(wave)
+            tdepth = np.interp(wave, planet[0], planet[1]) if planet is not None else np.ones_like(wave)
             rp = np.sqrt(tdepth)
             
             # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
