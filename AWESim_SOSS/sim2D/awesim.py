@@ -777,13 +777,13 @@ class TSO(object):
         -------
         # Imports
         from AWESim_SOSS.sim2D import awesim
-        import astropy.units as q, astropy.constants as ac, os, AWESim_SOSS, batman
-        DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
-        star = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True)
+        import astropy.units as q
+        from pkg_resources import resource_filename
+        star = np.genfromtxt(resource_filename('AWESim_SOSS','files/scaled_spectrum.txt'), unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
         
         # Initialize simulation
-        tso = awesim.TSO(ngrps=5, nints=2, star=star1D)
+        tso = awesim.TSO(ngrps=3, nints=2, star=star1D)
         """
         # Set instance attributes for the exposure
         self.subarray = subarray
@@ -990,6 +990,7 @@ class TSO(object):
             if verbose:
                 # print('Order {} linear traces finished:'.format(order),time.time()-start)
                 print('Constructing order {} warped traces...'.format(order))
+                print('Total flux before warp:',np.nansum(frames[0]))
                 start = time.time()
             
             
@@ -1006,6 +1007,7 @@ class TSO(object):
             # plt.imshow(tso_order[0]-warped_frame)
 
             if verbose:
+                print('Total flux after warp:',np.nansum(all_frames[0]))
                 print('Order {} warped traces finished:'.format(order), time.time()-start)
                 
             # Add it to the individual order
