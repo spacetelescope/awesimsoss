@@ -63,7 +63,7 @@ def wave_map_tform(order, **kwargs):
     print('Input wave map average std:',np.mean(np.std(wave_map, axis=(0))))
     print('Output wave map average std:',np.mean(np.std(linear_wave_map, axis=(0))))
 
-def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=38, test_point=197, plot=False):
+def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=35, test_point=345, plot=False):
     """
     Calculate the Affine transform that takes into account the curvature of the trace
     
@@ -97,7 +97,7 @@ def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=38, test_point
     
     if plot:
         plt.figure(figsize=(20,8))
-        plt.plot(X, Y, c='r')
+        plt.plot(X, Y, c='r', lw=3, ls='--')
         
     # Calculate all dst and src points
     src_points = []
@@ -129,24 +129,26 @@ def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=38, test_point
             
             # Plot both points
             if plot:
-                plt.plot(x, normal, '--g', lw=2)
-                plt.plot(xp, yp, 'sg')
-                plt.plot(x0, yl, 'ob')
+                plt.plot(x, normal, c='r')
+                plt.plot(xp, yp, 'sr', label='Destination' if N1==N0==0 else None)
+                plt.plot(x0, yl, 'ob', label='Source' if N1==N0==0 else None)
                 
                 # Plot a test point for visual inspection
                 if N0*len(idx)+N1==test_point:
                     plt.plot(xp, yp, 'sr', markersize=10)
-                    plt.plot(x0, yl, 'or', markersize=10)
+                    plt.plot(x0, yl, 'ob', markersize=10)
                     
         # Plot the normal line to the src points
         if plot:
             plt.axvline(x0, c='b')
+            plt.axhline(np.min(Y), c='b', ls='--', lw=2)
             
     # Put into an array
     dst_points = np.array(dst_points)
     src_points = np.array(src_points)
     
     if plot:
+        plt.legend(loc=2)
         plt.xlim(0,2048)
         plt.ylim(0,256)
     
@@ -783,7 +785,7 @@ class TSO(object):
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
         
         # Initialize simulation
-        tso = awesim.TSO(ngrps=3, nints=2, star=star1D)
+        tso = awesim.TSO(ngrps=3, nints=10, star=star1D)
         """
         # Set instance attributes for the exposure
         self.subarray = subarray
@@ -800,6 +802,7 @@ class TSO(object):
         self.obs_time = '23:37:52.226'
         self.filter = 'CLEAR'
         self.header = ''
+        self.gain = 1.61
         self.snr = snr
         
         # Set instance attributes for the target
@@ -1017,7 +1020,7 @@ class TSO(object):
         self.tso_ideal = self.tso.copy()
         
         # Add noise and ramps
-        # self.add_noise()
+        self.add_noise()
         
         if verbose:
             print('\nTotal time:',time.time()-begin)

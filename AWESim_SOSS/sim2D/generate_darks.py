@@ -194,7 +194,7 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
             
         # Or don't
         else:
-            newvalues = np.random.poisson(framesignal*pyimage+background)
+            newvalues = np.random.poisson(np.abs(framesignal*pyimage+background))
             
         # First ramp image
         if n==0:
