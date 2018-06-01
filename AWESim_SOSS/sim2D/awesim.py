@@ -56,7 +56,7 @@ def wave_map_tform(order, **kwargs):
     print('Input wave map average std:',np.mean(np.std(wave_map, axis=(0))))
     print('Output wave map average std:',np.mean(np.std(linear_wave_map, axis=(0))))
 
-def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=35, test_point=345, plot=False):
+def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=35, test_point=345, plot=False):
     """
     Calculate the Affine transform that takes into account the curvature of the trace
     
@@ -199,8 +199,6 @@ def make_linear_SOSS_trace(psfs, offset=27, subarray='SUBSTRIP256', plot=False):
     if plot:
         plt.figure(figsize=(13,2))
         plt.imshow(linear_trace[0], origin='lower', norm=matplotlib.colors.LogNorm())
-        plt.xlim(0,2048)
-        plt.ylim(0,Y)
         
     return linear_trace
 
@@ -789,7 +787,6 @@ class TSO(object):
         self.header = ''
         self.gain = 1.61
         self.snr = snr
-        self.orders = [1,2]
         self.model_grid = None
         
         # Set instance attributes for the target
@@ -797,8 +794,8 @@ class TSO(object):
         self.wave = wave_solutions(str(self.nrows))
         self.avg_wave = np.mean(self.wave, axis=1)
         self._ld_coeffs = np.zeros((3, 2048, 2))
-        self.planet = ''
-        self.tmodel = ''
+        self.planet = None
+        self.tmodel = None
         
         # Get the cube of SOSS psfs
         order1_flux = np.interp(self.avg_wave[0], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
@@ -820,7 +817,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, filt='CLEAR', orders=None, planet=None, tmodel=None, ld_coeffs=None, ld_profile='quadratic', model_grid=None, verbose=True):
+    def run_simulation(self, filt='CLEAR', planet=None, tmodel=None, ld_coeffs=None, ld_profile='quadratic', orders=[1,2], model_grid=None, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -832,10 +829,12 @@ class TSO(object):
             The wavelength and Rp/R* of the planet at t=0 
         tmodel: batman.transitmodel.TransitModel (optional)
             The transit model of the planet
-        ld_profile: str (optional)
-            The limb darkening profile to use
         ld_coeffs: array-like (optional)
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
+        ld_profile: str (optional)
+            The limb darkening profile to use
+        orders: sequence
+            The list of orders to imulate
         model_grid: ExoCTK.core.ModelGrid (optional)
             The model atmosphere grid to calculate LDCs
         verbose: bool
@@ -847,7 +846,9 @@ class TSO(object):
         tso.run_simulation()
         
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
-        planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+        import batman
+        import astropy.constants as ac
+        planet1D = np.genfromtxt(resource_filename('AWESim_SOSS', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
         params = batman.TransitParams()
         params.t0 = 0.                                # time of inferior conjunction
         params.per = 5.7214742                        # orbital period (days)
@@ -877,16 +878,12 @@ class TSO(object):
             orders = [orders]
         if not all([o in [1,2] for o in orders]):
             raise TypeError('Order must be either an int, float, or list thereof; i.e. [1,2]')
-        self.orders = list(set(orders))
+        orders = list(set(orders))
         
         # Check if it's F277W to speed up calculation
         self.filter = filt.upper()
         if self.filter=='F277W':
             orders = [1]
-            
-        # Set the model grid if necessary
-        if isinstance(model_grid, ExoCTK.core.ModelGrid):
-            self.model_grid = model_grid
         
         # If there is a planet transmission spectrum but no LDCs, generate them
         if planet is not None and isinstance(tmodel, batman.transitmodel.TransitModel):
@@ -900,13 +897,23 @@ class TSO(object):
             self.tmodel.limb_dark = ld_profile
             self.tmodel.t0 = self.time[self.nframes//2]
             
-            # Update the limb darkning coeffs if the stellar params or ld profile have changed
+            # Set the ld_coeffs if provided
             stellar_params = [getattr(tmodel, p) for p in ['teff','logg','feh','limb_dark']]
-            if stellar_params!=old_params:
+            if ld_coeffs is not None:
+                self.ld_coeffs = ld_coeffs
+            
+            # Update the limb darkning coeffs if the stellar params or ld profile have changed
+            elif isinstance(model_grid, core.ModelGrid) and stellar_params!=old_params:
+                
+                # Try to set the model grid
+                self.model_grid = model_grid
                 self.ld_coeffs = tmodel
+                
+            else:
+                pass
             
         # Generate simulation for each order
-        for order in self.orders:
+        for order in orders:
             
             # Get the wavelength map
             wave = self.avg_wave[order-1]
@@ -919,7 +926,10 @@ class TSO(object):
             ld_coeffs = list(map(list, ld_coeffs))
             
             # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2... or an array of ones
-            tdepth = np.interp(wave, planet[0], planet[1]) if planet is not None else np.ones_like(wave)
+            if self.planet is not None:
+                tdepth = np.interp(wave, self.planet[0], self.planet[1])
+            else:
+                tdepth = np.ones_like(wave)
             rp = np.sqrt(tdepth)
             
             # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
@@ -929,7 +939,8 @@ class TSO(object):
             response = np.interp(wave, ph_wave, ph_resp)
             
             # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
-            response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
+            # response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
+            response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
             setattr(self, 'photom_order{}'.format(order), response)
             
             # Caluclate the transform for the desired polynomial
@@ -944,7 +955,7 @@ class TSO(object):
             pool = ThreadPool(8) 
             
             # Set wavelength independent inputs of lightcurve function
-            func = partial(psf_lightcurve, planet=self.planet, time=self.time, tmodel=self.tmodel)
+            func = partial(psf_lightcurve, time=self.time, tmodel=self.tmodel)
             
             # Generate the lightcurves at each wavelength
             psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs, rp))))
@@ -970,16 +981,19 @@ class TSO(object):
             if verbose:
                 # print('Order {} linear traces finished:'.format(order),time.time()-start)
                 print('Constructing order {} warped traces...'.format(order))
-                print('Total flux before warp:',np.nansum(frames[0]))
+                print('Total flux before warp:',np.nansum(frames[0,38:-38,38:-38]))
                 start = time.time()
             
-            
             # Warp the frames
-            coords = warp_coords(tform.inverse, (self.nrows,self.ncols))
+            # coords = warp_coords(tform.inverse, (self.nrows+,self.ncols))
+            coords = warp_coords(tform.inverse, (self.nrows+76, self.ncols+76))
             all_frames = []
             for f in frames:
                 all_frames.append(map_coordinates(f, coords))
             tso_order = np.array(all_frames)
+            
+            # Trim padding
+            tso_order = tso_order[:,38:-38,38:-38]
             
             # Test warp a single frame
             # warped_frame = warp(frames[0], inverse_map=tform.inverse, output_shape=(self.nrows,self.ncols))
@@ -1092,7 +1106,7 @@ class TSO(object):
             
         print('Noise model finished:', time.time()-start)
         
-    def plot_frame(self, frame='', scale='linear', order='', noise=True, cmap=plt.cm.jet):
+    def plot_frame(self, frame='', scale='linear', order=None, noise=True, cmap=plt.cm.jet):
         """
         Plot a TSO frame
         
@@ -1102,13 +1116,15 @@ class TSO(object):
             The frame number to plot
         scale: str
             Plot in linear or log scale
-        order: int (optional)
+        orders: sequence
             The order to isolate
         noise: bool
             Plot with the noise model
         cmap: str
             The color map to use
         """
+        coeffs = trace_polynomials(subarray=self.subarray)
+        
         if order:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
@@ -1128,8 +1144,18 @@ class TSO(object):
             plt.imshow(frame, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
         else:
             plt.imshow(frame, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+            
+        # Plot the polynomial too
+        X = np.linspace(0, 2048, 2048)
+        Y = np.polyval(coeffs[0], X)
+        plt.plot(X, Y, color='r')
+        
+        Y = np.polyval(coeffs[1], X)
+        plt.plot(X, Y, color='r')
+            
         plt.colorbar()
-        plt.title('Injected Spectrum')
+        plt.xlim(0,2048)
+        plt.ylim(0,256)
     
     def plot_snr(self, frame='', cmap=plt.cm.jet):
         """
