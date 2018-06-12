@@ -1,6 +1,6 @@
 # AWESim SOSS
 
-### Analyzing Webb Exoplanet Simulations with SOSS
+### Advanced Webb Exposure SIMulator for SOSS
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
