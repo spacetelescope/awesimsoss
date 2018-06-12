@@ -12,34 +12,27 @@ import matplotlib.pyplot as plt
 import batman
 import astropy.units as q
 import astropy.constants as ac
-# import multiprocessing
+from astropy.io import fits
+
+import multiprocessing
+from multiprocessing.dummy import Pool as ThreadPool 
 import time
-import AWESim_SOSS
-import inspect
 import warnings
 import datetime
 import webbpsf
 import pkg_resources
 from svo_filters import svo
-from multiprocessing.dummy import Pool as ThreadPool 
 from . import generate_darks as gd
 from ExoCTK import core
-from ExoCTK.ldc import ldcfit as lf
-from astropy.io import fits
-from scipy.optimize import curve_fit
-from scipy.ndimage.interpolation import zoom
-from scipy.interpolate import interp1d, _fitpack, splrep, splev
+from ExoCTK.limb_darkening import limb_darkening_fit as lf
+from scipy.interpolate import interp1d, splrep, splev
 from functools import partial
 from sklearn.externals import joblib
-from sklearn.linear_model import LinearRegression
-from sklearn.svm import SVR
 from scipy.ndimage import map_coordinates
-from numpy.core.multiarray import interp as compiled_interp
-from skimage.transform import PiecewiseAffineTransform, warp, warp_coords, estimate_transform
+from skimage.transform import PiecewiseAffineTransform, warp, warp_coords
 
 warnings.simplefilter('ignore')
 
-cm = plt.cm
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
@@ -63,7 +56,7 @@ def wave_map_tform(order, **kwargs):
     print('Input wave map average std:',np.mean(np.std(wave_map, axis=(0))))
     print('Output wave map average std:',np.mean(np.std(linear_wave_map, axis=(0))))
 
-def transform_from_polynomial(coeffs, cols=100, rows=3, delta_row=35, test_point=345, plot=False):
+def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=35, test_point=345, plot=False):
     """
     Calculate the Affine transform that takes into account the curvature of the trace
     
@@ -206,8 +199,6 @@ def make_linear_SOSS_trace(psfs, offset=27, subarray='SUBSTRIP256', plot=False):
     if plot:
         plt.figure(figsize=(13,2))
         plt.imshow(linear_trace[0], origin='lower', norm=matplotlib.colors.LogNorm())
-        plt.xlim(0,2048)
-        plt.ylim(0,Y)
         
     return linear_trace
 
@@ -439,7 +430,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=''):
         
     return psf
 
-def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, planet, time, tmodel, params, plot=False):
+def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=False):
     """
     Generate a lightcurve for a given wavelength
     
@@ -455,8 +446,6 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, planet, time, tmode
         The limb darkening coefficients to use
     rp: float
         The planet radius
-    planet: sequence
-        The wavelength and Rp/R* of the planet at t=0 
     time: sequence
         The time axis for the TSO
     tmodel: batman.transitmodel.TransitModel
@@ -473,19 +462,13 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, planet, time, tmode
     ---------
     # No planet
     from AWESim_SOSS.sim2D import awesim
-    import astropy.units as q, os, AWESim_SOSS
-    DIR_PATH = os.path.dirname(os.path.realpath(AWESim_SOSS.__file__))
-    vega = np.genfromtxt(DIR_PATH+'/files/scaled_spectrum.txt', unpack=True) # A0V with Jmag=9
-    w = vega[0]*q.um
-    f = (vega[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)
     psf = np.ones((76,76))
     time = np.linspace(-0.2, 0.2, 200)
-    lc = awesim.psf_lightcurve(0.97, psf, 1, 1,'', [w,f], '', time, '', '', plot=True)
+    lc = awesim.psf_lightcurve(0.97, psf, 1, None, None, time, None, plot=True)
     
     Example 2
     ---------
     # With a planet
-    planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
     params = batman.TransitParams()
     params.t0 = 0.                                # time of inferior conjunction
     params.per = 5.7214742                        # orbital period (days)
@@ -499,20 +482,20 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, planet, time, tmode
     params.limb_dark = 'quadratic'                # limb darkening profile to use
     params.u = [1,1]                              # limb darkening coefficients
     tmodel = batman.TransitModel(params, time)
-    lc = awesim.psf_lightcurve(0.97, psf, 1, [1,1], 0.05, [w,f], planet1D, time, tmodel, params, plot=True)
+    lc = awesim.psf_lightcurve(0.97, psf, 1, [0.1,0.1], 0.05, time, tmodel, plot=True)
     """
     # Expand to shape of time axis
     flux = np.tile(psf, (len(time),1,1))
     
     # If there is a transiting planet...
-    if not isinstance(planet, str):
+    if ld_coeffs is not None and rp is not None and isinstance(tmodel, batman.transitmodel.TransitModel):
         
         # Set the wavelength dependent orbital parameters
-        params.u = ld_coeffs
-        params.rp = rp
+        tmodel.u = ld_coeffs
+        tmodel.rp = rp
         
         # Generate the light curve for this pixel
-        lightcurve = tmodel.light_curve(params)
+        lightcurve = tmodel.light_curve(tmodel)
         
         # Scale the flux with the lightcurve
         flux *= lightcurve[:, None, None]
@@ -650,7 +633,7 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
 
 def trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False):
     """
-    Determine the polynomials of the SOSS traces from the IDT's values
+    Determine the polynomial coefficients of the SOSS traces from the IDT's values
     
     Parameters
     ----------
@@ -778,6 +761,7 @@ class TSO(object):
         Example
         -------
         # Imports
+        import numpy as np
         from AWESim_SOSS.sim2D import awesim
         import astropy.units as q
         from pkg_resources import resource_filename
@@ -804,15 +788,15 @@ class TSO(object):
         self.header = ''
         self.gain = 1.61
         self.snr = snr
+        self.model_grid = None
         
         # Set instance attributes for the target
         self.star = star
         self.wave = wave_solutions(str(self.nrows))
         self.avg_wave = np.mean(self.wave, axis=1)
-        self.ld_coeffs = np.zeros((3, 2048, 2))
-        self.planet = ''
-        self.tmodel = ''
-        self.params = ''
+        self._ld_coeffs = np.zeros((3, 2048, 2))
+        self.planet = None
+        self.tmodel = None
         
         # Get the cube of SOSS psfs
         order1_flux = np.interp(self.avg_wave[0], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
@@ -834,7 +818,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, filt='CLEAR', orders=[1,2], planet=None, tmodel=None, params=None, ld_coeffs=None, ld_profile='quadratic', model_grid=None, verbose=True):
+    def run_simulation(self, filt='CLEAR', planet=None, tmodel=None, ld_coeffs=None, ld_profile='quadratic', orders=[1,2], model_grid=None, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -846,10 +830,12 @@ class TSO(object):
             The wavelength and Rp/R* of the planet at t=0 
         tmodel: batman.transitmodel.TransitModel (optional)
             The transit model of the planet
-        ld_profile: str (optional)
-            The limb darkening profile to use
         ld_coeffs: array-like (optional)
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
+        ld_profile: str (optional)
+            The limb darkening profile to use
+        orders: sequence
+            The list of orders to imulate
         model_grid: ExoCTK.core.ModelGrid (optional)
             The model atmosphere grid to calculate LDCs
         verbose: bool
@@ -861,7 +847,9 @@ class TSO(object):
         tso.run_simulation()
         
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
-        planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+        import batman
+        import astropy.constants as ac
+        planet1D = np.genfromtxt(resource_filename('AWESim_SOSS', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
         params = batman.TransitParams()
         params.t0 = 0.                                # time of inferior conjunction
         params.per = 5.7214742                        # orbital period (days)
@@ -869,13 +857,13 @@ class TSO(object):
         params.inc = 89.8                             # orbital inclination (in degrees)
         params.ecc = 0.                               # eccentricity
         params.w = 90.                                # longitude of periastron (in degrees)
-        params.teff = 3500                            # effective temperature of the host star
-        params.logg = 5                               # log surface gravity of the host star
-        params.feh = 0                                # metallicity of the host star
         params.limb_dark = 'quadratic'                # limb darkening profile to use
-        params.u = [1,1]                              # limb darkening coefficients
+        params.u = [0.1,0.1]                          # limb darkening coefficients
         tmodel = batman.TransitModel(params, tso.time)
-        tso.run_simulation(planet=planet1D, tmodel=tmodel, params=params)
+        tmodel.teff = 3500                            # effective temperature of the host star
+        tmodel.logg = 5                               # log surface gravity of the host star
+        tmodel.feh = 0                                # metallicity of the host star
+        tso.run_simulation(planet=planet1D, tmodel=tmodel)
         """
         if verbose:
             begin = time.time()
@@ -897,34 +885,34 @@ class TSO(object):
         self.filter = filt.upper()
         if self.filter=='F277W':
             orders = [1]
-                
+        
         # If there is a planet transmission spectrum but no LDCs, generate them
-        if isinstance(planet, np.ndarray):
+        if planet is not None and isinstance(tmodel, batman.transitmodel.TransitModel):
             
             # Check if the stellar params are the same
-            old_params = [getattr(self.params, p, None) for p in ['teff','logg','feh']]
+            old_params = [getattr(self.tmodel, p, None) for p in ['teff','logg','feh','limb_dark']]
             
             # Store planet details
             self.planet = planet
-            self.params = params
             self.tmodel = tmodel
-            self.params.limb_dark = ld_profile
-            self.params.t0 = self.time[self.nframes//2]
+            self.tmodel.limb_dark = ld_profile
+            self.tmodel.t0 = self.time[self.nframes//2]
             
-            # Use input ld coeffs
-            if isinstance(ld_coeffs[0], float):
-                self.ld_coeffs = [np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * self.avg_wave[order-1].size) for order in orders]
-                
-            # Use input ld coeff array
-            elif isinstance(ld_coeffs, np.ndarray):
+            # Set the ld_coeffs if provided
+            stellar_params = [getattr(tmodel, p) for p in ['teff','logg','feh','limb_dark']]
+            if ld_coeffs is not None:
                 self.ld_coeffs = ld_coeffs
+            
+            # Update the limb darkning coeffs if the stellar params or ld profile have changed
+            elif isinstance(model_grid, core.ModelGrid) and stellar_params!=old_params:
                 
-            # Or generate them if the stellar paramaeters have changed
+                # Try to set the model grid
+                self.model_grid = model_grid
+                self.ld_coeffs = tmodel
+                
             else:
-                stellar_params = [getattr(params, p) for p in ['teff','logg','feh']]
-                if stellar_params!=old_params:
-                    self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], self.params.limb_dark, stellar_params, model_grid=model_grid) for order in orders]
-                
+                pass
+            
         # Generate simulation for each order
         for order in orders:
             
@@ -938,8 +926,11 @@ class TSO(object):
             ld_coeffs = self.ld_coeffs[order-1]
             ld_coeffs = list(map(list, ld_coeffs))
             
-            # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2
-            tdepth = np.interp(wave, planet[0], planet[1]) if planet is not None else np.ones_like(wave)
+            # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2... or an array of ones
+            if self.planet is not None:
+                tdepth = np.interp(wave, self.planet[0], self.planet[1])
+            else:
+                tdepth = np.ones_like(wave)
             rp = np.sqrt(tdepth)
             
             # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
@@ -949,7 +940,8 @@ class TSO(object):
             response = np.interp(wave, ph_wave, ph_resp)
             
             # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
-            response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
+            # response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
+            response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
             setattr(self, 'photom_order{}'.format(order), response)
             
             # Caluclate the transform for the desired polynomial
@@ -964,7 +956,7 @@ class TSO(object):
             pool = ThreadPool(8) 
             
             # Set wavelength independent inputs of lightcurve function
-            func = partial(psf_lightcurve, planet=self.planet, time=self.time, tmodel=self.tmodel, params=self.params)
+            func = partial(psf_lightcurve, time=self.time, tmodel=self.tmodel)
             
             # Generate the lightcurves at each wavelength
             psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs, rp))))
@@ -988,18 +980,20 @@ class TSO(object):
             
             # Run multiprocessing to construct trace
             if verbose:
-                # print('Order {} linear traces finished:'.format(order),time.time()-start)
-                print('Constructing order {} warped traces...'.format(order))
-                print('Total flux before warp:',np.nansum(frames[0]))
+                # print('Constructing order {} warped traces...'.format(order))
+                # print('Total flux before warp:',np.nansum(frames[0,38:-38,38:-38]))
                 start = time.time()
             
-            
             # Warp the frames
-            coords = warp_coords(tform.inverse, (self.nrows,self.ncols))
+            # coords = warp_coords(tform.inverse, (self.nrows+,self.ncols))
+            coords = warp_coords(tform.inverse, (self.nrows+76, self.ncols+76))
             all_frames = []
             for f in frames:
                 all_frames.append(map_coordinates(f, coords))
             tso_order = np.array(all_frames)
+            
+            # Trim padding
+            tso_order = tso_order[:,38:-38,38:-38]
             
             # Test warp a single frame
             # warped_frame = warp(frames[0], inverse_map=tform.inverse, output_shape=(self.nrows,self.ncols))
@@ -1024,6 +1018,42 @@ class TSO(object):
         
         if verbose:
             print('\nTotal time:',time.time()-begin)
+            
+    @property
+    def ld_coeffs(self):
+        """Get the limb darkening coefficients"""
+        return self._ld_coeffs
+        
+    @ld_coeffs.setter
+    def ld_coeffs(self, coeffs=None):
+        """Set the limb darkening coefficients
+        
+        Parameters
+        ----------
+        coeffs: sequence
+            The limb darkening coefficients
+        teff: float, int
+            The effective temperature of the star
+        logg: int, float
+            The surface gravity of the star
+        feh: float, int
+            The logarithm of the star metallicity/solar metallicity
+        """
+        # Use input ld coeffs
+        # if isinstance(ld_coeffs[0], float):
+        #     self.ld_coeffs = [np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * self.avg_wave[order-1].size) for order in orders]
+        
+        # Use input ld coeff array
+        if isinstance(coeffs, np.ndarray) and len(coeffs.shape)==3:
+            self._ld_coeffs = coeffs
+        
+        # Or generate them if the stellar parameters have changed
+        elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, core.ModelGrid):
+            self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff','logg','feh']], model_grid=self.model_grid) for order in self.orders]
+            
+        else:
+            raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
+    
     
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -1076,7 +1106,7 @@ class TSO(object):
             
         print('Noise model finished:', time.time()-start)
         
-    def plot_frame(self, frame='', scale='linear', order='', noise=True, cmap=cm.jet):
+    def plot_frame(self, frame='', scale='linear', order=None, noise=True, traces=False, cmap=plt.cm.jet):
         """
         Plot a TSO frame
         
@@ -1086,10 +1116,12 @@ class TSO(object):
             The frame number to plot
         scale: str
             Plot in linear or log scale
-        order: int (optional)
+        orders: sequence
             The order to isolate
         noise: bool
             Plot with the noise model
+        traces: bool
+            Plot the traces used to generate the frame
         cmap: str
             The color map to use
         """
@@ -1112,10 +1144,25 @@ class TSO(object):
             plt.imshow(frame, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
         else:
             plt.imshow(frame, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+            
+        # Plot the polynomial too
+        if traces:
+            coeffs = trace_polynomials(subarray=self.subarray)
+            X = np.linspace(0, 2048, 2048)
+        
+            # Order 1
+            Y = np.polyval(coeffs[0], X)
+            plt.plot(X, Y, color='r')
+        
+            # Order 2
+            Y = np.polyval(coeffs[1], X)
+            plt.plot(X, Y, color='r')
+            
         plt.colorbar()
-        plt.title('Injected Spectrum')
+        plt.xlim(0,2048)
+        plt.ylim(0,256)
     
-    def plot_snr(self, frame='', cmap=cm.jet):
+    def plot_snr(self, frame='', cmap=plt.cm.jet):
         """
         Plot the SNR of a TSO frame
         
@@ -1136,7 +1183,7 @@ class TSO(object):
         plt.colorbar()
         plt.title('SNR over Spectrum')
         
-    def plot_saturation(self, frame='', saturation=80.0, cmap=cm.jet):
+    def plot_saturation(self, frame='', saturation=80.0, cmap=plt.cm.jet):
         """
         Plot the saturation of a TSO frame
         
@@ -1290,10 +1337,10 @@ class TSO(object):
         
         Returns
         -------
-        awesim.TSO()
+        TSO
             A TSO class dict
         """
-        print('Loading TSO class dict to {}'.format(filename))
+        print('Loading TSO instance from {}'.format(filename))
         load_dict = joblib.load(filename)
         # for p in [i for i in dir(load_dict)]:
         #     setattr(self, p, getattr(params, p))
