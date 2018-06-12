@@ -24,7 +24,7 @@ import pkg_resources
 from svo_filters import svo
 from . import generate_darks as gd
 from ExoCTK import core
-from ExoCTK.ldc import ldcfit as lf
+from ExoCTK.limb_darkening import limb_darkening_fit as lf
 from scipy.interpolate import interp1d, splrep, splev
 from functools import partial
 from sklearn.externals import joblib
@@ -761,6 +761,7 @@ class TSO(object):
         Example
         -------
         # Imports
+        import numpy as np
         from AWESim_SOSS.sim2D import awesim
         import astropy.units as q
         from pkg_resources import resource_filename
@@ -979,9 +980,8 @@ class TSO(object):
             
             # Run multiprocessing to construct trace
             if verbose:
-                # print('Order {} linear traces finished:'.format(order),time.time()-start)
-                print('Constructing order {} warped traces...'.format(order))
-                print('Total flux before warp:',np.nansum(frames[0,38:-38,38:-38]))
+                # print('Constructing order {} warped traces...'.format(order))
+                # print('Total flux before warp:',np.nansum(frames[0,38:-38,38:-38]))
                 start = time.time()
             
             # Warp the frames
@@ -1106,7 +1106,7 @@ class TSO(object):
             
         print('Noise model finished:', time.time()-start)
         
-    def plot_frame(self, frame='', scale='linear', order=None, noise=True, cmap=plt.cm.jet):
+    def plot_frame(self, frame='', scale='linear', order=None, noise=True, traces=False, cmap=plt.cm.jet):
         """
         Plot a TSO frame
         
@@ -1120,11 +1120,11 @@ class TSO(object):
             The order to isolate
         noise: bool
             Plot with the noise model
+        traces: bool
+            Plot the traces used to generate the frame
         cmap: str
             The color map to use
         """
-        coeffs = trace_polynomials(subarray=self.subarray)
-        
         if order:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
@@ -1146,12 +1146,17 @@ class TSO(object):
             plt.imshow(frame, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
             
         # Plot the polynomial too
-        X = np.linspace(0, 2048, 2048)
-        Y = np.polyval(coeffs[0], X)
-        plt.plot(X, Y, color='r')
+        if traces:
+            coeffs = trace_polynomials(subarray=self.subarray)
+            X = np.linspace(0, 2048, 2048)
         
-        Y = np.polyval(coeffs[1], X)
-        plt.plot(X, Y, color='r')
+            # Order 1
+            Y = np.polyval(coeffs[0], X)
+            plt.plot(X, Y, color='r')
+        
+            # Order 2
+            Y = np.polyval(coeffs[1], X)
+            plt.plot(X, Y, color='r')
             
         plt.colorbar()
         plt.xlim(0,2048)
