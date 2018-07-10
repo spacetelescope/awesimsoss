@@ -41,6 +41,9 @@ FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
 
+def make_final_SOSS_trace():
+    pass
+
 def get_angle(pf, p0=np.array([0, 0]), pi=None):
     """Compute angle (in degrees) for pf-p0-pi corner
     
@@ -168,7 +171,7 @@ def calculate_psf_tilts():
         np.save(psf_file, np.array(angles))
         print('Angles saved to', psf_file)
 
-def put_psf_on_subarray(psf, x, y, frame_shape=(256, 2048)):
+def put_psf_on_subarray(psf, x, y, frame_height=256):
     """Make a 2D SOSS trace from a sequence of psfs and trace center locations
 
     Parameters
@@ -194,7 +197,7 @@ def put_psf_on_subarray(psf, x, y, frame_shape=(256, 2048)):
     spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
 
     # Create output frame, shifted as necessary
-    yg, xg = np.indices(frame_shape, dtype=np.float64)
+    yg, xg = np.indices((frame_height,2048), dtype=np.float64)
     yg += mid-y
     xg += mid-x
 
