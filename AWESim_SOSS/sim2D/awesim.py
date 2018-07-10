@@ -21,8 +21,9 @@ import warnings
 import datetime
 import webbpsf
 import pkg_resources
+import h5py
 
-from ExoCTK import core, svo
+from ExoCTK import modelgrid, svo
 from ExoCTK.limb_darkening import limb_darkening_fit as lf
 from scipy.interpolate import interp1d, splrep, splev
 from functools import partial
@@ -167,7 +168,7 @@ def calculate_psf_tilts():
         np.save(psf_file, np.array(angles))
         print('Angles saved to', psf_file)
 
-def put_psf_on_subarray(psf, x, y, grid):
+def put_psf_on_subarray(psf, x, y, frame_shape=(256, 2048)):
     """Make a 2D SOSS trace from a sequence of psfs and trace center locations
 
     Parameters
@@ -188,17 +189,22 @@ def put_psf_on_subarray(psf, x, y, grid):
     """
     # Create spline generator
     dim = psf.shape[0]
-    mid = dim/2.-0.5
+    mid = (dim - 1.0) / 2.0
     l = np.arange(dim, dtype=np.float)
     spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
 
-    # Create output grid, shifted as necessary
-    yg, xg = np.copy(grid)
+    # Create output frame, shifted as necessary
+    yg, xg = np.indices(frame_shape, dtype=np.float64)
     yg += mid-y
     xg += mid-x
 
     # Resample onto the subarray
     frame = spline.ev(xg, yg)
+    
+    # Fill resampled points with zeros
+    extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) |
+                ((yg < -0.5) | (yg >= dim - 0.5)))
+    frame[extrapol] = 0
     
     return frame
 
@@ -305,191 +311,105 @@ def generate_SOSS_psfs(filt):
     hdulist.writeto(file, overwrite=True)
     hdulist.close()
     
-def SOSS_psf_cube(filt='CLEAR', subarray='SUBSTRIP256', order=1, angles=None, verbose=False):
+def SOSS_psf_cube(filt='CLEAR', order=1, generate=False, all_angles=None):
     """
-    Generate/retrieve a data cube of shape (3, 2048, 76, 76) 
-    
+    Generate/retrieve a data cube of shape (3, 2048, 76, 76)
+
     Parameters
     ----------
     filt: str
         The filter to use, ['CLEAR','F277W']
     order: int
-        The trace order, [1, 2]
-    subarray: str
-        The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256']
-    angles: sequence (optional)
-        The angle of the psf in the 2048 columns
-    
+        The trace order
+    generate: bool
+        Generate a new cube
+
     Returns
     -------
     np.ndarray
         An array of the SOSS psf at 2048 wavelengths for each order
-    """    
-    # Get the wavelengths
-    wavelengths = np.mean(wave_solutions(subarray, order), axis=0)
-    
-    # Get the file
-    path = 'files/SOSS_{}_PSF.fits'.format(filt)
-    psf_file = pkg_resources.resource_filename('AWESim_SOSS', path)
-    
-    # Load the SOSS psf cube
-    cube = fits.getdata(psf_file).swapaxes(-1,-2)
-    wave = fits.getdata(psf_file, ext=1)
-    
-    # Initilize interpolator
-    psfs = interp1d(wave, cube, axis=0, kind=3)
-    
-    # Subarray dimensions
-    Y = SUBARRAY_Y.get(subarray)
-    X = np.arange(2048)
-    
-    # Evaluate the trace polynomial in each column to get the y-position
-    # of the trace center
-    trace_centers = np.polyval(trace_polynomials(subarray, order), X)
-    
-    # Create a grid of indices for each pixel
-    grid = np.indices((Y,2048), dtype=np.float64)
-    
-    # Get the angles of the psfs
-    angles = psf_tilts(order)
-    
-    if verbose:
-        print('Calculating order {} SOSS psfs for {} filter...'.format(order, filt))
-        start = time.time()
+    """
+    if generate:
 
-    # Get the psf for each column
-    pool = multiprocessing.Pool(8) 
-    func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
-    raw_psfs = np.array(pool.map(func, wavelengths))
-    pool.close()
-    pool.join()
-    
-    if verbose:
-        print('Finished in {} seconds.'.format(time.time()-start))
-        print('Rotating order {} SOSS psfs for {} filter...'.format(order, filt))
-        start = time.time()
-    
-    # Rotate the psfs
-    pool = multiprocessing.Pool(8)
-    func = partial(rotate, reshape=False)
-    rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
-    pool.close()
-    pool.join()
-    
-    if verbose:
-        print('Finished in {} seconds.'.format(time.time()-start))
-        print('Interpolating order {} SOSS psfs for {} filter onto subarray...'.format(order, filt))
-        start = time.time()
-    
-    # Interpolate the psfs onto the subarray
-    pool = multiprocessing.Pool(8)
-    func = partial(put_psf_on_subarray, grid=grid)
-    subarray_psfs = np.array(pool.starmap(func, zip(rotated_psfs, X, trace_centers)))
-    pool.close()
-    pool.join()
-    
-    if verbose:
-        print('Finished in {} seconds.'.format(time.time()-start))
-        
-    return subarray_psfs
+        print('Coffee time! This takes about 5 minutes.')
 
-# def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False, all_angles=None):
-#     """
-#     Generate/retrieve a data cube of shape (3, 2048, 76, 76)
-#
-#     Parameters
-#     ----------
-#     filt: str
-#         The filter to use, ['CLEAR','F277W']
-#     order: int
-#         The trace order
-#     generate: bool
-#         Generate a new cube
-#
-#     Returns
-#     -------
-#     np.ndarray
-#         An array of the SOSS psf at 2048 wavelengths for each order
-#     """
-#     if generate:
-#
-#         print('Coffee time! This takes about 5 minutes.')
-#
-#         # Get the wavelengths
-#         wavelengths = np.mean(wave_solutions(256), axis=1)
-#
-#         # Get the file
-#         psf_file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_PSF.fits'.format(filt))
-#
-#         # Load the SOSS psf cube
-#         cube = fits.getdata(psf_file).swapaxes(-1,-2)
-#         wave = fits.getdata(psf_file, ext=1)
-#
-#         # Initilize interpolator
-#         psfs = interp1d(wave, cube, axis=0, kind=3)
-#
-#         # Subarray height
-#         Y = SUBARRAY_Y.get(subarray)
-#         trace_cols = np.arange(2048)
-#
-#         # Evaluate the trace polynomial in each column to get the y-position
-#         # of the trace center
-#         trace_centers = np.polyval(trace_polynomials(subarray)[order-1], trace_cols)
-#
-#         # Create a grid of indices for each pixel
-#         grid = np.indices((Y,2048), dtype=np.float64)
-#
-#         # Get the angles of the psfs
-#         if all_angles is None:
-#             all_angles = calculate_psf_tilts()
-#
-#         # Run datacube
-#         for n,(order,angles) in enumerate(zip(wavelengths,all_angles)):
-#
-#             # Get the file
-#             file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_{}_PSF_order{}.fits'.format(filt,subarray,n+1))
-#
-#             # Get the psf for each column
-#             print('Calculating order {} SOSS psfs for {} filter...'.format(n+1,filt))
-#             start = time.time()
-#             pool = multiprocessing.Pool(8)
-#             func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
-#             raw_psfs = np.array(pool.map(func, order))
-#             pool.close()
-#             pool.join()
-#             print('Finished in {} seconds.'.format(time.time()-start))
-#
-#             # Rotate the psfs
-#             print('Rotating order {} SOSS psfs for {} filter...'.format(n+1,filt))
-#             start = time.time()
-#             pool = multiprocessing.Pool(8)
-#             func = partial(rotate, reshape=False)
-#             rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
-#             pool.close()
-#             pool.join()
-#             print('Finished in {} seconds.'.format(time.time()-start))
-#
-#             # Interpolate the psfs onto the subarray
-#             print('Interpolating order {} SOSS psfs for {} filter onto subarray...'.format(n+1,filt))
-#             start = time.time()
-#             pool = multiprocessing.Pool(8)
-#             func = partial(put_psf_on_subarray, grid=grid)
-#             subarray_psfs = np.array(pool.starmap(func, zip(rotated_psfs, trace_cols, trace_centers)))
-#             pool.close()
-#             pool.join()
-#             print('Finished in {} seconds.'.format(time.time()-start))
-#
-#             # Write to the file
-#             hdu = fits.HDUList([fits.PrimaryHDU(data=subarray_psfs)])
-#             hdu.writeto(file, overwrite=True)
-#             print('Data saved to',file)
-#
-#     else:
-#
-#         # Get the file
-#         file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_{}_PSF_order{}.fits'.format(filt,subarray,order))
-#
-#         return fits.getdata(file)
+        # Get the wavelengths
+        wavelengths = np.mean(wave_solutions(256), axis=1)
+
+        # Get the file
+        psf_path = 'files/SOSS_{}_PSF.fits'.format(filt)
+        psf_file = pkg_resources.resource_filename('AWESim_SOSS', psf_path)
+
+        # Load the SOSS psf cube
+        cube = fits.getdata(psf_file).swapaxes(-1, -2)
+        wave = fits.getdata(psf_file, ext=1)
+
+        # Initilize interpolator
+        psfs = interp1d(wave, cube, axis=0, kind=3)
+
+        # Evaluate the trace polynomial in each column to get the y-position
+        # of the trace center
+        trace_cols = np.arange(2048)
+        coeffs = trace_polynomials('SUBSTRIP256')[order-1]
+        trace_centers = np.polyval(coeffs, trace_cols)
+
+        # Run datacube
+        for n, wavelength in enumerate(wavelengths):
+            
+            # Don't calculate order2 or 3 for F277W
+            if not (n==1 and filt.lower()=='f277w'):
+            
+                # Get the PSF tilt at each column
+                angles = psf_tilts(order)
+
+                # Get the psf for each column
+                print('Calculating order {} SOSS psfs for {} filter...'.format(n+1, filt))
+                start = time.time()
+                pool = multiprocessing.Pool(8)
+                func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
+                raw_psfs = np.array(pool.map(func, wavelength))
+                pool.close()
+                pool.join()
+                print('Finished in {} seconds.'.format(time.time()-start))
+
+                # Rotate the psfs
+                print('Rotating order {} SOSS psfs for {} filter...'.format(n+1, filt))
+                start = time.time()
+                pool = multiprocessing.Pool(8)
+                func = partial(rotate, reshape=False)
+                rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
+                pool.close()
+                pool.join()
+                print('Finished in {} seconds.'.format(time.time()-start))
+
+                # Scale psfs to 1
+                rotated_psfs = np.abs(rotated_psfs)
+                scale = np.nansum(rotated_psfs, axis=(1,2))[:, None, None]
+                rotated_psfs = rotated_psfs/scale
+
+                # Get the filepath
+                filename = 'files/SOSS_{}_PSF_order{}.h5'.format(filt, n+1)
+                file = pkg_resources.resource_filename('AWESim_SOSS', filename)
+
+                # Delete the file if it exists
+                if os.path.isfile(file):
+                    os.system('rm {}'.format(file))
+
+                # Write the data
+                with h5py.File(file, 'w') as hf:
+                    hf.create_dataset('data',  data=rotated_psfs)
+
+                print('Data saved to', file)
+
+    else:
+
+        # Get the data
+        path = 'files/SOSS_{}_PSF_order{}.h5'.format(filt,order)
+        file = pkg_resources.resource_filename('AWESim_SOSS', path)
+        with h5py.File(file, 'r') as hf:
+            data = hf['data'][:]
+
+        return data
 
 def get_SOSS_psf(wavelength, filt='CLEAR', psfs='', cutoff=0.005):
     """
@@ -772,7 +692,7 @@ class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
-    def __init__(self, ngrps, nints, star, snr=700, filt='CLEAR', subarray='SUBSTRIP256', orders=[1,2], t0=0, target=None):
+    def __init__(self, ngrps, nints, star, snr=700, filt='CLEAR', subarray='SUBSTRIP256', orders=[1,2], t0=0, target=None, verbose=True):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -846,15 +766,13 @@ class TSO(object):
         if self.filter=='F277W':
             self.orders = [1]
         
-        # Get the 1D spectra interpolated to the mean wavelength of
-        # 2048 columns and scale the psf in each column to the flux from
+        # Scale the psf for each detector column to the flux from
         # the 1D spectrum
         for order in self.orders:
-            if verbose:
-                print("Loading order {} psf data...".format(order))
+            # Get the 1D flux in 
             flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
-            cube = SOSS_psf_cube(filt=self.filter, subarray=self.subarray, order=order)*flux
-            setattr(self, 'order{}'.format(order), cube)
+            cube = SOSS_psf_cube(filt=self.filter, order=order)
+            setattr(self, 'order{}_psfs'.format(order), cube)
             
         # Get absolute calibration reference file
         calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
@@ -958,7 +876,7 @@ class TSO(object):
             wave = self.avg_wave[order-1]
             
             # Get the psf cube
-            cube = getattr(self, 'order{}'.format(order))
+            cube = getattr(self, 'order{}_psfs'.format(order))
             
             # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
@@ -971,14 +889,15 @@ class TSO(object):
                 tdepth = np.ones_like(wave)
             rp = np.sqrt(tdepth)
             
-            # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
+            # Get relative spectral response for the order (from
+            # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
             throughput = self.photom[(self.photom['order']==order)&(self.photom['filter']==self.filter)]
             ph_wave = throughput.wavelength[throughput.wavelength>0][1:-2]
             ph_resp = throughput.relresponse[throughput.wavelength>0][1:-2]
             response = np.interp(wave, ph_wave, ph_resp)
             
-            # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
-            # response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
+            # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
+            # that we can convert the flux at each wavelegth into [ADU/s]
             response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
             setattr(self, 'photom_order{}'.format(order), response)
             
