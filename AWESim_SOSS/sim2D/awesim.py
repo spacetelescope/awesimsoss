@@ -41,8 +41,46 @@ FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
 
-def make_final_SOSS_trace():
-    pass
+def make_frame(psfs, order=1, subarray='SUBSTRIP256', verbose=False):
+    """
+    Generate/retrieve a data cube of shape (3, 2048, 76, 76)
+
+    Parameters
+    ----------
+    filt: str
+        The filter to use, ['CLEAR','F277W']
+    order: int
+        The trace order, [1, 2]
+    subarray: str
+        The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256']
+    angles: sequence (optional)
+        The angle of the psf in the 2048 columns
+
+    Returns
+    -------
+    np.ndarray
+        An array of the SOSS psf at 2048 wavelengths for each order
+    """
+    # Evaluate the trace polynomial in each column to get the y-position
+    # of the trace center
+    X = np.arange(2048)
+    Y = SUBARRAY_Y.get(subarray)
+    trace_centers = np.polyval(trace_polynomials(subarray, order), X)
+    
+    # Time it
+    if verbose:
+        start = time.time()
+        print('Starting...')
+    
+    # Add each psf to the frame at the correct (x, y) position
+    frame = np.zeros((Y,2048))
+    for x, y, psf in list(zip(X, trace_centers, psfs))[::400]:
+        frame = add_psf(frame, psf, x, y, frame_height=Y)
+
+    if verbose:
+        print('Finished in {} seconds.'.format(time.time()-start))
+
+    return frame
 
 def get_angle(pf, p0=np.array([0, 0]), pi=None):
     """Compute angle (in degrees) for pf-p0-pi corner
@@ -170,6 +208,46 @@ def calculate_psf_tilts():
         # Save the file
         np.save(psf_file, np.array(angles))
         print('Angles saved to', psf_file)
+
+def add_psf(frame, psf, x, y, frame_height=256):
+    """Make a 2D SOSS trace from a sequence of psfs and trace center locations
+
+    Parameters
+    ----------
+    psf: sequence
+        The 2D psf
+    x: float
+        The grid x value to place the center of the psf
+    y: float
+        The grid y value to place the center of the psf
+    grid: sequence
+        The [x,y] grid ranges
+    
+    Returns
+    -------
+    np.ndarray
+        The 2D frame with the interpolated psf
+    """
+    # Create spline generator
+    dim = psf.shape[0]
+    mid = (dim - 1.0) / 2.0
+    l = np.arange(dim, dtype=np.float)
+    spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
+
+    # Create output frame, shifted as necessary
+    yg, xg = np.indices((frame_height,2048), dtype=np.float64)
+    yg += mid-y
+    xg += mid-x
+
+    # Resample onto the subarray
+    resamp = spline.ev(xg, yg)
+    
+    # Fill resampled points with zeros
+    extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) |
+                ((yg < -0.5) | (yg >= dim - 0.5)))
+    resamp[extrapol] = 0
+    
+    return frame+resamp
 
 def put_psf_on_subarray(psf, x, y, frame_height=256):
     """Make a 2D SOSS trace from a sequence of psfs and trace center locations
@@ -915,23 +993,37 @@ class TSO(object):
             
             # Generate the lightcurves at each wavelength
             psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs, rp))))
-            psfs = psfs.swapaxes(0,1)
-            psfs = psfs.swapaxes(2,3)
             
             # Close the pool
             pool.close()
             pool.join()
             
+            # Reshape into frames
+            psfs = psfs.swapaxes(0,1)
+            
             # Multiply by the frame time to convert to [ADU]
             ft = np.tile(self.time[:self.ngrps], self.nints)
             psfs *= ft[:,None,None,None]
             
-            # Generate TSO frames with linear traces
+            # Generate TSO frames
             if verbose:
                 print('Lightcurves finished:',time.time()-start)
                 print('Constructing order {} traces...'.format(order))
+                start = time.time()
+            pool = ThreadPool(8) 
             
-            tso_order = make_final_SOSS_trace(psfs, order, self.subarray)
+            # Set wavelength independent inputs of lightcurve function
+            func = partial(make_frame, order=order, subarray=self.subarray)
+            
+            # Generate the lightcurves at each wavelength
+            psfs = np.asarray(pool.map(func, psfs))
+            
+            # Close the pool
+            pool.close()
+            pool.join()
+            
+            # Make array from frames
+            tso_order = np.array(psfs)
 
             if verbose:
                 # print('Total flux after warp:',np.nansum(all_frames[0]))
@@ -941,12 +1033,10 @@ class TSO(object):
             setattr(self, 'tso_order{}_ideal'.format(order), tso_order)
             
         # Add to the master TSO
-        self.tso = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in orders], axis=0)
+        self.tso = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
         
-        # Add noise to the observations using Kevin Volk's dark ramp simulator
+        # Make ramps and add noise to the observations using Kevin Volk's dark ramp simulator
         self.tso_ideal = self.tso.copy()
-        
-        # Add noise and ramps
         self.add_noise()
         
         if verbose:
