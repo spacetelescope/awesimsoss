@@ -250,45 +250,41 @@ def add_psf(frame, psf, x, y, frame_height=256):
     
     return frame+resamp
 
-# def put_psf_on_subarray(psf, x, y, frame_height=256):
-#     """Make a 2D SOSS trace from a sequence of psfs and trace center locations
-#
-#     Parameters
-#     ----------
-#     psf: sequence
-#         The 2D psf
-#     x: float
-#         The grid x value to place the center of the psf
-#     y: float
-#         The grid y value to place the center of the psf
-#     grid: sequence
-#         The [x,y] grid ranges
-#
-#     Returns
-#     -------
-#     np.ndarray
-#         The 2D frame with the interpolated psf
-#     """
-#     # Create spline generator
-#     dim = psf.shape[0]
-#     mid = (dim - 1.0) / 2.0
-#     l = np.arange(dim, dt ype=np.float)
-#     spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
-#
-#     # Create output frame, shifted as necessary
-#     yg, xg = np.indices((frame_height,2048), dtype=np.float64)
-#     yg += mid-y
-#     xg += mid-x
-#
-#     # Resample onto the subarray
-#     frame = spline.ev(xg, yg)
-#
-#     # Fill resampled points with zeros
-#     extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) |
-#                 ((yg < -0.5) | (yg >= dim - 0.5)))
-#     frame[extrapol] = 0
-#
-#     return frame
+def put_psf_on_subarray(psf, y, frame_height=256):
+    """Make a 2D SOSS trace from a sequence of psfs and trace center locations
+
+    Parameters
+    ----------
+    psf: sequence
+        The 2D psf
+    y: float
+        The grid y value to place the center of the psf
+    grid: sequence
+        The [x,y] grid ranges
+
+    Returns
+    -------
+    np.ndarray
+        The 2D frame with the interpolated psf
+    """
+    # Create spline generator
+    dim = psf.shape[0]
+    mid = (dim - 1.0) / 2.0
+    l = np.arange(dim, dtype=np.float)
+    spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
+
+    # Create output frame, shifted as necessary
+    yg, xg = np.indices((frame_height, dim), dtype=np.float64)
+    yg += mid-y
+
+    # Resample onto the subarray
+    frame = spline.ev(xg, yg)
+
+    # Fill resampled points with zeros
+    extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) | ((yg < -0.5) | (yg >= dim - 0.5)))
+    frame[extrapol] = 0
+
+    return frame
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
     """
@@ -393,7 +389,7 @@ def generate_SOSS_psfs(filt):
     hdulist.writeto(file, overwrite=True)
     hdulist.close()
     
-def SOSS_psf_cube(filt='CLEAR', order=1, generate=False, all_angles=None):
+def SOSS_psf_cube(filt='CLEAR', order=1, chunk=1, generate=False, all_angles=None):
     """
     Generate/retrieve a data cube of shape (3, 2048, 76, 76)
 
@@ -403,6 +399,8 @@ def SOSS_psf_cube(filt='CLEAR', order=1, generate=False, all_angles=None):
         The filter to use, ['CLEAR','F277W']
     order: int
         The trace order
+    chunk: int
+        The 512 column chunk, [1,2,3,4]
     generate: bool
         Generate a new cube
 
@@ -438,8 +436,8 @@ def SOSS_psf_cube(filt='CLEAR', order=1, generate=False, all_angles=None):
         # Run datacube
         for n, wavelength in enumerate(wavelengths):
             
-            # Don't calculate order2 or 3 for F277W
-            if not (n==1 and filt.lower()=='f277w'):
+            # Don't calculate order2 for F277W or order 3 for either
+            if not (n==1 and filt.lower()=='f277w') and not n==2:
             
                 # Get the PSF tilt at each column
                 angles = psf_tilts(order)
@@ -468,30 +466,47 @@ def SOSS_psf_cube(filt='CLEAR', order=1, generate=False, all_angles=None):
                 rotated_psfs = np.abs(rotated_psfs)
                 scale = np.nansum(rotated_psfs, axis=(1,2))[:, None, None]
                 rotated_psfs = rotated_psfs/scale
+                
+                # Split it into 4 chunks to be below Github file size limit
+                chunks = rotated_psfs.reshape(4, 512, 76,76)
+                for N, chunk in enumerate(chunks):
+                    
+                    idx0 = N*512
+                    idx1 = idx0+512
+                    
+                    # Interpolate the psfs onto the subarray
+                    print('Interpolating chunk {}/4 for order {} SOSS psfs for {} filter onto subarray...'.format(N+1, n+1, filt))
+                    start = time.time()
+                    pool = multiprocessing.Pool(8)
+                    data = zip(chunk, trace_centers[idx0:idx1])
+                    subarray_psfs = pool.starmap(put_psf_on_subarray, data)
+                    pool.close()
+                    pool.join()
+                    print('Finished in {} seconds.'.format(time.time()-start))
 
-                # Get the filepath
-                filename = 'files/SOSS_{}_PSF_order{}.h5'.format(filt, n+1)
-                file = pkg_resources.resource_filename('AWESim_SOSS', filename)
+                    # Get the filepath
+                    filename = 'files/SOSS_{}_PSF_order{}_{}.npy'.format(filt, n+1, N+1)
+                    file = pkg_resources.resource_filename('AWESim_SOSS', filename)
 
-                # Delete the file if it exists
-                if os.path.isfile(file):
-                    os.system('rm {}'.format(file))
+                    # Delete the file if it exists
+                    if os.path.isfile(file):
+                        os.system('rm {}'.format(file))
 
-                # Write the data
-                with h5py.File(file, 'w') as hf:
-                    hf.create_dataset('data',  data=rotated_psfs)
+                    # Write the data
+                    np.save(file, np.array(subarray_psfs))
 
-                print('Data saved to', file)
+                    print('Data saved to', file)
 
     else:
 
         # Get the data
-        path = 'files/SOSS_{}_PSF_order{}.h5'.format(filt,order)
-        file = pkg_resources.resource_filename('AWESim_SOSS', path)
-        with h5py.File(file, 'r') as hf:
-            data = hf['data'][:]
+        full_data = []
+        for chunk in [1,2,3,4]:
+            path = 'files/SOSS_{}_PSF_order{}_{}.npy'.format(filt, order, chunk)
+            file = pkg_resources.resource_filename('AWESim_SOSS', path)
+            full_data.append(np.load(file))
 
-        return data
+        return np.concatenate(full_data, axis=0)
 
 def get_SOSS_psf(wavelength, filt='CLEAR', psfs='', cutoff=0.005):
     """
