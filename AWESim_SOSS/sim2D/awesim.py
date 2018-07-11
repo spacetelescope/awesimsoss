@@ -21,220 +21,232 @@ import warnings
 import datetime
 import webbpsf
 import pkg_resources
-from svo_filters import svo
-from . import generate_darks as gd
-from ExoCTK import core
+import h5py
+
+from ExoCTK import modelgrid, svo
 from ExoCTK.limb_darkening import limb_darkening_fit as lf
 from scipy.interpolate import interp1d, splrep, splev
 from functools import partial
 from sklearn.externals import joblib
 from scipy.ndimage import map_coordinates
+from scipy.ndimage.interpolation import rotate, shift
+from scipy.interpolate import interp2d, RectBivariateSpline
 from skimage.transform import PiecewiseAffineTransform, warp, warp_coords
+
+from . import generate_darks as gd
 
 warnings.simplefilter('ignore')
 
 FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
-def wave_map_tform(order, **kwargs):
-    """
-    Apply the inverse transform to the wave_map to get the vertical placement of the trace and the average wavelength of each column
-    """
-    # Get the order coeffs
-    coeffs = trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False)[order-1]
-    
-    # Get the transform
-    tform = transform_from_polynomial(coeffs, **kwargs)
-    
-    # Transform the wave_map
-    wave_map = wave_solutions(256)[order-1].astype(float)
-    
-    # Warp it and plot!
-    linear_wave_map = warp(wave_map, inverse_map=tform)
-    
-    # Test that the std in each column has decreased
-    print('Input wave map average std:',np.mean(np.std(wave_map, axis=(0))))
-    print('Output wave map average std:',np.mean(np.std(linear_wave_map, axis=(0))))
 
-def transform_from_polynomial(coeffs, cols=100, rows=5, delta_row=35, test_point=345, plot=False):
+def make_frame(psfs, subarray='SUBSTRIP256'):
     """
-    Calculate the Affine transform that takes into account the curvature of the trace
-    
+    Generate a frame from an array of psfs
+
     Parameters
     ----------
-    coeffs: sequence
-        The polynomial coefficients
-    cols: int
-        The number of columns of control points
-    rows: int
-        The number of rows of control points
-    delta_row: float
-        The distance between rows of control points (default=38 since the webbpsf frame is (76,76))
-    test_point: int
-        Plot a test point to show which scr and dst points correspond to each other
-    plot: bool
-        Plot the control points
-    
-    Returns
-    -------
-    sequence
-        The (x,y) coordinates of the control points
-    """
-    # Get the polynomial and evaluate
-    X = np.linspace(0, 2048, cols)
-    Y = np.polyval(coeffs, X)
-    idx = np.arange(-1, rows-1)
-    
-    # Interpolate the data with a spline
-    spl = splrep(X, Y)
-    
-    if plot:
-        plt.figure(figsize=(20,8))
-        plt.plot(X, Y, c='r', lw=3, ls='--')
-        
-    # Calculate all dst and src points
-    src_points = []
-    dst_points = []
-    for N0,x0 in enumerate(X):
-        
-        # Evaluate f(x0) and f'(x0) and the slope of the normal line
-        f = splev(x0, spl, der=0)
-        fprime = splev(x0, spl, der=1)
-        m = -1./fprime
-        
-        # Calculate the normal line to the dst points
-        x = np.arange(x0-delta_row, x0+delta_row)
-        normal = m*(x-x0)+f
-        y0 = normal[delta_row]
-        
-        # Generate (x,y) of each control point row
-        for N1,i in enumerate(idx):
-            
-            # Calculate the dst point
-            # xp = x0 + (-1 if x0>1460 else 1)*i*delta_row*np.sqrt(1/(1+m**2))
-            xp = x0 + (m/abs(m))*i*delta_row*np.sqrt(1/(1+m**2))
-            yp = m*(xp-x0) + y0
-            dst_points.append((xp,yp))
-            
-            # Calculate the src point
-            yl = np.min(Y)+i*delta_row
-            src_points.append((x0,yl))
-            
-            # Plot both points
-            if plot:
-                plt.plot(x, normal, c='r')
-                plt.plot(xp, yp, 'sr', label='Destination' if N1==N0==0 else None)
-                plt.plot(x0, yl, 'ob', label='Source' if N1==N0==0 else None)
-                
-                # Plot a test point for visual inspection
-                if N0*len(idx)+N1==test_point:
-                    plt.plot(xp, yp, 'sr', markersize=10)
-                    plt.plot(x0, yl, 'ob', markersize=10)
-                    
-        # Plot the normal line to the src points
-        if plot:
-            plt.axvline(x0, c='b')
-            plt.axhline(np.min(Y), c='b', ls='--', lw=2)
-            
-    # Put into an array
-    dst_points = np.array(dst_points)
-    src_points = np.array(src_points)
-    
-    if plot:
-        plt.legend(loc=2)
-        plt.xlim(0,2048)
-        plt.ylim(0,256)
-    
-    # Perform transform
-    tform = PiecewiseAffineTransform()
-    tform.estimate(src_points, dst_points)
-    
-    return tform
-
-def make_linear_SOSS_trace(psfs, offset=27, subarray='SUBSTRIP256', plot=False):
-    """
-    Construct the trace from the 2D psf generated by webbpsf at each wavelength
-    
-    Parameters
-    ----------
-    psfs: np.ndarray
-        The data cube of shape (n_wavelengths, n_frames, x, y)
-    offset: int
-        The y-offset for placement of the 76x76 psf on the linear trace
+    psfs: sequence
+        An array of psfs of shape (2048, 76, 76)
     subarray: str
-        The subarray to use
-    plot: bool
-        Plot the trace
+        The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256']
+
+    Returns
+    -------
+    np.ndarray
+        An array of the SOSS psf at 2048 wavelengths for each order
+    """
+    # Empty frame
+    frame = np.zeros((256, 2124))
+    
+    # Add each psf
+    for n, psf in enumerate(psfs):
+        frame[:, n:n+76] += psf
+        
+    # Trim if 96 subarray
+    idx = 160 if subarray == 'SUBSTRIP96' else 0
+
+    return frame[idx:, 38:-38]
+
+def get_angle(pf, p0=np.array([0, 0]), pi=None):
+    """Compute angle (in degrees) for pf-p0-pi corner
+    
+    Parameters
+    ----------
+    pf: sequence
+        The coordinates of a point on the rotated vector
+    p0: sequence
+        The coordinates of the pivot
+    pi: sequence
+        The coordinates of the fixed vector
+        
+    Returns
+    -------
+    float
+        The angle in degrees
+    """
+    if pi is None:
+        pi = p0 + np.array([0, 1])
+    v0 = np.array(pf) - np.array(p0)
+    v1 = np.array(pi) - np.array(p0)
+
+    angle = np.math.atan2(np.linalg.det([v0, v1]), np.dot(v0, v1))
+    angle = np.degrees(angle)
+        
+    return angle
+
+def psf_tilts(order):
+    """
+    Get the psf tilts for the given order
+    
+    Parameters
+    ----------
+    order: int
+        The order to use, [1, 2]
     
     Returns
     -------
     np.ndarray
-        The 3D linear trace
+        The angle from the vertical of the psf in each of the 2048 columns
     """
-    # Get dimensions
-    n_frames, n_waves, x, y = psfs.shape
-    
-    # Get the psf center
-    c = int(x/2)
-    
-    # Get the subarray height
-    Y = SUBARRAY_Y.get(subarray)
-    
-    # Empty trace (with padding for overflow)
-    linear_trace = np.zeros((n_frames, n_waves+x, Y+y))
-    
-    # For each frame in the exposure...
-    for N,frame in enumerate(psfs):
+    if order not in [1, 2]:
+        raise ValueError('Only orders 1 and 2 are supported.')
         
-        # ... place psf in each column (i.e. wavelength)
-        for n,wave in enumerate(frame):
-            
-            # Place the trace center in the correct column
-            linear_trace[N,n:n+x,offset:y+offset] += wave
-            
-    # Transpose and invert x-axis  DMS orientation
-    linear_trace = linear_trace.swapaxes(1,2)[:,:,::-1]
-   
-    # Plot it
-    if plot:
-        plt.figure(figsize=(13,2))
-        plt.imshow(linear_trace[0], origin='lower', norm=matplotlib.colors.LogNorm())
+    # Get the file
+    path = 'files/SOSS_PSF_tilt_order{}.npy'.format(order)
+    psf_file = pkg_resources.resource_filename('AWESim_SOSS', path)
+    
+    if not os.path.exists(psf_file):
+        calculate_psf_tilts()
         
-    return linear_trace
+    return np.load(psf_file)
+    
+def calculate_psf_tilts():
+    """
+    Calculate the tilt of the psf at the center of each column
+    for both orders and save to file
+    """
+    for order in [1, 2]:
+        
+        # Get the file
+        path = 'files/SOSS_PSF_tilt_order{}.npy'.format(order)
+        psf_file = pkg_resources.resource_filename('AWESim_SOSS', path)
+            
+        # Dimensions
+        subarray = 'SUBSTRIP256'
+        X = range(2048)
+        Y = range(SUBARRAY_Y.get(subarray))
+    
+        # Get the wave map
+        wave_map = wave_solutions(subarray, order).astype(float)
 
-def ADUtoFlux(order):
-    """
-    Return the wavelength dependent conversion from ADUs to erg s-1 cm-2 
-    in SOSS traces 1, 2, and 3
+        # Get the y-coordinate of the trace polynomial in this column
+        # (center of the trace)
+        coeffs = trace_polynomials(subarray=subarray, order=order)
+        trace = np.polyval(coeffs, X)
+
+        # Interpolate to get the wavelength value at the center
+        wave = interp2d(X, Y, wave_map)
+
+        # Get the wavelength of the trace center in each column
+        trace_wave = []
+        for x, y in zip(X, trace):
+            trace_wave.append(wave(x, y)[0])
+
+        # For each column wavelength (defined by the wavelength at
+        # the trace center) define an isowavelength contour
+        angles = []
+        for n, x in enumerate(X):
     
+            w = trace_wave[x]
+    
+            # Edge cases
+            try:
+                w0 = trace_wave[x-1]
+            except IndexError:
+                w0 = 0
+        
+            try:
+                w1 = trace_wave[x+1]
+            except IndexError:
+                w1 = 10
+                
+            # Define the width of the wavelength bin as half-way
+            # between neighboring points
+            dw0 = np.mean([w0, w])
+            dw1 = np.mean([w1, w])
+            
+            # Get the coordinates of all the pixels in that range
+            yy, xx = np.where(np.logical_and(wave_map >= dw0, wave_map < dw1))
+    
+            # Find the angle between the vertical and the tilted wavelength bin
+            if len(xx) >=1:
+                angle = get_angle([xx[-1], yy[-1]], [x, trace[x]])
+            else:
+                angle = 0
+            
+            # Don't flip them upside down
+            angle = angle % 180
+        
+            # Add to the array
+            angles.append(angle)
+        
+        # Save the file
+        np.save(psf_file, np.array(angles))
+        print('Angles saved to', psf_file)
+
+def put_psf_on_subarray(psf, y, frame_height=256):
+    """Make a 2D SOSS trace from a sequence of psfs and trace center locations
+
     Parameters
-    ==========
-    order: int
-        The trace order, must be 1, 2, or 3
-    
+    ----------
+    psf: sequence
+        The 2D psf
+    y: float
+        The grid y value to place the center of the psf
+    grid: sequence
+        The [x,y] grid ranges
+
     Returns
-    =======
+    -------
     np.ndarray
-        Arrays to convert the given order trace from ADUs to units of flux
+        The 2D frame with the interpolated psf
     """
-    ADU2mJy, mJy2erg = 7.586031e-05, 2.680489e-15
-    scaling = np.genfromtxt(pkg_resources.resource_filename('AWESim_SOSS', 'files/GR700XD_{}.txt'.format(order)), unpack=True)
-    scaling[1] *= ADU2mJy*mJy2erg
-    
-    return scaling
+    # Create spline generator
+    dim = psf.shape[0]
+    mid = (dim - 1.0) / 2.0
+    l = np.arange(dim, dtype=np.float)
+    spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
+
+    # Create output frame, shifted as necessary
+    yg, xg = np.indices((frame_height, dim), dtype=np.float64)
+    yg += mid-y
+
+    # Resample onto the subarray
+    frame = spline.ev(xg, yg)
+
+    # Fill resampled points with zeros
+    extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) | ((yg < -0.5) | (yg >= dim - 0.5)))
+    frame[extrapol] = 0
+
+    return frame
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
     """
-    Generate a lookup table of limb darkening coefficients for full SOSS wavelength range
+    Generate a lookup table of limb darkening coefficients for full
+    SOSS wavelength range
     
     Parameters
     ----------
     wavelengths: sequence
         The wavelengths at which to calculate the LDCs
     ld_profile: str
-        A limb darkening profile name supported by `ExoCTK.ldc.ldcfit.ld_profile()`
+        A limb darkening profile name supported by
+        `ExoCTK.ldc.ldcfit.ld_profile()`
     grid_point: dict, sequence
-        The stellar parameters [Teff, logg, FeH] or stellar model dictionary from `ExoCTK.core.ModelGrid.get()`
+        The stellar parameters [Teff, logg, FeH] or stellar model
+        dictionary from `ExoCTK.modelgrid.ModelGrid.get()`
     n_bins: int
         The number of bins to break up the grism into
     save: str
@@ -246,11 +258,12 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
     lookup = awesim.soss_ldc('quadratic', [3300, 4.5, 0])
     """
     # Get the model grid
-    if not isinstance(model_grid, core.ModelGrid):
-        model_grid = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700)
+    if not isinstance(model_grid, modelgrid.ModelGrid):
+        model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700)
     
     # Load the model grid
-    model_grid = core.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6,2.8))
+    model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700,
+                                wave_rng=(0.6,2.8))
     
     # Get the grid point
     if isinstance(grid_point, (list,tuple,np.ndarray)):
@@ -258,14 +271,16 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
         
     # Abort if no stellar dict
     if not isinstance(grid_point, dict):
-        print('Please provide the grid_point argument as [Teff, logg, FeH] or ExoCTK.core.ModelGrid.get(Teff, logg, FeH).')
+        print('Please provide the grid_point argument as [Teff, logg, FeH] or ExoCTK.modelgrid.ModelGrid.get(Teff, logg, FeH).')
         return
         
     # Break the bandpass up into n_bins pieces
     bandpass = svo.Filter('NIRISS.GR700XD', n_bins=n_bins, verbose=False)
     
     # Calculate the LDCs
-    ldc_results = lf.ldc(None, None, None, model_grid, [ld_profile], bandpass=bandpass, grid_point=grid_point.copy(), mu_min=0.08, verbose=False)
+    ldc_results = lf.ldc(None, None, None, model_grid, [ld_profile],
+                         bandpass=bandpass, grid_point=grid_point.copy(),
+                         mu_min=0.08, verbose=False)
     
     # Interpolate the LDCs to the desired wavelengths
     coeff_table = ldc_results[ld_profile]['coeffs']
@@ -320,74 +335,126 @@ def generate_SOSS_psfs(filt):
     hdulist.writeto(file, overwrite=True)
     hdulist.close()
     
-def SOSS_psf_cube(filt='CLEAR', order=1, generate=False):
+def SOSS_psf_cube(filt='CLEAR', order=1, chunk=1, generate=False, all_angles=None):
     """
-    Generate/retrieve a data cube of shape (3, 2048, 76, 76) 
-    
+    Generate/retrieve a data cube of shape (3, 2048, 76, 76)
+
     Parameters
     ----------
     filt: str
         The filter to use, ['CLEAR','F277W']
     order: int
         The trace order
+    chunk: int
+        The 512 column chunk, [1,2,3,4]
     generate: bool
         Generate a new cube
-    
+
     Returns
     -------
     np.ndarray
         An array of the SOSS psf at 2048 wavelengths for each order
     """
     if generate:
-        
+
+        print('Coffee time! This takes about 5 minutes.')
+
         # Get the wavelengths
         wavelengths = np.mean(wave_solutions(256), axis=1)
-        
+
         # Get the file
-        psf_file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_PSF.fits'.format(filt))
-        
+        psf_path = 'files/SOSS_{}_PSF.fits'.format(filt)
+        psf_file = pkg_resources.resource_filename('AWESim_SOSS', psf_path)
+
         # Load the SOSS psf cube
-        cube = fits.getdata(psf_file).swapaxes(-1,-2)
+        cube = fits.getdata(psf_file).swapaxes(-1, -2)
         wave = fits.getdata(psf_file, ext=1)
-        
+
         # Initilize interpolator
         psfs = interp1d(wave, cube, axis=0, kind=3)
-        
-        # Run datacube
-        for n,order in enumerate(wavelengths):
-            
-            # Get the file
-            file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_PSF_order{}.fits'.format(filt,n+1))
-            
-            print('Calculating order {} SOSS psfs for {} filter...'.format(n+1,filt))
-            start = time.time()
-            
-            pool = multiprocessing.Pool(8)
-            
-            # Set wavelength independent inputs of lightcurve function
-            func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
-            
-            # Generate the psfs at each wavelength
-            all_psfs = pool.map(func, order)
-            
-            # Close the pool
-            pool.close()
-            pool.join()
-            
-            print('Finished in {} seconds.'.format(time.time()-start))
-            
-            # Write to the file
-            fits.HDUList([fits.PrimaryHDU(data=np.array(all_psfs))]).writeto(file, overwrite=True)
-            print('Data saved to',file)
-        
-    else:
-        
-        # Get the file
-        file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_PSF_order{}.fits'.format(filt,order))
-        
-        return fits.getdata(file)
 
-def get_SOSS_psf(wavelength, filt='CLEAR', psfs=''):
+        # Evaluate the trace polynomial in each column to get the y-position
+        # of the trace center
+        trace_cols = np.arange(2048)
+        coeffs = trace_polynomials('SUBSTRIP256')[order-1]
+        trace_centers = np.polyval(coeffs, trace_cols)
+
+        # Run datacube
+        for n, wavelength in enumerate(wavelengths):
+            
+            # Don't calculate order2 for F277W or order 3 for either
+            if not (n==1 and filt.lower()=='f277w') and not n==2:
+            
+                # Get the PSF tilt at each column
+                angles = psf_tilts(order)
+
+                # Get the psf for each column
+                print('Calculating order {} SOSS psfs for {} filter...'.format(n+1, filt))
+                start = time.time()
+                pool = multiprocessing.Pool(8)
+                func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
+                raw_psfs = np.array(pool.map(func, wavelength))
+                pool.close()
+                pool.join()
+                print('Finished in {} seconds.'.format(time.time()-start))
+
+                # Rotate the psfs
+                print('Rotating order {} SOSS psfs for {} filter...'.format(n+1, filt))
+                start = time.time()
+                pool = multiprocessing.Pool(8)
+                func = partial(rotate, reshape=False)
+                rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
+                pool.close()
+                pool.join()
+                print('Finished in {} seconds.'.format(time.time()-start))
+
+                # Scale psfs to 1
+                rotated_psfs = np.abs(rotated_psfs)
+                scale = np.nansum(rotated_psfs, axis=(1,2))[:, None, None]
+                rotated_psfs = rotated_psfs/scale
+                
+                # Split it into 4 chunks to be below Github file size limit
+                chunks = rotated_psfs.reshape(4, 512, 76,76)
+                for N, chunk in enumerate(chunks):
+                    
+                    idx0 = N*512
+                    idx1 = idx0+512
+                    
+                    # Interpolate the psfs onto the subarray
+                    print('Interpolating chunk {}/4 for order {} SOSS psfs for {} filter onto subarray...'.format(N+1, n+1, filt))
+                    start = time.time()
+                    pool = multiprocessing.Pool(8)
+                    data = zip(chunk, trace_centers[idx0:idx1])
+                    subarray_psfs = pool.starmap(put_psf_on_subarray, data)
+                    pool.close()
+                    pool.join()
+                    print('Finished in {} seconds.'.format(time.time()-start))
+
+                    # Get the filepath
+                    filename = 'files/SOSS_{}_PSF_order{}_{}.npy'.format(filt, n+1, N+1)
+                    file = pkg_resources.resource_filename('AWESim_SOSS', filename)
+
+                    # Delete the file if it exists
+                    if os.path.isfile(file):
+                        os.system('rm {}'.format(file))
+
+                    # Write the data
+                    np.save(file, np.array(subarray_psfs))
+
+                    print('Data saved to', file)
+
+    else:
+
+        # Get the data
+        full_data = []
+        for chunk in [1,2,3,4]:
+            path = 'files/SOSS_{}_PSF_order{}_{}.npy'.format(filt, order, chunk)
+            file = pkg_resources.resource_filename('AWESim_SOSS', path)
+            full_data.append(np.load(file))
+
+        return np.concatenate(full_data, axis=0)
+
+def get_SOSS_psf(wavelength, filt='CLEAR', psfs='', cutoff=0.005):
     """
     Retrieve the SOSS psf for the given wavelength
     
@@ -427,6 +494,9 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=''):
     # Interpolate and scale psf
     psf = psfs(wavelength)
     psf *= 1./np.nansum(psf)
+    
+    # Remove background
+    psf[psf<cutoff] = 0
         
     return psf
 
@@ -511,7 +581,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
         
     return flux
 
-def wave_solutions(subarr, directory=pkg_resources.resource_filename('AWESim_SOSS', '/files/soss_wavelengths_fullframe.fits')):
+def wave_solutions(subarr=None, order=None, directory=None):
     """
     Get the wavelength maps for SOSS orders 1, 2, and 3
     This will be obsolete once the apply_wcs step of the JWST pipeline
@@ -520,7 +590,9 @@ def wave_solutions(subarr, directory=pkg_resources.resource_filename('AWESim_SOS
     Parameters
     ==========
     subarr: str
-        The subarray to return, accepts '96', '256', or 'full'
+        The subarray to return, ['SUBSTRIP96', 'SUBSTRIP256', or 'full']
+    order: int (optional)
+        The trace order, [1, 2, 3]
     directory: str
         The directory containing the wavelength FITS files
         
@@ -529,12 +601,26 @@ def wave_solutions(subarr, directory=pkg_resources.resource_filename('AWESim_SOS
     np.ndarray
         An array of the wavelength solutions for orders 1, 2, and 3
     """
-    try:
-        idx = int(subarr)
-    except:
-        idx = None
+    # Get the directory
+    if directory is None:
+        default = '/files/soss_wavelengths_fullframe.fits'
+        directory = pkg_resources.resource_filename('AWESim_SOSS', default)
     
-    wave = fits.getdata(directory).swapaxes(-2,-1)[:,:idx]
+    # Trim to the correct subarray
+    if subarr == 'SUBSTRIP256' or subarr == 256:
+        idx = slice(0, 256)
+    elif subarr == 'SUBSTRIP96' or subarr == 96:
+        idx = slice(160, 256)
+    else:
+        idx = slice(0,2048)
+        
+    # Select the right order
+    if order in [1, 2]:
+        order = int(order)-1
+    else:
+        order = slice(0, 3)
+        
+    wave = fits.getdata(directory).swapaxes(-2,-1)[order,idx]
     
     return wave
 
@@ -580,58 +666,7 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     
     return time_axis
 
-# def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
-#     """
-#     Calculate a time axis for the exposure in the given SOSS subarray
-#
-#     Parameters
-#     ----------
-#     subarray: str
-#         The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
-#     ngrps: int
-#         The number of groups per integration
-#     nints: int
-#         The number of integrations for the exposure
-#     t0: float
-#         The start time of the exposure
-#     nresets: int
-#         The number of reset frames per integration
-#
-#     Returns
-#     -------
-#     sequence
-#         The time of each frame
-#     """
-#     # Check the subarray
-#     if subarray not in ['SUBSTRIP256','SUBSTRIP96','FULL']:
-#         subarray = 'SUBSTRIP256'
-#         print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
-#
-#     # Get the appropriate frame time
-#     ft = FRAME_TIMES[subarray]
-#
-#     # Generate the time axis, removing reset frames
-#     time_axis = []
-#     t = t0
-#     for _ in range(nints):
-#
-#         # Generate a time for each group in the integration
-#         times = t+np.arange(nresets+ngrps)*ft
-#         time_axis.append(times[nresets:])
-#
-#         # Update the start time of the next integration
-#         t = times[-1]+ft
-#
-#     # Flatten the times of each integration
-#     time_axis = np.concatenate(time_axis)
-#
-#     # Convert time axis from seconds to days
-#     # since the period is input as days
-#     time_axis /= 86400
-#
-#     return time_axis
-
-def trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False):
+def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate=False):
     """
     Determine the polynomial coefficients of the SOSS traces from the IDT's values
     
@@ -639,7 +674,9 @@ def trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False):
     ----------
     subarray: str
         The name of the subarray
-    order: int
+    order: int (optional)
+        The trace order, [1, 2]
+    poly_order: int
         The order polynomail to fit
     generate: bool
         Generate new coefficients
@@ -661,8 +698,8 @@ def trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False):
             y2 -= 10
             
         # Fit the polynomails
-        fit1 = np.polyfit(x1, y1, order)
-        fit2 = np.polyfit(x2, y2, order)
+        fit1 = np.polyfit(x1, y1, poly_order)
+        fit2 = np.polyfit(x2, y2, poly_order)
         
         # Plot the results
         plt.figure(figsize=(13,2))
@@ -681,63 +718,24 @@ def trace_polynomials(subarray='SUBSTRIP256', order=4, generate=False):
         
     else:
         
+        # Select the right order
+        if order in [1, 2]:
+            order = int(order)-1
+        else:
+            order = slice(0, 3)
+        
         if subarray=='SUBSTRIP96':
             coeffs = [[1.71164994e-11, -4.72119272e-08, 5.10276801e-05, -5.91535309e-02, 7.30680347e+01], [2.35792131e-13, 2.42999478e-08, 1.03641247e-05, -3.63088657e-02, 8.96766537e+01]]
         else:
             coeffs = [[1.71164994e-11, -4.72119272e-08, 5.10276801e-05, -5.91535309e-02, 8.30680347e+01], [2.35792131e-13, 2.42999478e-08, 1.03641247e-05, -3.63088657e-02, 9.96766537e+01]]
 
-        return coeffs
-
-def warp_frames(frames, tform, multiprocess=False):
-    """
-    Warp the given frames using the given transform
-    
-    Parameters
-    ----------
-    frames: sequence
-        The 3D data cube
-    tform: skimage.transform._geometric.PiecewiseAffineTransform
-        The image transform object
-    multiprocess: bool
-        Use multiprocessing
-    
-    Returns
-    -------
-    np.ndarray
-        The warped frames
-    """
-    if multiprocess:
-        
-        # Init the pool
-        pool = multiprocessing.Pool(8)
-
-        # Load the warp function with the precomputed transform
-        func = partial(warp, inverse_map=tform.inverse)
-
-        # Generate the warped trace at each frame
-        warped = pool.map(func, frames)
-
-        # Close the pool
-        pool.close()
-        pool.join()
-
-    else:
-
-        # Manually warp the frames
-        warped = []
-        for f in frames:
-            warped.append(warp(f, inverse_map=tform.inverse))
-
-    # Put into an array
-    warped = np.asarray(warped)
-
-    return warped
+        return coeffs[order]
 
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
-    def __init__(self, ngrps, nints, star, snr=700, subarray='SUBSTRIP256', t0=0, target=None):
+    def __init__(self, ngrps, nints, star, snr=700, filt='CLEAR', subarray='SUBSTRIP256', orders=[1,2], t0=0, target=None, verbose=True):
         """
         Iterate through all pixels and generate a light curve if it is inside the trace
         
@@ -769,7 +767,7 @@ class TSO(object):
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
         
         # Initialize simulation
-        tso = awesim.TSO(ngrps=3, nints=10, star=star1D)
+        tso = awesim.TSO(ngrps=3, nints=5, star=star1D)
         """
         # Set instance attributes for the exposure
         self.subarray = subarray
@@ -784,7 +782,7 @@ class TSO(object):
         self.target = target or 'Simulated Target'
         self.obs_date = '2016-01-04'
         self.obs_time = '23:37:52.226'
-        self.filter = 'CLEAR'
+        self.filter = filt
         self.header = ''
         self.gain = 1.61
         self.snr = snr
@@ -792,20 +790,31 @@ class TSO(object):
         
         # Set instance attributes for the target
         self.star = star
-        self.wave = wave_solutions(str(self.nrows))
+        self.wave = wave_solutions(subarray)
         self.avg_wave = np.mean(self.wave, axis=1)
         self._ld_coeffs = np.zeros((3, 2048, 2))
         self.planet = None
         self.tmodel = None
         
-        # Get the cube of SOSS psfs
-        order1_flux = np.interp(self.avg_wave[0], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
-        order2_flux = np.interp(self.avg_wave[1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
-        self.CLEAR_order1 = SOSS_psf_cube(filt='CLEAR', order=1)*order1_flux
-        self.CLEAR_order2 = SOSS_psf_cube(filt='CLEAR', order=1)*order1_flux
-        self.F277W_order1 = SOSS_psf_cube(filt='F277W', order=2)*order2_flux
-        self.F277W_order2 = SOSS_psf_cube(filt='F277W', order=2)*order2_flux
+        # Set single order to list
+        if isinstance(orders,int):
+            orders = [orders]
+        if not all([o in [1,2] for o in orders]):
+            raise TypeError('Order must be either an int, float, or list thereof; i.e. [1,2]')
+        self.orders = list(set(orders))
         
+        # Check if it's F277W to speed up calculation
+        if self.filter=='F277W':
+            self.orders = [1]
+        
+        # Scale the psf for each detector column to the flux from
+        # the 1D spectrum
+        for order in self.orders:
+            # Get the 1D flux in 
+            flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
+            cube = SOSS_psf_cube(filt=self.filter, order=order)*flux
+            setattr(self, 'order{}_psfs'.format(order), cube)
+            
         # Get absolute calibration reference file
         calfile = pkg_resources.resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
         caldata = fits.getdata(calfile)
@@ -818,7 +827,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, filt='CLEAR', planet=None, tmodel=None, ld_coeffs=None, ld_profile='quadratic', orders=[1,2], model_grid=None, verbose=True):
+    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, ld_profile='quadratic', model_grid=None, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -836,7 +845,7 @@ class TSO(object):
             The limb darkening profile to use
         orders: sequence
             The list of orders to imulate
-        model_grid: ExoCTK.core.ModelGrid (optional)
+        model_grid: ExoCTK.modelgrid.ModelGrid (optional)
             The model atmosphere grid to calculate LDCs
         verbose: bool
             Print helpful stuff
@@ -874,23 +883,13 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
         
-        # Set single order to list
-        if isinstance(orders,int):
-            orders = [orders]
-        if not all([o in [1,2] for o in orders]):
-            raise TypeError('Order must be either an int, float, or list thereof; i.e. [1,2]')
-        orders = list(set(orders))
-        
-        # Check if it's F277W to speed up calculation
-        self.filter = filt.upper()
-        if self.filter=='F277W':
-            orders = [1]
-        
-        # If there is a planet transmission spectrum but no LDCs, generate them
-        if planet is not None and isinstance(tmodel, batman.transitmodel.TransitModel):
+        # If there is a planet transmission spectrum but no LDCs generate them
+        is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
+        if planet is not None and is_tmodel:
             
             # Check if the stellar params are the same
-            old_params = [getattr(self.tmodel, p, None) for p in ['teff','logg','feh','limb_dark']]
+            plist = ['teff','logg','feh','limb_dark']
+            old_params = [getattr(self.tmodel, p, None) for p in plist]
             
             # Store planet details
             self.planet = planet
@@ -899,12 +898,14 @@ class TSO(object):
             self.tmodel.t0 = self.time[self.nframes//2]
             
             # Set the ld_coeffs if provided
-            stellar_params = [getattr(tmodel, p) for p in ['teff','logg','feh','limb_dark']]
+            stellar_params = [getattr(tmodel, p) for p in plist]
+            changed = stellar_params != old_params
             if ld_coeffs is not None:
                 self.ld_coeffs = ld_coeffs
             
-            # Update the limb darkning coeffs if the stellar params or ld profile have changed
-            elif isinstance(model_grid, core.ModelGrid) and stellar_params!=old_params:
+            # Update the limb darkning coeffs if the stellar params or
+            # ld profile have changed
+            elif isinstance(model_grid, modelgrid.ModelGrid) and changed:
                 
                 # Try to set the model grid
                 self.model_grid = model_grid
@@ -914,106 +915,84 @@ class TSO(object):
                 pass
             
         # Generate simulation for each order
-        for order in orders:
+        for order in self.orders:
             
             # Get the wavelength map
             wave = self.avg_wave[order-1]
             
             # Get the psf cube
-            cube = getattr(self, '{}_order{}'.format(self.filter, order))
+            cube = getattr(self, 'order{}_psfs'.format(order))
             
             # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
             ld_coeffs = list(map(list, ld_coeffs))
             
-            # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2... or an array of ones
+            # Set the radius at the given wavelength from the transmission
+            # spectrum (Rp/R*)**2... or an array of ones
             if self.planet is not None:
                 tdepth = np.interp(wave, self.planet[0], self.planet[1])
             else:
                 tdepth = np.ones_like(wave)
             rp = np.sqrt(tdepth)
             
-            # Get relative spectral response for the order (from /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
+            # Get relative spectral response for the order (from
+            # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
             throughput = self.photom[(self.photom['order']==order)&(self.photom['filter']==self.filter)]
             ph_wave = throughput.wavelength[throughput.wavelength>0][1:-2]
             ph_resp = throughput.relresponse[throughput.wavelength>0][1:-2]
             response = np.interp(wave, ph_wave, ph_resp)
             
-            # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
-            # response = 1./(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
+            # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
+            # that we can convert the flux at each wavelegth into [ADU/s]
             response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
             setattr(self, 'photom_order{}'.format(order), response)
-            
-            # Caluclate the transform for the desired polynomial
-            # tform = transform_from_polynomial(self.nrows+76, self.ncols+76, coeffs=trace_polynomials(self.subarray, generate=False)[order-1])
-            trace_coeffs = trace_polynomials(self.subarray)[order-1]
-            tform = transform_from_polynomial(trace_coeffs)
             
             # Run multiprocessing to generate lightcurves
             if verbose:
                 print('Calculating order {} light curves...'.format(order))
                 start = time.time()
-            pool = ThreadPool(8) 
-            
-            # Set wavelength independent inputs of lightcurve function
-            func = partial(psf_lightcurve, time=self.time, tmodel=self.tmodel)
             
             # Generate the lightcurves at each wavelength
-            psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs, rp))))
-            psfs = psfs.swapaxes(0,1)
-            psfs = psfs.swapaxes(2,3)
-            
-            # Close the pool
+            pool = ThreadPool(8) 
+            func = partial(psf_lightcurve, time=self.time, tmodel=self.tmodel)
+            data = list(zip(wave, cube, response, ld_coeffs, rp))
+            psfs = np.asarray(pool.starmap(func, data))
             pool.close()
             pool.join()
+            
+            # Reshape into frames
+            psfs = psfs.swapaxes(0,1)
             
             # Multiply by the frame time to convert to [ADU]
             ft = np.tile(self.time[:self.ngrps], self.nints)
             psfs *= ft[:,None,None,None]
             
-            # Generate TSO frames with linear traces
+            # Generate TSO frames
             if verbose:
                 print('Lightcurves finished:',time.time()-start)
-                # print('Constructing order {} linear traces...'.format(order))
-                # start = time.time()
-            frames = make_linear_SOSS_trace(psfs, subarray=self.subarray)
-            
-            # Run multiprocessing to construct trace
-            if verbose:
-                # print('Constructing order {} warped traces...'.format(order))
-                # print('Total flux before warp:',np.nansum(frames[0,38:-38,38:-38]))
+                print('Constructing order {} traces...'.format(order))
                 start = time.time()
             
-            # Warp the frames
-            # coords = warp_coords(tform.inverse, (self.nrows+,self.ncols))
-            coords = warp_coords(tform.inverse, (self.nrows+76, self.ncols+76))
-            all_frames = []
-            for f in frames:
-                all_frames.append(map_coordinates(f, coords))
-            tso_order = np.array(all_frames)
-            
-            # Trim padding
-            tso_order = tso_order[:,38:-38,38:-38]
-            
-            # Test warp a single frame
-            # warped_frame = warp(frames[0], inverse_map=tform.inverse, output_shape=(self.nrows,self.ncols))
-            # plt.figure()
-            # plt.imshow(tso_order[0]-warped_frame)
+            # Make the 2048*N lightcurves into N frames
+            pool = ThreadPool(8) 
+            func = partial(make_frame, subarray=self.subarray)
+            psfs = np.asarray(pool.map(func, psfs))
+            pool.close()
+            pool.join()
 
             if verbose:
-                print('Total flux after warp:',np.nansum(all_frames[0]))
-                print('Order {} warped traces finished:'.format(order), time.time()-start)
+                # print('Total flux after warp:',np.nansum(all_frames[0]))
+                print('Order {} traces finished:'.format(order), time.time()-start)
                 
             # Add it to the individual order
-            setattr(self, 'tso_order{}_ideal'.format(order), tso_order)
+            setattr(self, 'tso_order{}_ideal'.format(order), np.array(psfs))
             
         # Add to the master TSO
-        self.tso = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in orders], axis=0)
+        self.tso = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
         
-        # Add noise to the observations using Kevin Volk's dark ramp simulator
+        # Make ramps and add noise to the observations using Kevin Volk's
+        # dark ramp simulator
         self.tso_ideal = self.tso.copy()
-        
-        # Add noise and ramps
         self.add_noise()
         
         if verbose:
@@ -1039,16 +1018,12 @@ class TSO(object):
         feh: float, int
             The logarithm of the star metallicity/solar metallicity
         """
-        # Use input ld coeffs
-        # if isinstance(ld_coeffs[0], float):
-        #     self.ld_coeffs = [np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * self.avg_wave[order-1].size) for order in orders]
-        
         # Use input ld coeff array
         if isinstance(coeffs, np.ndarray) and len(coeffs.shape)==3:
             self._ld_coeffs = coeffs
         
         # Or generate them if the stellar parameters have changed
-        elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, core.ModelGrid):
+        elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, modelgrid.ModelGrid):
             self.ld_coeffs = [generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff','logg','feh']], model_grid=self.model_grid) for order in self.orders]
             
         else:
@@ -1287,14 +1262,14 @@ class TSO(object):
             
         plt.legend(loc=0, frameon=False)
         
-    def plot_spectrum(self, frame=0, order=''):
+    def plot_spectrum(self, frame=0, order=None):
         """
         Parameters
         ----------
         frame: int
             The frame number to plot
         """
-        if order:
+        if order is not None:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             tso = self.tso
@@ -1304,14 +1279,16 @@ class TSO(object):
         flux = np.sum(tso[frame].data, axis=0)
         response = 1./self.photom_order1
         
-        # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so that we can convert the flux at each wavelegth into [ADU/s]
-        flux *= response*self.time[np.mod(self.ngrps, frame)]
+        # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
+        # that we can convert the flux at each wavelegth into [ADU/s]
+        flux *= response/self.time[np.mod(self.ngrps, frame)]
         
         # Plot it along with input spectrum
         plt.figure(figsize=(13,5))
         plt.loglog(wave, flux, label='Extracted')
         plt.loglog(*self.star, label='Injected')
-        plt.xlim(wave[0]*0.95,wave[-1]*1.05)
+        plt.xlim(wave[0]*0.95, wave[-1]*1.05)
+        plt.ylim(np.min(flux)*0.9, np.max(flux)*1.1)
         plt.legend()
     
     def save(self, filename='dummy.save'):
