@@ -21,6 +21,8 @@ Given a 1D spectrum of a target, this module produces a 2D SOSS ramp image with 
 import numpy as np
 from AWESim_SOSS.sim2D import awesim
 import astropy.units as q
+import astropy.constants as ac
+import batman
 from pkg_resources import resource_filename
 star = np.genfromtxt(resource_filename('AWESim_SOSS','files/scaled_spectrum.txt'), unpack=True)
 star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
@@ -28,7 +30,7 @@ star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
 # Initialize simulation
 tso = awesim.TSO(ngrps=3, nints=5, star=star1D)
             
-# Run it an plot
+# Run it and make a plot
 tso.run_simulation()
 tso.plot_frame()
 ```
@@ -54,7 +56,8 @@ The example above was for an isolated star though. To include a planetary transi
 Here is a sample transmission spectrum generated with PANDEXO:
 
 ```python
-planet1D = np.genfromtxt(DIR_PATH+'/files/WASP107b_pandexo_input_spectrum.dat', unpack=True)
+planet_file = resource_filename('AWESim_SOSS', '/files/WASP107b_pandexo_input_spectrum.dat')
+planet1D = np.genfromtxt(planet_file, unpack=True)
 ````
 
 ![planet_input](AWESim_SOSS/img/1D_planet.png "The input transmission spectrum")
@@ -63,9 +66,6 @@ And here are some parameters for our planetary system:
 
 ```python
 # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
-import batman
-import astropy.constants as ac
-planet1D = np.genfromtxt(resource_filename('AWESim_SOSS', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
 params = batman.TransitParams()
 params.t0 = 0.                                # time of inferior conjunction
 params.per = 5.7214742                        # orbital period (days)
