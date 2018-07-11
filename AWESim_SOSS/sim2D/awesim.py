@@ -74,7 +74,8 @@ def make_frame(psfs, order=1, subarray='SUBSTRIP256', verbose=False):
     
     # Add each psf to the frame at the correct (x, y) position
     frame = np.zeros((Y,2048))
-    for x, y, psf in list(zip(X, trace_centers, psfs))[::400]:
+    # for x, y, psf in list(zip(X, trace_centers, psfs))[::400]:
+    for x, y, psf in zip(X, trace_centers, psfs):
         frame = add_psf(frame, psf, x, y, frame_height=Y)
 
     if verbose:
@@ -249,45 +250,45 @@ def add_psf(frame, psf, x, y, frame_height=256):
     
     return frame+resamp
 
-def put_psf_on_subarray(psf, x, y, frame_height=256):
-    """Make a 2D SOSS trace from a sequence of psfs and trace center locations
-
-    Parameters
-    ----------
-    psf: sequence
-        The 2D psf
-    x: float
-        The grid x value to place the center of the psf
-    y: float
-        The grid y value to place the center of the psf
-    grid: sequence
-        The [x,y] grid ranges
-    
-    Returns
-    -------
-    np.ndarray
-        The 2D frame with the interpolated psf
-    """
-    # Create spline generator
-    dim = psf.shape[0]
-    mid = (dim - 1.0) / 2.0
-    l = np.arange(dim, dtype=np.float)
-    spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
-
-    # Create output frame, shifted as necessary
-    yg, xg = np.indices((frame_height,2048), dtype=np.float64)
-    yg += mid-y
-    xg += mid-x
-
-    # Resample onto the subarray
-    frame = spline.ev(xg, yg)
-    
-    # Fill resampled points with zeros
-    extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) |
-                ((yg < -0.5) | (yg >= dim - 0.5)))
-    frame[extrapol] = 0
-    
-    return frame
+# def put_psf_on_subarray(psf, x, y, frame_height=256):
+#     """Make a 2D SOSS trace from a sequence of psfs and trace center locations
+#
+#     Parameters
+#     ----------
+#     psf: sequence
+#         The 2D psf
+#     x: float
+#         The grid x value to place the center of the psf
+#     y: float
+#         The grid y value to place the center of the psf
+#     grid: sequence
+#         The [x,y] grid ranges
+#
+#     Returns
+#     -------
+#     np.ndarray
+#         The 2D frame with the interpolated psf
+#     """
+#     # Create spline generator
+#     dim = psf.shape[0]
+#     mid = (dim - 1.0) / 2.0
+#     l = np.arange(dim, dt ype=np.float)
+#     spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
+#
+#     # Create output frame, shifted as necessary
+#     yg, xg = np.indices((frame_height,2048), dtype=np.float64)
+#     yg += mid-y
+#     xg += mid-x
+#
+#     # Resample onto the subarray
+#     frame = spline.ev(xg, yg)
+#
+#     # Fill resampled points with zeros
+#     extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) |
+#                 ((yg < -0.5) | (yg >= dim - 0.5)))
+#     frame[extrapol] = 0
+#
+#     return frame
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
     """
@@ -852,7 +853,7 @@ class TSO(object):
         for order in self.orders:
             # Get the 1D flux in 
             flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
-            cube = SOSS_psf_cube(filt=self.filter, order=order)
+            cube = SOSS_psf_cube(filt=self.filter, order=order)*flux
             setattr(self, 'order{}_psfs'.format(order), cube)
             
         # Get absolute calibration reference file
@@ -923,11 +924,13 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
         
-        # If there is a planet transmission spectrum but no LDCs, generate them
-        if planet is not None and isinstance(tmodel, batman.transitmodel.TransitModel):
+        # If there is a planet transmission spectrum but no LDCs generate them
+        is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
+        if planet is not None and is_tmodel:
             
             # Check if the stellar params are the same
-            old_params = [getattr(self.tmodel, p, None) for p in ['teff','logg','feh','limb_dark']]
+            plist = ['teff','logg','feh','limb_dark']
+            old_params = [getattr(self.tmodel, p, None) for p in plist]
             
             # Store planet details
             self.planet = planet
@@ -936,12 +939,14 @@ class TSO(object):
             self.tmodel.t0 = self.time[self.nframes//2]
             
             # Set the ld_coeffs if provided
-            stellar_params = [getattr(tmodel, p) for p in ['teff','logg','feh','limb_dark']]
+            stellar_params = [getattr(tmodel, p) for p in plist]
+            changed = stellar_params != old_params
             if ld_coeffs is not None:
                 self.ld_coeffs = ld_coeffs
             
-            # Update the limb darkning coeffs if the stellar params or ld profile have changed
-            elif isinstance(model_grid, core.ModelGrid) and stellar_params!=old_params:
+            # Update the limb darkning coeffs if the stellar params or
+            # ld profile have changed
+            elif isinstance(model_grid, core.ModelGrid) and changed:
                 
                 # Try to set the model grid
                 self.model_grid = model_grid
@@ -963,7 +968,8 @@ class TSO(object):
             ld_coeffs = self.ld_coeffs[order-1]
             ld_coeffs = list(map(list, ld_coeffs))
             
-            # Set the radius at the given wavelength from the transmission spectrum (Rp/R*)**2... or an array of ones
+            # Set the radius at the given wavelength from the transmission
+            # spectrum (Rp/R*)**2... or an array of ones
             if self.planet is not None:
                 tdepth = np.interp(wave, self.planet[0], self.planet[1])
             else:
@@ -986,15 +992,12 @@ class TSO(object):
             if verbose:
                 print('Calculating order {} light curves...'.format(order))
                 start = time.time()
-            pool = ThreadPool(8) 
-            
-            # Set wavelength independent inputs of lightcurve function
-            func = partial(psf_lightcurve, time=self.time, tmodel=self.tmodel)
             
             # Generate the lightcurves at each wavelength
-            psfs = np.asarray(pool.starmap(func, list(zip(wave, cube, response, ld_coeffs, rp))))
-            
-            # Close the pool
+            pool = ThreadPool(8) 
+            func = partial(psf_lightcurve, time=self.time, tmodel=self.tmodel)
+            data = list(zip(wave, cube, response, ld_coeffs, rp))
+            psfs = np.asarray(pool.starmap(func, data))
             pool.close()
             pool.join()
             
@@ -1010,32 +1013,26 @@ class TSO(object):
                 print('Lightcurves finished:',time.time()-start)
                 print('Constructing order {} traces...'.format(order))
                 start = time.time()
-            pool = ThreadPool(8) 
-            
-            # Set wavelength independent inputs of lightcurve function
-            func = partial(make_frame, order=order, subarray=self.subarray)
             
             # Generate the lightcurves at each wavelength
+            pool = ThreadPool(8) 
+            func = partial(make_frame, order=order, subarray=self.subarray)
             psfs = np.asarray(pool.map(func, psfs))
-            
-            # Close the pool
             pool.close()
             pool.join()
-            
-            # Make array from frames
-            tso_order = np.array(psfs)
 
             if verbose:
                 # print('Total flux after warp:',np.nansum(all_frames[0]))
                 print('Order {} traces finished:'.format(order), time.time()-start)
                 
             # Add it to the individual order
-            setattr(self, 'tso_order{}_ideal'.format(order), tso_order)
+            setattr(self, 'tso_order{}_ideal'.format(order), np.array(psfs))
             
         # Add to the master TSO
         self.tso = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
         
-        # Make ramps and add noise to the observations using Kevin Volk's dark ramp simulator
+        # Make ramps and add noise to the observations using Kevin Volk's
+        # dark ramp simulator
         self.tso_ideal = self.tso.copy()
         self.add_noise()
         
@@ -1062,10 +1059,6 @@ class TSO(object):
         feh: float, int
             The logarithm of the star metallicity/solar metallicity
         """
-        # Use input ld coeffs
-        # if isinstance(ld_coeffs[0], float):
-        #     self.ld_coeffs = [np.transpose([[ld_coeffs[0], ld_coeffs[1]]] * self.avg_wave[order-1].size) for order in orders]
-        
         # Use input ld coeff array
         if isinstance(coeffs, np.ndarray) and len(coeffs.shape)==3:
             self._ld_coeffs = coeffs
