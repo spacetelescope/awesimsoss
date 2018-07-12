@@ -8,9 +8,6 @@ from ._astropy_init import *
 
 if not _ASTROPY_SETUP_:
     # For egg_info test builds to pass, put package imports here.
-
-    from .example_mod import *
-
-from . import extract1D
-from . import lcfitting
-from . import sim2D
+    from . import extract1D
+    from . import lcfitting
+    from . import sim2D
