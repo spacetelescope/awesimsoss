@@ -760,14 +760,14 @@ class TSO(object):
         -------
         # Imports
         import numpy as np
-        from AWESim_SOSS.sim2D import awesim
+        from AWESim_SOSS import TSO
         import astropy.units as q
         from pkg_resources import resource_filename
         star = np.genfromtxt(resource_filename('AWESim_SOSS','files/scaled_spectrum.txt'), unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
         
         # Initialize simulation
-        tso = awesim.TSO(ngrps=3, nints=5, star=star1D)
+        tso = TSO(ngrps=3, nints=10, star=star1D)
         """
         # Set instance attributes for the exposure
         self.subarray = subarray
@@ -894,8 +894,16 @@ class TSO(object):
             # Store planet details
             self.planet = planet
             self.tmodel = tmodel
-            self.tmodel.limb_dark = ld_profile
-            self.tmodel.t0 = self.time[self.nframes//2]
+            
+            if self.tmodel.limb_dark is None:
+                self.tmodel.limb_dark = ld_profile
+            
+            # Set time of inferior conjunction
+            if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
+                self.tmodel.t0 = self.time[self.nframes//2]
+                
+            # Convert days to seconds
+            self.tmodel.t *= 86400
             
             # Set the ld_coeffs if provided
             stellar_params = [getattr(tmodel, p) for p in plist]
@@ -933,7 +941,7 @@ class TSO(object):
                 tdepth = np.interp(wave, self.planet[0], self.planet[1])
             else:
                 tdepth = np.ones_like(wave)
-            rp = np.sqrt(tdepth)
+            self.rp = np.sqrt(tdepth)
             
             # Get relative spectral response for the order (from
             # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
@@ -955,7 +963,7 @@ class TSO(object):
             # Generate the lightcurves at each wavelength
             pool = ThreadPool(8) 
             func = partial(psf_lightcurve, time=self.time, tmodel=self.tmodel)
-            data = list(zip(wave, cube, response, ld_coeffs, rp))
+            data = list(zip(wave, cube, response, ld_coeffs, self.rp))
             psfs = np.asarray(pool.starmap(func, data))
             pool.close()
             pool.join()
@@ -1233,8 +1241,9 @@ class TSO(object):
             The integer column index(es) or float wavelength(s) in microns 
             to plot as a light curve
         """
-        # Get the scaled flux in each column for the last group in each integration
-        f = np.nansum(self.tso_ideal[self.ngrps::self.ngrps], axis=1)
+        # Get the scaled flux in each column for the last group in
+        # each integration
+        f = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
         f = f/np.nanmax(f, axis=1)[:,None]
         
         # Make it into an array
@@ -1245,7 +1254,7 @@ class TSO(object):
             
             # If it is an index
             if isinstance(c, int):
-                lc = f[:,c]
+                lc = f[:, c]
                 label = 'Col {}'.format(c)
                 
             # Or assumed to be a wavelength in microns
@@ -1258,7 +1267,14 @@ class TSO(object):
                 print('Please enter an index, astropy quantity, or array thereof.')
                 return
             
-            plt.plot(self.time[self.ngrps::self.ngrps], lc, label=label, marker='.', ls='None')
+            plt.plot(self.time[self.ngrps-1::self.ngrps], lc, label=label, marker='.', ls='None')
+            
+            # Plot the theoretical light curve
+            tmodel = self.tmodel
+            tmodel.rp = self.rp[c]
+            theory = tmodel.light_curve(tmodel)
+            theory *= max(lc)/max(theory)
+            plt.plot(self.time, theory, label=label+' model', marker='None', ls='--')
             
         plt.legend(loc=0, frameon=False)
         
