@@ -76,7 +76,7 @@ params.ecc = 0.                               # eccentricity
 params.w = 90.                                # longitude of periastron (in degrees)
 params.limb_dark = 'quadratic'                # limb darkening profile to use
 params.u = [0.1,0.1]                          # limb darkening coefficients
-tmodel = batman.TransitModel(params, tso.time, time_unit='seconds')
+tmodel = batman.TransitModel(params, tso.time)
 tmodel.teff = 3500                            # effective temperature of the host star
 tmodel.logg = 5                               # log surface gravity of the host star
 tmodel.feh = 0                                # metallicity of the host star
@@ -85,7 +85,7 @@ tmodel.feh = 0                                # metallicity of the host star
 Now the code to generate a simulated planetary transit around our star might look like:
 
 ```python
-tso.run_simulation(planet=planet1D, tmodel=tmodel)
+tso.run_simulation(planet=planet1D, tmodel=tmodel, time_unit='seconds')
 ```
 
 We can write this to a FITS file directly ingestible by the JWST pipeline with:
