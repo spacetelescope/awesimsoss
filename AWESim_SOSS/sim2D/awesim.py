@@ -127,7 +127,7 @@ class TSO(object):
         self.tso_order2_ideal = np.zeros(self.dims)
     
     def run_simulation(self, planet=None, tmodel=None, time_unit='days',ld_coeffs=None,
-                       ld_profile='quadratic', model_grid=None, verbose=True):
+                       ld_profile='quadratic', model_grid=None, n_jobs=1, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -150,6 +150,8 @@ class TSO(object):
             The list of orders to imulate
         model_grid: ExoCTK.modelgrid.ModelGrid (optional)
             The model atmosphere grid to calculate LDCs
+        n_jobs: int
+            The number of cores to use in multiprocessing
         verbose: bool
             Print helpful stuff
         
@@ -179,6 +181,10 @@ class TSO(object):
         """
         if verbose:
             begin = time.time()
+        
+        max_cores = cpu_count()
+        if n_jobs == -1 or n_jobs > max_cores: 
+            n_jobs = max_cores
         
         # Clear previous results
         self.tso = np.zeros(self.dims)
@@ -270,7 +276,7 @@ class TSO(object):
                 start = time.time()
             
             # Generate the lightcurves at each wavelength
-            pool = ThreadPool(8) 
+            pool = ThreadPool(n_jobs) 
             func = partial(mt.psf_lightcurve, time=self.time, tmodel=self.tmodel)
             data = list(zip(wave, cube, response, ld_coeffs, self.rp))
             psfs = np.asarray(pool.starmap(func, data))
@@ -291,7 +297,7 @@ class TSO(object):
                 start = time.time()
             
             # Make the 2048*N lightcurves into N frames
-            pool = ThreadPool(8) 
+            pool = ThreadPool(n_jobs) 
             func = partial(mt.make_frame, subarray=self.subarray)
             psfs = np.asarray(pool.map(func, psfs))
             pool.close()
