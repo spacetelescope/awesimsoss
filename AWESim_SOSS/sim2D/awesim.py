@@ -126,7 +126,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None,
+    def run_simulation(self, planet=None, tmodel=None, time_unit='days',ld_coeffs=None,
                        ld_profile='quadratic', model_grid=None, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
@@ -139,6 +139,9 @@ class TSO(object):
             The wavelength and Rp/R* of the planet at t=0 
         tmodel: batman.transitmodel.TransitModel (optional)
             The transit model of the planet
+        time_unit: string
+            The string indicator for the units that the tmodel.t array is in
+            options: 'seconds', 'minutes', 'hours', 'days' (default)
         ld_coeffs: array-like (optional)
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
         ld_profile: str (optional)
@@ -201,9 +204,15 @@ class TSO(object):
             # Set time of inferior conjunction
             if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
                 self.tmodel.t0 = self.time[self.nframes//2]
-                
+            
             # Convert days to seconds
-            self.tmodel.t *= 86400
+            days_to_seconds = 86400.
+            if time_unit == 'seconds':
+                self.tmodel.t *= days_to_seconds
+            if time_unit == 'minutes':
+                self.tmodel.t *= days_to_seconds / 60
+            if time_unit == 'hours':
+                self.tmodel.t *= days_to_seconds / 3600
             
             # Set the ld_coeffs if provided
             stellar_params = [getattr(tmodel, p) for p in plist]

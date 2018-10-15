@@ -76,7 +76,7 @@ params.ecc = 0.                               # eccentricity
 params.w = 90.                                # longitude of periastron (in degrees)
 params.limb_dark = 'quadratic'                # limb darkening profile to use
 params.u = [0.1,0.1]                          # limb darkening coefficients
-tmodel = batman.TransitModel(params, tso.time)
+tmodel = batman.TransitModel(params, tso.time, time_unit='seconds')
 tmodel.teff = 3500                            # effective temperature of the host star
 tmodel.logg = 5                               # log surface gravity of the host star
 tmodel.feh = 0                                # metallicity of the host star
