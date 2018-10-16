@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import batman
 import astropy.units as q
 import astropy.constants as ac
+
+
 from astropy.io import fits
 
 from multiprocessing.dummy import Pool as ThreadPool
@@ -26,8 +28,14 @@ from sklearn.externals import joblib
 from . import generate_darks as gd
 from . import make_trace as mt
 
-warnings.simplefilter('ignore')
+try:
+    # Use a progress bar if one is available
+    from tqdm import tqdm # progress bar
+except:
+    print('`pip install tqdm` to make this procedure prettier')
+    tqdm = lambda iterable, total=None: iterable
 
+warnings.simplefilter('ignore')
 
 class TSO(object):
     """
@@ -127,7 +135,7 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, planet=None, tmodel=None, time_unit='days',ld_coeffs=None,
+    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
                        ld_profile='quadratic', model_grid=None, n_jobs=1, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
@@ -140,13 +148,13 @@ class TSO(object):
             The wavelength and Rp/R* of the planet at t=0 
         tmodel: batman.transitmodel.TransitModel (optional)
             The transit model of the planet
-        time_unit: string
-            The string indicator for the units that the tmodel.t array is in
-            options: 'seconds', 'minutes', 'hours', 'days' (default)
         ld_coeffs: array-like (optional)
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
         ld_profile: str (optional)
             The limb darkening profile to use
+        time_unit: string
+            The string indicator for the units that the tmodel.t array is in
+            options: 'seconds', 'minutes', 'hours', 'days' (default)
         orders: sequence
             The list of orders to imulate
         model_grid: ExoCTK.modelgrid.ModelGrid (optional)
@@ -197,6 +205,9 @@ class TSO(object):
         is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
         if planet is not None and is_tmodel:
             
+            if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+                raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
+            
             # Check if the stellar params are the same
             plist = ['teff','logg','feh','limb_dark']
             old_params = [getattr(self.tmodel, p, None) for p in plist]
@@ -212,14 +223,14 @@ class TSO(object):
             if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
                 self.tmodel.t0 = self.time[self.nframes//2]
             
-            # Convert days to seconds
+            # Convert seconds to days, in order to match the Period and T0 parameters
             days_to_seconds = 86400.
             if time_unit == 'seconds':
-                self.tmodel.t *= days_to_seconds
+                self.tmodel.t /= days_to_seconds
             if time_unit == 'minutes':
-                self.tmodel.t *= days_to_seconds / 60
+                self.tmodel.t /= days_to_seconds / 60
             if time_unit == 'hours':
-                self.tmodel.t *= days_to_seconds / 3600
+                self.tmodel.t /= days_to_seconds / 3600
             
             # Set the ld_coeffs if provided
             stellar_params = [getattr(tmodel, p) for p in plist]
@@ -524,13 +535,13 @@ class TSO(object):
         else:
             tso = self.tso
             
-        f = tso[frame].T
+        flux = tso[frame].T
         
         if isinstance(column, int):
             column = [column]
             
-        for c in column:
-            plt.plot(f[c], label='Column {}'.format(c), **kwargs)
+        for col in column:
+            plt.plot(flux[col], label='Column {}'.format(col), **kwargs)
             
         plt.xlim(0,256)
         
@@ -546,7 +557,7 @@ class TSO(object):
         plt.ylabel('Count Rate [ADU/s]')
         plt.grid()
         
-    def plot_lightcurve(self, column=42, time_unit='days'):
+    def plot_lightcurve(self, column=None, time_unit='seconds', cmap=plt.cm.coolwarm, resolution_mult=20):
         """
         Plot a lightcurve for each column index given
         
@@ -556,8 +567,12 @@ class TSO(object):
             The integer column index(es) or float wavelength(s) in microns 
             to plot as a light curve
         time_unit: string
-            The string indicator for the units that the tmodel.t array is in
+            The string indicator for the units that the self.time array is in
             options: 'seconds', 'minutes', 'hours', 'days' (default)
+        cmap: matplotlib.pyplot.cm entry
+            A selection from the matplotlib.pyplot.cm color maps library
+        resolution_mult: int
+            The number of theoretical points to plot for each data point plotted here
         """
         # Get the scaled flux in each column for the last group in
         # each integration
@@ -565,15 +580,21 @@ class TSO(object):
         flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
         
         # Make it into an array
-        if isinstance(column, (int, float)):
-            column = [column]
-            
-        for col in column:
+        if isinstance(column, (int, float)): column = [column]
+        
+        if column is None: column = list(range(self.tso.shape[-1]))
+        
+        n_colors = len(column)
+        # colors = plt.cm.coolwarm(np.linspace(0.1, 0.9, n_colors))
+        # color_cycle = ['#%02x#%02x#%02x' % (int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)) for rgb in colors[:,0:-1]]
+        color_cycle = cmap(np.linspace(0, cmap.N, n_colors, dtype=int))
+        
+        for kcol, col in tqdm(enumerate(column), total=len(column)):
             
             # If it is an index
             if isinstance(col, int):
                 lightcurve = flux_cols[:, col]
-                label = 'Column {}'.format(c)
+                label = 'Column {}'.format(col)
                 
             # Or assumed to be a wavelength in microns
             elif isinstance(col, float):
@@ -587,19 +608,39 @@ class TSO(object):
             
             # Plot the theoretical light curve
             if self.rp is not None:
-                day2sec = 86400
-                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*20) / day2sec
+                if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+                    raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
+                
+                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
+                
+                days_to_seconds = 86400.
+                if time_unit == 'seconds':
+                    time /= days_to_seconds
+                if time_unit == 'minutes':
+                    time /= days_to_seconds / 60
+                if time_unit == 'hours':
+                    time /= days_to_seconds / 3600
+                
                 tmodel = batman.TransitModel(self.tmodel, time)
-                tmodel.rp = self.rp[c]
+                tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
-                
-                plt.plot(time, theory, label=label+' model', marker='.', ls='--')
-                
-            plt.plot(self.time[self.ngrps-1::self.ngrps] / day2sec, lightcurve, label=label, marker='o', ls='None')
+                print(color_cycle[kcol%n_colors])
+                plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors])
             
-        plt.legend(loc=0, frameon=False)
+            data_time = self.time[self.ngrps-1::self.ngrps].copy() 
+            
+            if time_unit == 'seconds':
+                data_time /= days_to_seconds
+            if time_unit == 'minutes':
+                data_time /= days_to_seconds / 60
+            if time_unit == 'hours':
+                data_time /= days_to_seconds / 3600
+            
+            plt.plot(data_time, lightcurve, label=label, marker='o', ls='None', color=color_cycle[kcol%n_colors])
         
+        plt.legend(loc=0, frameon=False)
+    
     def plot_spectrum(self, frame=0, order=None):
         """
         Parameters
