@@ -13,6 +13,7 @@ import astropy.constants as ac
 from astropy.io import fits
 
 from multiprocessing.dummy import Pool as ThreadPool
+from multiprocessing import cpu_count
 import time
 import warnings
 import datetime
