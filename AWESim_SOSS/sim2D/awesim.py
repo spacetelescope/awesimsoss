@@ -557,7 +557,9 @@ class TSO(object):
         plt.ylabel('Count Rate [ADU/s]')
         plt.grid()
         
-    def plot_lightcurve(self, column=None, time_unit='seconds', cmap=plt.cm.coolwarm, resolution_mult=20):
+    def plot_lightcurve(self, column=None, time_unit='seconds', 
+                        cmap=plt.cm.coolwarm, resolution_mult=20, 
+                        theory_alpha=0.9):
         """
         Plot a lightcurve for each column index given
         
@@ -624,7 +626,7 @@ class TSO(object):
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
                 
-                plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors])
+                plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors], alpha=theory_alpha)
             
             data_time = self.time[self.ngrps-1::self.ngrps].copy() 
             
