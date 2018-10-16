@@ -1,6 +1,8 @@
 import matplotlib
 matplotlib.use('Qt5Agg')
 
+plt = matplotlib.pyplot
+
 import numpy as np
 from AWESim_SOSS.sim2D import awesim
 import astropy.units as q
@@ -36,3 +38,5 @@ tmodel.feh = 0                                # metallicity of the host star
 
 tso.run_simulation(planet=planet1D, tmodel=tmodel, time_unit='seconds')
 tso.plot_lightcurve(column=42)
+
+plt.show()
