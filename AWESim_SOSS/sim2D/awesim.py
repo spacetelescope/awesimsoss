@@ -585,8 +585,6 @@ class TSO(object):
         if column is None: column = list(range(self.tso.shape[-1]))
         
         n_colors = len(column)
-        # colors = plt.cm.coolwarm(np.linspace(0.1, 0.9, n_colors))
-        # color_cycle = ['#%02x#%02x#%02x' % (int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)) for rgb in colors[:,0:-1]]
         color_cycle = cmap(np.linspace(0, cmap.N, n_colors, dtype=int))
         
         for kcol, col in tqdm(enumerate(column), total=len(column)):
