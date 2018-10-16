@@ -1,7 +1,7 @@
 import matplotlib
 matplotlib.use('Qt5Agg')
 
-plt = matplotlib.pyplot
+import matplotlib.pyplot as plt
 
 import numpy as np
 from AWESim_SOSS.sim2D import awesim
