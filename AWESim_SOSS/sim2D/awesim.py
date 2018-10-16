@@ -623,7 +623,7 @@ class TSO(object):
                 tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
-                print(color_cycle[kcol%n_colors])
+                
                 plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors])
             
             data_time = self.time[self.ngrps-1::self.ngrps].copy() 
