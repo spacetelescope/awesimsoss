@@ -506,13 +506,13 @@ class TSO(object):
         plt.colorbar()
         plt.title('{} Saturated Pixels'.format(len(saturated[saturated>fullWell])))
     
-    def plot_slice(self, col, trace='tso', frame=0, order='', **kwargs):
+    def plot_slice(self, column, trace='tso', frame=0, order='', **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
         
         Parameters
         ----------
-        col: int, sequence
+        column: int, sequence
             The column index(es) to plot a light curve for
         trace: str
             The attribute name to plot
@@ -526,10 +526,10 @@ class TSO(object):
             
         f = tso[frame].T
         
-        if isinstance(col, int):
-            col = [col]
+        if isinstance(column, int):
+            column = [column]
             
-        for c in col:
+        for c in column:
             plt.plot(f[c], label='Column {}'.format(c), **kwargs)
             
         plt.xlim(0,256)
@@ -546,37 +546,40 @@ class TSO(object):
         plt.ylabel('Count Rate [ADU/s]')
         plt.grid()
         
-    def plot_lightcurve(self, col):
+    def plot_lightcurve(self, column=42, time_unit='days'):
         """
         Plot a lightcurve for each column index given
         
         Parameters
         ----------
-        col: int, float, sequence
+        column: int, float, sequence
             The integer column index(es) or float wavelength(s) in microns 
             to plot as a light curve
+        time_unit: string
+            The string indicator for the units that the tmodel.t array is in
+            options: 'seconds', 'minutes', 'hours', 'days' (default)
         """
         # Get the scaled flux in each column for the last group in
         # each integration
-        f = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
-        f = f/np.nanmax(f, axis=1)[:, None]
+        flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
+        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
         
         # Make it into an array
-        if isinstance(col, (int, float)):
-            col = [col]
+        if isinstance(column, (int, float)):
+            column = [column]
             
-        for c in col:
+        for col in column:
             
             # If it is an index
-            if isinstance(c, int):
-                lc = f[:, c]
-                label = 'Col {}'.format(c)
+            if isinstance(col, int):
+                lightcurve = flux_cols[:, col]
+                label = 'Column {}'.format(c)
                 
             # Or assumed to be a wavelength in microns
-            elif isinstance(c, float):
-                W = np.mean(self.wave[0], axis=0)
-                lc = [np.interp(c, W, F) for F in f]
-                label = '{} um'.format(c)
+            elif isinstance(col, float):
+                waves = np.mean(self.wave[0], axis=0)
+                lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
+                label = '{} um'.format(col)
                 
             else:
                 print('Please enter an index, astropy quantity, or array thereof.')
@@ -584,14 +587,16 @@ class TSO(object):
             
             # Plot the theoretical light curve
             if self.rp is not None:
-                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*20)
+                day2sec = 86400
+                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*20) / day2sec
                 tmodel = batman.TransitModel(self.tmodel, time)
                 tmodel.rp = self.rp[c]
                 theory = tmodel.light_curve(tmodel)
-                theory *= max(lc)/max(theory)
+                theory *= max(lightcurve)/max(theory)
+                
                 plt.plot(time, theory, label=label+' model', marker='.', ls='--')
                 
-            plt.plot(self.time[self.ngrps-1::self.ngrps], lc, label=label, marker='o', ls='None')
+            plt.plot(self.time[self.ngrps-1::self.ngrps] / day2sec, lightcurve, label=label, marker='o', ls='None')
             
         plt.legend(loc=0, frameon=False)
         
