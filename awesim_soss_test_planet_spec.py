@@ -3,7 +3,7 @@ matplotlib.use('Qt5Agg')
 
 import matplotlib.pyplot as plt
 
-from pylab import *;ion()
+# from pylab import *;ion()
 
 import numpy as np
 from AWESim_SOSS.sim2D import awesim
@@ -45,4 +45,4 @@ tmodel.feh = 0                                # metallicity of the host star
 tso.run_simulation(planet=planet1D, tmodel=tmodel)
 tso.plot_lightcurve(column=range(10,2048,500))
 
-# plt.show()
+plt.show()
