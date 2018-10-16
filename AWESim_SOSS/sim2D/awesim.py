@@ -559,7 +559,7 @@ class TSO(object):
         
     def plot_lightcurve(self, column=None, time_unit='seconds', 
                         cmap=plt.cm.coolwarm, resolution_mult=20, 
-                        theory_alpha=0.9):
+                        theory_alpha=0.1):
         """
         Plot a lightcurve for each column index given
         
