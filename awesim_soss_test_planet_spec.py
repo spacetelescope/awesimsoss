@@ -32,4 +32,4 @@ tmodel.logg = 5                               # log surface gravity of the host 
 tmodel.feh = 0                                # metallicity of the host star
 
 tso.run_simulation(planet=planet1D, tmodel=tmodel, time_unit='seconds')
-tso.plot_lightcurve(col=42)
+tso.plot_lightcurve(column=42)
