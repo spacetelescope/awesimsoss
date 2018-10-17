@@ -1,6 +1,0 @@
-numpy
-scipy
-astropy
-matplotlib
-batman-package
-ExoCTK
