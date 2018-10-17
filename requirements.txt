@@ -3,4 +3,4 @@ scipy
 matplotlib
 numpy
 batman-package
-exoctk
+ExoCTK
