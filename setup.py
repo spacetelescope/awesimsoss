@@ -9,7 +9,7 @@ setup(name='awesimsoss',
       author_email='jfilippazzo@stsci.edu',
       license='MIT',
       url='https://github.com/spacetelescope/awesimsoss',
-      long_description='awesimsoss is a Time Series Observation (TSO) simulator for the Single Object Slitless Spectroscopy (SOSS) mode of the Near Infrared Imaging and Slitless Spectrscopy (NIRISS) instrument onboard the James Webb Space Telescope (JWST)',
+      long_description='awesimsoss is a TSO simulator for the SOSS mode of the NIRISS instrument onboard the JWST',
       zip_safe=False,
       use_2to3=False
 )
