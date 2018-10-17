@@ -4,13 +4,16 @@
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
-This pure Python module produces simulated data for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope.
+This pure Python module produces simulated TSO data for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope.
 
 ### Dependencies
-The following packages are needed to run `AWESim_SOSS`:
+The following packages are needed to run `awesimsoss`:
 - numpy
-- batman
+- batman-package
 - astropy
+- scipy
+- matplotlib
+- exoctk
 
 ### Simulating SOSS Observations
 
@@ -19,12 +22,12 @@ Given a 1D spectrum of a target, this module produces a 2D SOSS ramp image with 
 ```python
 # Imports
 import numpy as np
-from AWESim_SOSS.sim2D import awesim
+from awesimsoss import awesim
 import astropy.units as q
 import astropy.constants as ac
 import batman
 from pkg_resources import resource_filename
-star = np.genfromtxt(resource_filename('AWESim_SOSS','files/scaled_spectrum.txt'), unpack=True)
+star = np.genfromtxt(resource_filename('awesimsoss','files/scaled_spectrum.txt'), unpack=True)
 star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
 
 # Initialize simulation
@@ -35,7 +38,7 @@ tso.run_simulation()
 tso.plot_frame()
 ```
 
-![output](AWESim_SOSS/img/2D_star.png "The output trace")
+![output](awesimsoss/img/2D_star.png "The output trace")
 
 The 96 subarray is also supported:
 
@@ -56,11 +59,11 @@ The example above was for an isolated star though. To include a planetary transi
 Here is a sample transmission spectrum generated with PANDEXO:
 
 ```python
-planet_file = resource_filename('AWESim_SOSS', '/files/WASP107b_pandexo_input_spectrum.dat')
+planet_file = resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat')
 planet1D = np.genfromtxt(planet_file, unpack=True)
 ````
 
-![planet_input](AWESim_SOSS/img/1D_planet.png "The input transmission spectrum")
+![planet_input](awesimsoss/img/1D_planet.png "The input transmission spectrum")
 
 And here are some parameters for our planetary system:
 
@@ -101,4 +104,4 @@ tso.to_fits('my_SOSS_simulation.fits')
 TSO.plot_lightcurve([15,150,300])
 ```
 
-![lightcurves](AWESim_SOSS/img/lc.png "lightcurves") -->
+![lightcurves](awesimsoss/img/lc.png "lightcurves") -->
