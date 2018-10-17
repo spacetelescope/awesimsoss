@@ -3,6 +3,13 @@ A module to generate simulated 2D time-series SOSS data
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
+import time
+import warnings
+import datetime
+from functools import partial
+from pkg_resources import resource_filename
+from multiprocessing.dummy import Pool as ThreadPool
+from multiprocessing import cpu_count
 
 import numpy as np
 import matplotlib
@@ -10,19 +17,8 @@ import matplotlib.pyplot as plt
 import batman
 import astropy.units as q
 import astropy.constants as ac
-
-
 from astropy.io import fits
-
-from multiprocessing.dummy import Pool as ThreadPool
-from multiprocessing import cpu_count
-import time
-import warnings
-import datetime
-
-from pkg_resources import resource_filename
 from ExoCTK import ModelGrid
-from functools import partial
 from sklearn.externals import joblib
 
 from . import generate_darks as gd
@@ -46,7 +42,7 @@ class TSO(object):
                  verbose=True):
         """
         Initialize the TSO object and do all pre-calculations
-        
+
         Parameters
         ----------
         ngrps: int
@@ -63,7 +59,7 @@ class TSO(object):
             The start time of the exposure [days]
         target: str (optional)
             The name of the target
-                        
+
         Example
         -------
         # Imports
@@ -73,7 +69,7 @@ class TSO(object):
         from pkg_resources import resource_filename
         star = np.genfromtxt(resource_filename('AWESim_SOSS','files/scaled_spectrum.txt'), unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-        
+
         # Initialize simulation
         tso = TSO(ngrps=3, nints=10, star=star1D)
         """
@@ -95,7 +91,7 @@ class TSO(object):
         self.gain = 1.61
         self.snr = snr
         self.model_grid = None
-        
+
         # Set instance attributes for the target
         self.star = star
         self.wave = mt.wave_solutions(subarray)
@@ -103,49 +99,49 @@ class TSO(object):
         self._ld_coeffs = np.zeros((3, 2048, 2))
         self.planet = None
         self.tmodel = None
-        
+
         # Set single order to list
         if isinstance(orders,int):
             orders = [orders]
         if not all([o in [1,2] for o in orders]):
             raise TypeError('Order must be either an int, float, or list thereof; i.e. [1,2]')
         self.orders = list(set(orders))
-        
+
         # Check if it's F277W to speed up calculation
         if self.filter=='F277W':
             self.orders = [1]
-        
+
         # Scale the psf for each detector column to the flux from
         # the 1D spectrum
         for order in self.orders:
-            # Get the 1D flux in 
+            # Get the 1D flux in
             flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
             cube = mt.SOSS_psf_cube(filt=self.filter, order=order)*flux
             setattr(self, 'order{}_psfs'.format(order), cube)
-            
+
         # Get absolute calibration reference file
         calfile = resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
         caldata = fits.getdata(calfile)
         self.photom = caldata[caldata['pupil']=='GR700XD']
-            
+
         # Create the empty exposure
         self.dims = (self.nframes, self.nrows, self.ncols)
         self.tso = np.zeros(self.dims)
         self.tso_ideal = np.zeros(self.dims)
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
-    
-    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
+
+    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days',
                        ld_profile='quadratic', model_grid=None, n_jobs=1, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
-        
+
         Parameters
         ----------
         filt: str
             The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
         planet: sequence (optional)
-            The wavelength and Rp/R* of the planet at t=0 
+            The wavelength and Rp/R* of the planet at t=0
         tmodel: batman.transitmodel.TransitModel (optional)
             The transit model of the planet
         ld_coeffs: array-like (optional)
@@ -163,12 +159,12 @@ class TSO(object):
             The number of cores to use in multiprocessing
         verbose: bool
             Print helpful stuff
-        
+
         Example
         -------
         # Run simulation of star only
         tso.run_simulation()
-        
+
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
         import batman
         import astropy.constants as ac
@@ -190,39 +186,39 @@ class TSO(object):
         """
         if verbose:
             begin = time.time()
-        
+
         max_cores = cpu_count()
-        if n_jobs == -1 or n_jobs > max_cores: 
+        if n_jobs == -1 or n_jobs > max_cores:
             n_jobs = max_cores
-        
+
         # Clear previous results
         self.tso = np.zeros(self.dims)
         self.tso_ideal = np.zeros(self.dims)
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
-        
+
         # If there is a planet transmission spectrum but no LDCs generate them
         is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
         if planet is not None and is_tmodel:
-            
+
             if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
                 raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
-            
+
             # Check if the stellar params are the same
             plist = ['teff','logg','feh','limb_dark']
             old_params = [getattr(self.tmodel, p, None) for p in plist]
-            
+
             # Store planet details
             self.planet = planet
             self.tmodel = tmodel
-            
+
             if self.tmodel.limb_dark is None:
                 self.tmodel.limb_dark = ld_profile
-            
+
             # Set time of inferior conjunction
             if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
                 self.tmodel.t0 = self.time[self.nframes//2]
-            
+
             # Convert seconds to days, in order to match the Period and T0 parameters
             days_to_seconds = 86400.
             if time_unit == 'seconds':
@@ -231,37 +227,37 @@ class TSO(object):
                 self.tmodel.t /= days_to_seconds / 60
             if time_unit == 'hours':
                 self.tmodel.t /= days_to_seconds / 3600
-            
+
             # Set the ld_coeffs if provided
             stellar_params = [getattr(tmodel, p) for p in plist]
             changed = stellar_params != old_params
             if ld_coeffs is not None:
                 self.ld_coeffs = ld_coeffs
-            
+
             # Update the limb darkning coeffs if the stellar params or
             # ld profile have changed
             elif isinstance(model_grid, ModelGrid) and changed:
-                
+
                 # Try to set the model grid
                 self.model_grid = model_grid
                 self.ld_coeffs = tmodel
-                
+
             else:
                 pass
-            
+
         # Generate simulation for each order
         for order in self.orders:
-            
+
             # Get the wavelength map
             wave = self.avg_wave[order-1]
-            
+
             # Get the psf cube
             cube = getattr(self, 'order{}_psfs'.format(order))
-            
+
             # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
             ld_coeffs = list(map(list, ld_coeffs))
-            
+
             # Set the radius at the given wavelength from the transmission
             # spectrum (Rp/R*)**2... or an array of ones
             if self.planet is not None:
@@ -269,47 +265,47 @@ class TSO(object):
             else:
                 tdepth = np.ones_like(wave)
             self.rp = np.sqrt(tdepth)
-            
+
             # Get relative spectral response for the order (from
             # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
             throughput = self.photom[(self.photom['order']==order)&(self.photom['filter']==self.filter)]
             ph_wave = throughput.wavelength[throughput.wavelength>0][1:-2]
             ph_resp = throughput.relresponse[throughput.wavelength>0][1:-2]
             response = np.interp(wave, ph_wave, ph_resp)
-            
+
             # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
             # that we can convert the flux at each wavelegth into [ADU/s]
             response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
             setattr(self, 'photom_order{}'.format(order), response)
-            
+
             # Run multiprocessing to generate lightcurves
             if verbose:
                 print('Calculating order {} light curves...'.format(order))
                 start = time.time()
-            
+
             # Generate the lightcurves at each wavelength
-            pool = ThreadPool(n_jobs) 
+            pool = ThreadPool(n_jobs)
             func = partial(mt.psf_lightcurve, time=self.time, tmodel=self.tmodel)
             data = list(zip(wave, cube, response, ld_coeffs, self.rp))
             psfs = np.asarray(pool.starmap(func, data))
             pool.close()
             pool.join()
-            
+
             # Reshape into frames
             psfs = psfs.swapaxes(0,1)
-            
+
             # Multiply by the frame time to convert to [ADU]
             ft = np.tile(self.time[:self.ngrps], self.nints)
             psfs *= ft[:,None,None,None]
-            
+
             # Generate TSO frames
             if verbose:
                 print('Lightcurves finished:',time.time()-start)
                 print('Constructing order {} traces...'.format(order))
                 start = time.time()
-            
+
             # Make the 2048*N lightcurves into N frames
-            pool = ThreadPool(n_jobs) 
+            pool = ThreadPool(n_jobs)
             func = partial(mt.make_frame, subarray=self.subarray)
             psfs = np.asarray(pool.map(func, psfs))
             pool.close()
@@ -318,30 +314,30 @@ class TSO(object):
             if verbose:
                 # print('Total flux after warp:',np.nansum(all_frames[0]))
                 print('Order {} traces finished:'.format(order), time.time()-start)
-                
+
             # Add it to the individual order
             setattr(self, 'tso_order{}_ideal'.format(order), np.array(psfs))
-            
+
         # Add to the master TSO
         self.tso = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
-        
+
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
         self.tso_ideal = self.tso.copy()
         self.add_noise()
-        
+
         if verbose:
             print('\nTotal time:',time.time()-begin)
-            
+
     @property
     def ld_coeffs(self):
         """Get the limb darkening coefficients"""
         return self._ld_coeffs
-        
+
     @ld_coeffs.setter
     def ld_coeffs(self, coeffs=None):
         """Set the limb darkening coefficients
-        
+
         Parameters
         ----------
         coeffs: sequence
@@ -356,18 +352,18 @@ class TSO(object):
         # Use input ld coeff array
         if isinstance(coeffs, np.ndarray) and len(coeffs.shape)==3:
             self._ld_coeffs = coeffs
-        
+
         # Or generate them if the stellar parameters have changed
         elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, ModelGrid):
             self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff','logg','feh']], model_grid=self.model_grid) for order in self.orders]
-            
+
         else:
             raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
-    
+
     def add_noise(self, zodi_scale=1., offset=500):
         """
         Generate ramp and background noise
-        
+
         Parameters
         ----------
         zodi_scale: float
@@ -377,10 +373,10 @@ class TSO(object):
         """
         print('Adding noise to TSO...')
         start = time.time()
-        
+
         # Get the separated orders
         orders = np.asarray([self.tso_order1_ideal,self.tso_order2_ideal])
-        
+
         # Load all the reference files
         photon_yield = fits.getdata(resource_filename('AWESim_SOSS', 'files/photon_yield_dms.fits'))
         pca0_file = resource_filename('AWESim_SOSS', 'files/niriss_pca0.fits')
@@ -388,37 +384,37 @@ class TSO(object):
         nonlinearity = fits.getdata(resource_filename('AWESim_SOSS', 'files/substrip256_forward_coefficients_dms.fits'))
         pedestal = fits.getdata(resource_filename('AWESim_SOSS', 'files/substrip256pedestaldms.fits'))
         darksignal = fits.getdata(resource_filename('AWESim_SOSS', 'files/substrip256signaldms.fits'))*self.gain
-        
+
         # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
-        
+
         # Remove negatives from the dark ramp
         darksignal[np.where(darksignal < 0.)] = 0.
-        
+
         # Make the exposure
         RAMP = gd.make_exposure(1, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
-        
+
         # Iterate over integrations
         for n in range(self.nints):
-            
+
             # Add in the SOSS signal
             ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
-            
+
             # Apply the non-linearity function
             ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
-            
+
             # Add the pedestal to each frame in the integration
             ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
-            
+
             # Update the TSO with one containing noise
             self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
-            
+
         print('Noise model finished:', time.time()-start)
-        
+
     def plot_frame(self, frame='', scale='linear', order=None, noise=True, traces=False, cmap=plt.cm.jet):
         """
         Plot a TSO frame
-        
+
         Parameters
         ----------
         frame: int
@@ -441,11 +437,11 @@ class TSO(object):
                 tso = self.tso
             else:
                 tso = self.tso_ideal
-                
+
         # Get data for plotting
         vmax = int(np.nanmax(tso[tso<np.inf]))
         frame = np.array(tso[frame or self.nframes//2].data)
-        
+
         # Draw plot
         plt.figure(figsize=(13,2))
         if scale == 'log':
@@ -453,28 +449,28 @@ class TSO(object):
             plt.imshow(frame, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
         else:
             plt.imshow(frame, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
-            
+
         # Plot the polynomial too
         if traces:
             coeffs = trace_polynomials(subarray=self.subarray)
             X = np.linspace(0, 2048, 2048)
-        
+
             # Order 1
             Y = np.polyval(coeffs[0], X)
             plt.plot(X, Y, color='r')
-        
+
             # Order 2
             Y = np.polyval(coeffs[1], X)
             plt.plot(X, Y, color='r')
-            
+
         plt.colorbar()
         plt.xlim(0,2048)
         plt.ylim(0,256)
-    
+
     def plot_snr(self, frame='', cmap=plt.cm.jet):
         """
         Plot the SNR of a TSO frame
-        
+
         Parameters
         ----------
         frame: int
@@ -485,17 +481,17 @@ class TSO(object):
         # Get the SNR
         snr  = np.sqrt(self.tso[frame or self.nframes//2].data)
         vmax = int(np.nanmax(snr))
-        
+
         # Plot it
         plt.figure(figsize=(13,2))
         plt.imshow(snr, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
         plt.colorbar()
         plt.title('SNR over Spectrum')
-        
+
     def plot_saturation(self, frame='', saturation=80.0, cmap=plt.cm.jet):
         """
         Plot the saturation of a TSO frame
-        
+
         Parameters
         ----------
         frame: int
@@ -507,20 +503,20 @@ class TSO(object):
         """
         # The full well of the detector pixels
         fullWell = 65536.0
-        
+
         # Get saturated pixels
         saturated = np.array(self.tso[frame or self.nframes//2].data) > (saturation/100.0) * fullWell
-        
+
         # Plot it
         plt.figure(figsize=(13,2))
         plt.imshow(saturated, origin='lower', interpolation='none', cmap=cmap)
         plt.colorbar()
         plt.title('{} Saturated Pixels'.format(len(saturated[saturated>fullWell])))
-    
+
     def plot_slice(self, column, trace='tso', frame=0, order='', **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
-        
+
         Parameters
         ----------
         column: int, sequence
@@ -534,19 +530,19 @@ class TSO(object):
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             tso = self.tso
-            
+
         flux = tso[frame].T
-        
+
         if isinstance(column, int):
             column = [column]
-            
+
         for col in column:
             plt.plot(flux[col], label='Column {}'.format(col), **kwargs)
-            
+
         plt.xlim(0,256)
-        
+
         plt.legend(loc=0, frameon=False)
-        
+
     def plot_ramp(self):
         """
         Plot the total flux on each frame to display the ramp
@@ -556,17 +552,17 @@ class TSO(object):
         plt.xlabel('Group')
         plt.ylabel('Count Rate [ADU/s]')
         plt.grid()
-        
-    def plot_lightcurve(self, column=None, time_unit='seconds', 
-                        cmap=plt.cm.coolwarm, resolution_mult=20, 
+
+    def plot_lightcurve(self, column=None, time_unit='seconds',
+                        cmap=plt.cm.coolwarm, resolution_mult=20,
                         theory_alpha=0.1):
         """
         Plot a lightcurve for each column index given
-        
+
         Parameters
         ----------
         column: int, float, sequence
-            The integer column index(es) or float wavelength(s) in microns 
+            The integer column index(es) or float wavelength(s) in microns
             to plot as a light curve
         time_unit: string
             The string indicator for the units that the self.time array is in
@@ -580,39 +576,39 @@ class TSO(object):
         # each integration
         flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
         flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
-        
+
         # Make it into an array
         if isinstance(column, (int, float)): column = [column]
-        
+
         if column is None: column = list(range(self.tso.shape[-1]))
-        
+
         n_colors = len(column)
         color_cycle = cmap(np.linspace(0, cmap.N, n_colors, dtype=int))
-        
+
         for kcol, col in tqdm(enumerate(column), total=len(column)):
-            
+
             # If it is an index
             if isinstance(col, int):
                 lightcurve = flux_cols[:, col]
                 label = 'Column {}'.format(col)
-                
+
             # Or assumed to be a wavelength in microns
             elif isinstance(col, float):
                 waves = np.mean(self.wave[0], axis=0)
                 lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
                 label = '{} um'.format(col)
-                
+
             else:
                 print('Please enter an index, astropy quantity, or array thereof.')
                 return
-            
+
             # Plot the theoretical light curve
             if self.rp is not None:
                 if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
                     raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
-                
+
                 time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-                
+
                 days_to_seconds = 86400.
                 if time_unit == 'seconds':
                     time /= days_to_seconds
@@ -620,27 +616,27 @@ class TSO(object):
                     time /= days_to_seconds / 60
                 if time_unit == 'hours':
                     time /= days_to_seconds / 3600
-                
+
                 tmodel = batman.TransitModel(self.tmodel, time)
                 tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
-                
+
                 plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors], alpha=theory_alpha)
-            
-            data_time = self.time[self.ngrps-1::self.ngrps].copy() 
-            
+
+            data_time = self.time[self.ngrps-1::self.ngrps].copy()
+
             if time_unit == 'seconds':
                 data_time /= days_to_seconds
             if time_unit == 'minutes':
                 data_time /= days_to_seconds / 60
             if time_unit == 'hours':
                 data_time /= days_to_seconds / 3600
-            
+
             plt.plot(data_time, lightcurve, label=label, marker='o', ls='None', color=color_cycle[kcol%n_colors])
-        
+
         plt.legend(loc=0, frameon=False)
-    
+
     def plot_spectrum(self, frame=0, order=None):
         """
         Parameters
@@ -652,16 +648,16 @@ class TSO(object):
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             tso = self.tso
-        
+
         # Get extracted spectrum (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
         flux = np.sum(tso[frame].data, axis=0)
         response = 1./self.photom_order1
-        
+
         # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
         # that we can convert the flux at each wavelegth into [ADU/s]
         flux *= response/self.time[np.mod(self.ngrps, frame)]
-        
+
         # Plot it along with input spectrum
         plt.figure(figsize=(13,5))
         plt.loglog(wave, flux, label='Extracted')
@@ -669,11 +665,11 @@ class TSO(object):
         plt.xlim(wave[0]*0.95, wave[-1]*1.05)
         plt.ylim(np.min(flux)*0.9, np.max(flux)*1.1)
         plt.legend()
-    
+
     def save(self, filename='dummy.save'):
         """
         Save the TSO data to file
-        
+
         Parameters
         ----------
         filename: str
@@ -681,16 +677,16 @@ class TSO(object):
         """
         print('Saving TSO class dict to {}'.format(filename))
         joblib.dump(self.__dict__, filename)
-    
+
     def load(self, filename):
         """
         Load a previously calculated TSO
-        
+
         Paramaters
         ----------
         filename: str
             The path of the save file
-        
+
         Returns
         -------
         TSO
@@ -702,11 +698,11 @@ class TSO(object):
         #     setattr(self, p, getattr(params, p))
         for key in load_dict.keys():
             exec("self." + key + " = load_dict['" + key + "']")
-    
+
     def to_fits(self, outfile):
         """
         Save the data to a JWST pipeline ingestible FITS file
-        
+
         Parameters
         ----------
         outfile: str
@@ -873,22 +869,22 @@ class TSO(object):
                 ('BZERO', 32768, ''),
                 ('NCOLS', float(self.nrows-1), ''),
                 ('NROWS', float(self.ncols-1), '')]
-        
+
         # Make the header
         prihdr = fits.Header()
         for card in cards:
             prihdr.append(card, end=True)
-            
+
         # Store the header in the object too
         self.header = prihdr
-        
+
         # Put data into detector coordinates
         data = np.swapaxes(self.tso, 1, 2)[:,:,::-1]
-        
+
         # Make the HDUList
         prihdu = fits.PrimaryHDU(data=data, header=prihdr)
-        
+
         # Write the file
         prihdu.writeto(outfile, overwrite=True)
-        
+
         print('File saved as',outfile)
