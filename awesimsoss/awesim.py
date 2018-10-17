@@ -26,12 +26,13 @@ from . import make_trace as mt
 
 try:
     # Use a progress bar if one is available
-    from tqdm import tqdm # progress bar
+    from tqdm import tqdm
 except:
     print('`pip install tqdm` to make this procedure prettier')
     tqdm = lambda iterable, total=None: iterable
 
 warnings.simplefilter('ignore')
+
 
 class TSO(object):
     """
