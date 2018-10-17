@@ -1,14 +1,17 @@
-language: python
-
-python:
-  - 3.5
-  - 3.6
+language: generic
 
 os:
   - linux
   - osx
 
+env:
+  - PYTHON_VERSION="3.5"
+  - PYTHON_VERSION="3.6"
+  - PYTHON_VERSION="3.7"
+
 install:
+  - ci/install_conda.sh
+  - ci/setup_conda_env.sh
   - pip install -r requirements.txt
   - python setup.py develop
 
