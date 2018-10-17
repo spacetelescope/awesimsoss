@@ -1,16 +1,3 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-
-# Packages may add whatever they like to this file, but
-# should keep this content at the top.
-# ----------------------------------------------------------------------------
-from ._astropy_init import *
-# ----------------------------------------------------------------------------
-
-if not _ASTROPY_SETUP_:
-    # For egg_info test builds to pass, put package imports here.
-    from . import extract1D
-    from . import lcfitting
-    from . import sim2D
-
 # Shortcut for simulations
-from .sim2D.awesim import TSO
+from .awesim import TSO
