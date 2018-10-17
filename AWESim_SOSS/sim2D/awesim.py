@@ -10,9 +10,12 @@ import matplotlib.pyplot as plt
 import batman
 import astropy.units as q
 import astropy.constants as ac
+
+
 from astropy.io import fits
 
 from multiprocessing.dummy import Pool as ThreadPool
+from multiprocessing import cpu_count
 import time
 import warnings
 import datetime
@@ -25,8 +28,14 @@ from sklearn.externals import joblib
 from . import generate_darks as gd
 from . import make_trace as mt
 
-warnings.simplefilter('ignore')
+try:
+    # Use a progress bar if one is available
+    from tqdm import tqdm # progress bar
+except:
+    print('`pip install tqdm` to make this procedure prettier')
+    tqdm = lambda iterable, total=None: iterable
 
+warnings.simplefilter('ignore')
 
 class TSO(object):
     """
@@ -126,8 +135,8 @@ class TSO(object):
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
     
-    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None,
-                       ld_profile='quadratic', model_grid=None, verbose=True):
+    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
+                       ld_profile='quadratic', model_grid=None, n_jobs=1, verbose=True):
         """
         Generate the simulated 2D data given the initialized TSO object
         
@@ -143,10 +152,15 @@ class TSO(object):
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
         ld_profile: str (optional)
             The limb darkening profile to use
+        time_unit: string
+            The string indicator for the units that the tmodel.t array is in
+            options: 'seconds', 'minutes', 'hours', 'days' (default)
         orders: sequence
             The list of orders to imulate
         model_grid: ExoCTK.modelgrid.ModelGrid (optional)
             The model atmosphere grid to calculate LDCs
+        n_jobs: int
+            The number of cores to use in multiprocessing
         verbose: bool
             Print helpful stuff
         
@@ -177,6 +191,10 @@ class TSO(object):
         if verbose:
             begin = time.time()
         
+        max_cores = cpu_count()
+        if n_jobs == -1 or n_jobs > max_cores: 
+            n_jobs = max_cores
+        
         # Clear previous results
         self.tso = np.zeros(self.dims)
         self.tso_ideal = np.zeros(self.dims)
@@ -186,6 +204,9 @@ class TSO(object):
         # If there is a planet transmission spectrum but no LDCs generate them
         is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
         if planet is not None and is_tmodel:
+            
+            if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+                raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
             
             # Check if the stellar params are the same
             plist = ['teff','logg','feh','limb_dark']
@@ -201,9 +222,15 @@ class TSO(object):
             # Set time of inferior conjunction
             if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
                 self.tmodel.t0 = self.time[self.nframes//2]
-                
-            # Convert days to seconds
-            self.tmodel.t *= 86400
+            
+            # Convert seconds to days, in order to match the Period and T0 parameters
+            days_to_seconds = 86400.
+            if time_unit == 'seconds':
+                self.tmodel.t /= days_to_seconds
+            if time_unit == 'minutes':
+                self.tmodel.t /= days_to_seconds / 60
+            if time_unit == 'hours':
+                self.tmodel.t /= days_to_seconds / 3600
             
             # Set the ld_coeffs if provided
             stellar_params = [getattr(tmodel, p) for p in plist]
@@ -261,7 +288,7 @@ class TSO(object):
                 start = time.time()
             
             # Generate the lightcurves at each wavelength
-            pool = ThreadPool(8) 
+            pool = ThreadPool(n_jobs) 
             func = partial(mt.psf_lightcurve, time=self.time, tmodel=self.tmodel)
             data = list(zip(wave, cube, response, ld_coeffs, self.rp))
             psfs = np.asarray(pool.starmap(func, data))
@@ -282,7 +309,7 @@ class TSO(object):
                 start = time.time()
             
             # Make the 2048*N lightcurves into N frames
-            pool = ThreadPool(8) 
+            pool = ThreadPool(n_jobs) 
             func = partial(mt.make_frame, subarray=self.subarray)
             psfs = np.asarray(pool.map(func, psfs))
             pool.close()
@@ -490,13 +517,13 @@ class TSO(object):
         plt.colorbar()
         plt.title('{} Saturated Pixels'.format(len(saturated[saturated>fullWell])))
     
-    def plot_slice(self, col, trace='tso', frame=0, order='', **kwargs):
+    def plot_slice(self, column, trace='tso', frame=0, order='', **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
         
         Parameters
         ----------
-        col: int, sequence
+        column: int, sequence
             The column index(es) to plot a light curve for
         trace: str
             The attribute name to plot
@@ -508,13 +535,13 @@ class TSO(object):
         else:
             tso = self.tso
             
-        f = tso[frame].T
+        flux = tso[frame].T
         
-        if isinstance(col, int):
-            col = [col]
+        if isinstance(column, int):
+            column = [column]
             
-        for c in col:
-            plt.plot(f[c], label='Column {}'.format(c), **kwargs)
+        for col in column:
+            plt.plot(flux[col], label='Column {}'.format(col), **kwargs)
             
         plt.xlim(0,256)
         
@@ -530,37 +557,50 @@ class TSO(object):
         plt.ylabel('Count Rate [ADU/s]')
         plt.grid()
         
-    def plot_lightcurve(self, col):
+    def plot_lightcurve(self, column=None, time_unit='seconds', 
+                        cmap=plt.cm.coolwarm, resolution_mult=20, 
+                        theory_alpha=0.1):
         """
         Plot a lightcurve for each column index given
         
         Parameters
         ----------
-        col: int, float, sequence
+        column: int, float, sequence
             The integer column index(es) or float wavelength(s) in microns 
             to plot as a light curve
+        time_unit: string
+            The string indicator for the units that the self.time array is in
+            options: 'seconds', 'minutes', 'hours', 'days' (default)
+        cmap: matplotlib.pyplot.cm entry
+            A selection from the matplotlib.pyplot.cm color maps library
+        resolution_mult: int
+            The number of theoretical points to plot for each data point plotted here
         """
         # Get the scaled flux in each column for the last group in
         # each integration
-        f = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
-        f = f/np.nanmax(f, axis=1)[:, None]
+        flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
+        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
         
         # Make it into an array
-        if isinstance(col, (int, float)):
-            col = [col]
-            
-        for c in col:
+        if isinstance(column, (int, float)): column = [column]
+        
+        if column is None: column = list(range(self.tso.shape[-1]))
+        
+        n_colors = len(column)
+        color_cycle = cmap(np.linspace(0, cmap.N, n_colors, dtype=int))
+        
+        for kcol, col in tqdm(enumerate(column), total=len(column)):
             
             # If it is an index
-            if isinstance(c, int):
-                lc = f[:, c]
-                label = 'Col {}'.format(c)
+            if isinstance(col, int):
+                lightcurve = flux_cols[:, col]
+                label = 'Column {}'.format(col)
                 
             # Or assumed to be a wavelength in microns
-            elif isinstance(c, float):
-                W = np.mean(self.wave[0], axis=0)
-                lc = [np.interp(c, W, F) for F in f]
-                label = '{} um'.format(c)
+            elif isinstance(col, float):
+                waves = np.mean(self.wave[0], axis=0)
+                lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
+                label = '{} um'.format(col)
                 
             else:
                 print('Please enter an index, astropy quantity, or array thereof.')
@@ -568,17 +608,39 @@ class TSO(object):
             
             # Plot the theoretical light curve
             if self.rp is not None:
-                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*20)
-                tmodel = batman.TransitModel(self.tmodel, time)
-                tmodel.rp = self.rp[c]
-                theory = tmodel.light_curve(tmodel)
-                theory *= max(lc)/max(theory)
-                plt.plot(time, theory, label=label+' model', marker='.', ls='--')
+                if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+                    raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
                 
-            plt.plot(self.time[self.ngrps-1::self.ngrps], lc, label=label, marker='o', ls='None')
+                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
+                
+                days_to_seconds = 86400.
+                if time_unit == 'seconds':
+                    time /= days_to_seconds
+                if time_unit == 'minutes':
+                    time /= days_to_seconds / 60
+                if time_unit == 'hours':
+                    time /= days_to_seconds / 3600
+                
+                tmodel = batman.TransitModel(self.tmodel, time)
+                tmodel.rp = self.rp[col]
+                theory = tmodel.light_curve(tmodel)
+                theory *= max(lightcurve)/max(theory)
+                
+                plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors], alpha=theory_alpha)
             
-        plt.legend(loc=0, frameon=False)
+            data_time = self.time[self.ngrps-1::self.ngrps].copy() 
+            
+            if time_unit == 'seconds':
+                data_time /= days_to_seconds
+            if time_unit == 'minutes':
+                data_time /= days_to_seconds / 60
+            if time_unit == 'hours':
+                data_time /= days_to_seconds / 3600
+            
+            plt.plot(data_time, lightcurve, label=label, marker='o', ls='None', color=color_cycle[kcol%n_colors])
         
+        plt.legend(loc=0, frameon=False)
+    
     def plot_spectrum(self, frame=0, order=None):
         """
         Parameters

@@ -70,6 +70,7 @@ params = batman.TransitParams()
 params.t0 = 0.                                # time of inferior conjunction
 params.per = 5.7214742                        # orbital period (days)
 params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+params.rp = 0.1                               # radius ratio for Jupiter orbiting the Sun
 params.inc = 89.8                             # orbital inclination (in degrees)
 params.ecc = 0.                               # eccentricity
 params.w = 90.                                # longitude of periastron (in degrees)
@@ -84,7 +85,8 @@ tmodel.feh = 0                                # metallicity of the host star
 Now the code to generate a simulated planetary transit around our star might look like:
 
 ```python
-tso.run_simulation(planet=planet1D, tmodel=tmodel)
+tso.run_simulation(planet=planet1D, tmodel=tmodel, time_unit='seconds')
+tso.plot_lightcurve(column=42)
 ```
 
 We can write this to a FITS file directly ingestible by the JWST pipeline with:
