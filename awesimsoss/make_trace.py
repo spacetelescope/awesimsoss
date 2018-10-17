@@ -104,7 +104,7 @@ def psf_tilts(order):
         
     # Get the file
     path = 'files/SOSS_PSF_tilt_order{}.npy'.format(order)
-    psf_file = pkg_resources.resource_filename('AWESim_SOSS', path)
+    psf_file = pkg_resources.resource_filename('awesimsoss', path)
     
     if not os.path.exists(psf_file):
         calculate_psf_tilts()
@@ -120,7 +120,7 @@ def calculate_psf_tilts():
         
         # Get the file
         path = 'files/SOSS_PSF_tilt_order{}.npy'.format(order)
-        psf_file = pkg_resources.resource_filename('AWESim_SOSS', path)
+        psf_file = pkg_resources.resource_filename('awesimsoss', path)
             
         # Dimensions
         subarray = 'SUBSTRIP256'
@@ -243,7 +243,7 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
     
     Example
     -------
-    from AWESim_SOSS.sim2D import awesim
+    from awesimsoss.sim2D import awesim
     lookup = awesim.soss_ldc('quadratic', [3300, 4.5, 0])
     """
     # Get the model grid
@@ -294,7 +294,7 @@ def generate_SOSS_psfs(filt):
         The filter to use, ['CLEAR','F277W']
     """
     # Get the file
-    file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_PSF.fits'.format(filt))
+    file = pkg_resources.resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
     
     # Get the NIRISS class from webbpsf and set the filter
     ns = webbpsf.NIRISS()
@@ -353,7 +353,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, chunk=1, generate=False, all_angles=Non
 
         # Get the file
         psf_path = 'files/SOSS_{}_PSF.fits'.format(filt)
-        psf_file = pkg_resources.resource_filename('AWESim_SOSS', psf_path)
+        psf_file = pkg_resources.resource_filename('awesimsoss', psf_path)
 
         # Load the SOSS psf cube
         cube = fits.getdata(psf_file).swapaxes(-1, -2)
@@ -421,7 +421,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, chunk=1, generate=False, all_angles=Non
 
                     # Get the filepath
                     filename = 'files/SOSS_{}_PSF_order{}_{}.npy'.format(filt, n+1, N+1)
-                    file = pkg_resources.resource_filename('AWESim_SOSS', filename)
+                    file = pkg_resources.resource_filename('awesimsoss', filename)
 
                     # Delete the file if it exists
                     if os.path.isfile(file):
@@ -438,7 +438,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, chunk=1, generate=False, all_angles=Non
         full_data = []
         for chunk in [1,2,3,4]:
             path = 'files/SOSS_{}_PSF_order{}_{}.npy'.format(filt, order, chunk)
-            file = pkg_resources.resource_filename('AWESim_SOSS', path)
+            file = pkg_resources.resource_filename('awesimsoss', path)
             full_data.append(np.load(file))
 
         return np.concatenate(full_data, axis=0)
@@ -464,7 +464,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs='', cutoff=0.005):
     if psfs=='':
         
         # Get the file
-        file = pkg_resources.resource_filename('AWESim_SOSS', 'files/SOSS_{}_PSF.fits'.format(filt))
+        file = pkg_resources.resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
         
         # Load the SOSS psf cube
         cube = fits.getdata(file).swapaxes(-1,-2)
@@ -520,7 +520,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     Example 1
     ---------
     # No planet
-    from AWESim_SOSS.sim2D import awesim
+    from awesimsoss.sim2D import awesim
     psf = np.ones((76,76))
     time = np.linspace(-0.2, 0.2, 200)
     lc = awesim.psf_lightcurve(0.97, psf, 1, None, None, time, None, plot=True)
@@ -593,7 +593,7 @@ def wave_solutions(subarr=None, order=None, directory=None):
     # Get the directory
     if directory is None:
         default = '/files/soss_wavelengths_fullframe.fits'
-        directory = pkg_resources.resource_filename('AWESim_SOSS', default)
+        directory = pkg_resources.resource_filename('awesimsoss', default)
     
     # Trim to the correct subarray
     if subarr == 'SUBSTRIP256' or subarr == 256:
@@ -678,7 +678,7 @@ def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate
     if generate:
         
         # Get the data
-        file = pkg_resources.resource_filename('AWESim_SOSS', 'files/soss_wavelength_trace_table1.txt')
+        file = pkg_resources.resource_filename('awesimsoss', 'files/soss_wavelength_trace_table1.txt')
         x1, y1,w1, x2, y2, w2 = np.genfromtxt(file, unpack=True)
         
         # Subarray 96

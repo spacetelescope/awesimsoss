@@ -65,10 +65,10 @@ class TSO(object):
         -------
         # Imports
         import numpy as np
-        from AWESim_SOSS import TSO
+        from awesimsoss import TSO
         import astropy.units as q
         from pkg_resources import resource_filename
-        star = np.genfromtxt(resource_filename('AWESim_SOSS','files/scaled_spectrum.txt'), unpack=True)
+        star = np.genfromtxt(resource_filename('awesimsoss','files/scaled_spectrum.txt'), unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
 
         # Initialize simulation
@@ -121,7 +121,7 @@ class TSO(object):
             setattr(self, 'order{}_psfs'.format(order), cube)
 
         # Get absolute calibration reference file
-        calfile = resource_filename('AWESim_SOSS', 'files/jwst_niriss_photom_0028.fits')
+        calfile = resource_filename('awesimsoss', 'files/jwst_niriss_photom_0028.fits')
         caldata = fits.getdata(calfile)
         self.photom = caldata[caldata['pupil']=='GR700XD']
 
@@ -169,7 +169,7 @@ class TSO(object):
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
         import batman
         import astropy.constants as ac
-        planet1D = np.genfromtxt(resource_filename('AWESim_SOSS', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
+        planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
         params = batman.TransitParams()
         params.t0 = 0.                                # time of inferior conjunction
         params.per = 5.7214742                        # orbital period (days)
@@ -379,12 +379,12 @@ class TSO(object):
         orders = np.asarray([self.tso_order1_ideal,self.tso_order2_ideal])
 
         # Load all the reference files
-        photon_yield = fits.getdata(resource_filename('AWESim_SOSS', 'files/photon_yield_dms.fits'))
-        pca0_file = resource_filename('AWESim_SOSS', 'files/niriss_pca0.fits')
-        zodi = fits.getdata(resource_filename('AWESim_SOSS', 'files/soss_zodiacal_background_scaled.fits'))
-        nonlinearity = fits.getdata(resource_filename('AWESim_SOSS', 'files/substrip256_forward_coefficients_dms.fits'))
-        pedestal = fits.getdata(resource_filename('AWESim_SOSS', 'files/substrip256pedestaldms.fits'))
-        darksignal = fits.getdata(resource_filename('AWESim_SOSS', 'files/substrip256signaldms.fits'))*self.gain
+        photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photon_yield_dms.fits'))
+        pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
+        zodi = fits.getdata(resource_filename('awesimsoss', 'files/soss_zodiacal_background_scaled.fits'))
+        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/substrip256_forward_coefficients_dms.fits'))
+        pedestal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256pedestaldms.fits'))
+        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256signaldms.fits'))*self.gain
 
         # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
