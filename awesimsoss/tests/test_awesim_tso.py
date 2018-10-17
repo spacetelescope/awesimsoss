@@ -35,9 +35,8 @@ def test_awesim_tso():
     params.inc = 87.                # Orbital inclination (in degrees)
     params.ecc = 0.                 # Eccentricity
     params.w = 90.                  # Longitude of periastron (in degrees) 
-    params.u = [0.1, 0.3]           # Limb darkening coefficients [u1, u2]
+    params.u = [0.1, 0.1]           # Limb darkening coefficients [u1, u2]
     params.limb_dark = "quadratic"  # Limb darkening model
-    params.u = [0.1,0.1]            # Limb darkening coefficients
 
     # Make the transit model and add the stellar params
     day2sec = 86400
