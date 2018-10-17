@@ -1,6 +1,6 @@
-astropy
-scipy
-matplotlib
 numpy
+scipy
+astropy
+matplotlib
 batman-package
 ExoCTK
