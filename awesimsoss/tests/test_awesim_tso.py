@@ -8,18 +8,18 @@ import astropy.units as q
 import astropy.constants as ac
 import batman
 
-from awesimsoss import awesim
+from awesimsoss import TSO
 
 
 def test_awesim_tso():
     """Test that a TSO simulation runs"""
     # Get the star data
-    star_file = resource_filename('awesimsoss','files/scaled_spectrum.txt')
+    star_file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
     star = np.genfromtxt(star_file, unpack=True)
     star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
 
     # Make the TSO object
-    tso = awesim.TSO(ngrps=3, nints=5, star=star1D)
+    tso = TSO(ngrps=3, nints=5, star=star1D)
 
     # Get the planet data
     planet_file = resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat')
