@@ -1,4 +1,6 @@
-# `awesimsoss`: Advanced Webb Exposure SIMulator for SOSS
+# `awesimsoss`
+
+### Advanced Webb Exposure SIMulator for SOSS
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
