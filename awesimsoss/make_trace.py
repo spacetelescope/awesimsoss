@@ -13,16 +13,16 @@ from astropy.io import fits
 import multiprocessing
 import time
 import warnings
-import webbpsf
 import pkg_resources
 
-from ExoCTK import modelgrid
+from exoctk import modelgrid
 from svo_filters import svo
-from ExoCTK.limb_darkening import limb_darkening_fit as lf
+from exoctk.limb_darkening import limb_darkening_fit as lf
 from scipy.interpolate import interp1d
 from functools import partial
 from scipy.ndimage.interpolation import rotate
 from scipy.interpolate import interp2d, RectBivariateSpline
+
 
 warnings.simplefilter('ignore')
 
@@ -58,6 +58,7 @@ def make_frame(psfs, subarray='SUBSTRIP256'):
 
     return frame[idx:, 38:-38]
 
+
 def get_angle(pf, p0=np.array([0, 0]), pi=None):
     """Compute angle (in degrees) for pf-p0-pi corner
 
@@ -85,6 +86,7 @@ def get_angle(pf, p0=np.array([0, 0]), pi=None):
 
     return angle
 
+
 def psf_tilts(order):
     """
     Get the psf tilts for the given order
@@ -110,6 +112,7 @@ def psf_tilts(order):
         calculate_psf_tilts()
 
     return np.load(psf_file)
+
 
 def calculate_psf_tilts():
     """
@@ -185,6 +188,7 @@ def calculate_psf_tilts():
         np.save(psf_file, np.array(angles))
         print('Angles saved to', psf_file)
 
+
 def put_psf_on_subarray(psf, y, frame_height=256):
     """Make a 2D SOSS trace from a sequence of psfs and trace center locations
 
@@ -220,6 +224,7 @@ def put_psf_on_subarray(psf, y, frame_height=256):
     frame[extrapol] = 0
 
     return frame
+
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
     """
@@ -284,6 +289,7 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
 
     return np.array(coeffs).T
 
+
 def generate_SOSS_psfs(filt):
     """
     Gnerate a cube of the psf at 100 wavelengths from the min to the max wavelength
@@ -293,6 +299,11 @@ def generate_SOSS_psfs(filt):
     filt: str
         The filter to use, ['CLEAR','F277W']
     """
+    try:
+        import webbpsf
+    except ImportError:
+        raise ImportError("You need to install webbpsf to run this.")
+
     # Get the file
     file = pkg_resources.resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
 
@@ -323,6 +334,7 @@ def generate_SOSS_psfs(filt):
     # Write the file
     hdulist.writeto(file, overwrite=True)
     hdulist.close()
+
 
 def SOSS_psf_cube(filt='CLEAR', order=1, chunk=1, generate=False, all_angles=None):
     """
@@ -443,6 +455,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, chunk=1, generate=False, all_angles=Non
 
         return np.concatenate(full_data, axis=0)
 
+
 def get_SOSS_psf(wavelength, filt='CLEAR', psfs='', cutoff=0.005):
     """
     Retrieve the SOSS psf for the given wavelength
@@ -488,6 +501,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs='', cutoff=0.005):
     psf[psf<cutoff] = 0
 
     return psf
+
 
 def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=False):
     """
@@ -570,6 +584,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
 
     return flux
 
+
 def wave_solutions(subarr=None, order=None, directory=None):
     """
     Get the wavelength maps for SOSS orders 1, 2, and 3
@@ -613,6 +628,7 @@ def wave_solutions(subarr=None, order=None, directory=None):
 
     return wave
 
+
 def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     """
     Calculate a time axis for the exposure in the given SOSS subarray
@@ -654,6 +670,7 @@ def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
     time_axis = np.concatenate(time_axis)
 
     return time_axis
+
 
 def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate=False):
     """

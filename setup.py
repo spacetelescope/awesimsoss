@@ -4,7 +4,7 @@ from setuptools import setup
 setup(name='awesimsoss',
       version=0.1,
       description='Advanced Webb Exposure Simulator for SOSS',
-      install_requires=['astropy', 'scipy', 'matplotlib', 'numpy', 'batman-package'],
+      install_requires=['astropy', 'scipy', 'matplotlib', 'numpy', 'batman-package', 'exoctk'],
       author='Joe Filippazzo and Jonathan Fraine',
       author_email='jfilippazzo@stsci.edu',
       license='MIT',
