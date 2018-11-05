@@ -579,9 +579,11 @@ class TSO(object):
         flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
 
         # Make it into an array
-        if isinstance(column, (int, float)): column = [column]
+        if isinstance(column, (int, float)):
+            column = [column]
 
-        if column is None: column = list(range(self.tso.shape[-1]))
+        if column is None:
+            column = list(range(self.tso.shape[-1]))
 
         n_colors = len(column)
         color_cycle = cmap(np.linspace(0, cmap.N, n_colors, dtype=int))
