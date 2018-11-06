@@ -2,7 +2,7 @@
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
-This pure Python module produces simulated TSO data for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope.
+This pure Python package produces simulated TSO data for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope.
 
 ### Dependencies
 The following packages are needed to run `awesimsoss`:
