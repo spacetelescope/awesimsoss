@@ -1,11 +1,12 @@
 # awesimsoss: Advanced Webb Exposure SIMulator for SOSS
 
 [![Build Status](https://travis-ci.org/spacetelescope/awesimsoss.svg?branch=master)](https://travis-ci.org/spacetelescope/awesimsoss)
+[![Coverage Status](https://coveralls.io/repos/github/spacetelescope/awesimsoss/badge.svg?branch=master&service=github)](https://coveralls.io/github/spacetelescope/awesimsoss?branch=master&service=github)
 [![Documentation Status](https://readthedocs.org/projects/awesimsoss/badge/?version=latest)](https://awesimsoss.readthedocs.io/en/latest/?badge=latest)
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
-This pure Python module produces simulated TSO data for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope.
+This pure Python package produces simulated TSO data for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope.
 
 ### Dependencies
 The following packages are needed to run `awesimsoss`:
