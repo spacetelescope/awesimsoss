@@ -1,0 +1,9 @@
+name: awesimsoss
+
+channels:
+    - astropy
+
+dependencies:
+    - astropy
+    - bokeh
+    - numpy
