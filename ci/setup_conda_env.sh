@@ -6,4 +6,4 @@ source activate awesimsoss
 
 echo "Installing packages..."
 conda install flake8 beautifulsoup4 lxml numpy astropy exoctk
-pip install exoctk pytest pytest-cov coveralls
+pip install numpy exoctk pytest pytest-cov coveralls
