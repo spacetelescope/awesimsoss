@@ -30,7 +30,7 @@ setup(name='awesimsoss',
       package_data={'svo_filters': ['data/filters/*', 'data/plots/*', 'data/spectra/*']},
       include_package_data=True,
       zip_safe=False,
-      install_requires=['astropy', 'scipy', 'matplotlib', 'numpy', 'batman-package', 'exoctk'],
+      install_requires=['astropy', 'scipy', 'matplotlib', 'numpy', 'batman-package', 'exoctk', 'h5py'],
       use_2to3=False
 
 )
