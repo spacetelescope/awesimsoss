@@ -28,7 +28,7 @@ install:
   - ci/install_conda.sh
   - ci/setup_conda_env.sh
   - source activate awesimsoss
-  - python setup.py install
+  - pythonw setup.py install
 
 script:
   - pytest awesimsoss --cov

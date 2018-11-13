@@ -12,8 +12,8 @@ from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
 
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
+# import matplotlib
+# import matplotlib.pyplot as plt
 import batman
 import astropy.units as q
 import astropy.constants as ac
