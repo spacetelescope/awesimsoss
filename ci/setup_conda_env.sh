@@ -5,7 +5,7 @@ conda create -n awesimsoss python=$PYTHON_VERSION || exit 1
 source activate awesimsoss
 
 echo "Installing packages..."
-conda install flake8 beautifulsoup4 lxml numpy astropy
+conda install flake8 beautifulsoup4 lxml numpy astropy h5py
 pip install pytest pytest-cov coveralls
 git clone https://github.com/ExoCTK/ExoCTK.git
 python ExoCTK/setup.py develop
