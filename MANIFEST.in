@@ -1,0 +1,6 @@
+include README.md
+
+graft awesimsoss/files *
+graft awesimsoss/img *
+
+global-exclude *.pyc
