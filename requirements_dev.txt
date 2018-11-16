@@ -11,6 +11,7 @@ twine==1.12.1
 astropy==3.0.3
 numpy==1.15.3
 bokeh==1.0.0
+scikit-learn
 # batman-package==2.1.0
 
 pytest==3.8.2
