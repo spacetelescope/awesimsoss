@@ -15,7 +15,7 @@ from multiprocessing import cpu_count
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-import batman
+# import batman
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
@@ -200,52 +200,52 @@ class TSO(object):
         self.tso_order2_ideal = np.zeros(self.dims)
 
         # If there is a planet transmission spectrum but no LDCs generate them
-        is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
-        if planet is not None and is_tmodel:
-
-            if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
-                raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
-
-            # Check if the stellar params are the same
-            plist = ['teff','logg','feh','limb_dark']
-            old_params = [getattr(self.tmodel, p, None) for p in plist]
-
-            # Store planet details
-            self.planet = planet
-            self.tmodel = tmodel
-
-            if self.tmodel.limb_dark is None:
-                self.tmodel.limb_dark = ld_profile
-
-            # Set time of inferior conjunction
-            if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
-                self.tmodel.t0 = self.time[self.nframes//2]
-
-            # Convert seconds to days, in order to match the Period and T0 parameters
-            days_to_seconds = 86400.
-            if time_unit == 'seconds':
-                self.tmodel.t /= days_to_seconds
-            if time_unit == 'minutes':
-                self.tmodel.t /= days_to_seconds / 60
-            if time_unit == 'hours':
-                self.tmodel.t /= days_to_seconds / 3600
-
-            # Set the ld_coeffs if provided
-            stellar_params = [getattr(tmodel, p) for p in plist]
-            changed = stellar_params != old_params
-            if ld_coeffs is not None:
-                self.ld_coeffs = ld_coeffs
-
-            # Update the limb darkning coeffs if the stellar params or
-            # ld profile have changed
-            elif isinstance(model_grid, ModelGrid) and changed:
-
-                # Try to set the model grid
-                self.model_grid = model_grid
-                self.ld_coeffs = tmodel
-
-            else:
-                pass
+        # is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
+        # if planet is not None and is_tmodel:
+        #
+        #     if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+        #         raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
+        #
+        #     # Check if the stellar params are the same
+        #     plist = ['teff','logg','feh','limb_dark']
+        #     old_params = [getattr(self.tmodel, p, None) for p in plist]
+        #
+        #     # Store planet details
+        #     self.planet = planet
+        #     self.tmodel = tmodel
+        #
+        #     if self.tmodel.limb_dark is None:
+        #         self.tmodel.limb_dark = ld_profile
+        #
+        #     # Set time of inferior conjunction
+        #     if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
+        #         self.tmodel.t0 = self.time[self.nframes//2]
+        #
+        #     # Convert seconds to days, in order to match the Period and T0 parameters
+        #     days_to_seconds = 86400.
+        #     if time_unit == 'seconds':
+        #         self.tmodel.t /= days_to_seconds
+        #     if time_unit == 'minutes':
+        #         self.tmodel.t /= days_to_seconds / 60
+        #     if time_unit == 'hours':
+        #         self.tmodel.t /= days_to_seconds / 3600
+        #
+        #     # Set the ld_coeffs if provided
+        #     stellar_params = [getattr(tmodel, p) for p in plist]
+        #     changed = stellar_params != old_params
+        #     if ld_coeffs is not None:
+        #         self.ld_coeffs = ld_coeffs
+        #
+        #     # Update the limb darkning coeffs if the stellar params or
+        #     # ld profile have changed
+        #     elif isinstance(model_grid, ModelGrid) and changed:
+        #
+        #         # Try to set the model grid
+        #         self.model_grid = model_grid
+        #         self.ld_coeffs = tmodel
+        #
+        #     else:
+        #         pass
 
         # Generate simulation for each order
         for order in self.orders:
@@ -351,16 +351,17 @@ class TSO(object):
         feh: float, int
             The logarithm of the star metallicity/solar metallicity
         """
-        # Use input ld coeff array
-        if isinstance(coeffs, np.ndarray) and len(coeffs.shape)==3:
-            self._ld_coeffs = coeffs
-
-        # Or generate them if the stellar parameters have changed
-        elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, ModelGrid):
-            self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff','logg','feh']], model_grid=self.model_grid) for order in self.orders]
-
-        else:
-            raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
+        pass
+        # # Use input ld coeff array
+        # if isinstance(coeffs, np.ndarray) and len(coeffs.shape)==3:
+        #     self._ld_coeffs = coeffs
+        #
+        # # Or generate them if the stellar parameters have changed
+        # elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, ModelGrid):
+        #     self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff','logg','feh']], model_grid=self.model_grid) for order in self.orders]
+        #
+        # else:
+        #     raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
 
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -605,26 +606,26 @@ class TSO(object):
                 return
 
             # Plot the theoretical light curve
-            if self.rp is not None:
-                if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
-                    raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
-
-                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-
-                days_to_seconds = 86400.
-                if time_unit == 'seconds':
-                    time /= days_to_seconds
-                if time_unit == 'minutes':
-                    time /= days_to_seconds / 60
-                if time_unit == 'hours':
-                    time /= days_to_seconds / 3600
-
-                tmodel = batman.TransitModel(self.tmodel, time)
-                tmodel.rp = self.rp[col]
-                theory = tmodel.light_curve(tmodel)
-                theory *= max(lightcurve)/max(theory)
-
-                plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors], alpha=theory_alpha)
+            # if self.rp is not None:
+            #     if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+            #         raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
+            #
+            #     time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
+            #
+            #     days_to_seconds = 86400.
+            #     if time_unit == 'seconds':
+            #         time /= days_to_seconds
+            #     if time_unit == 'minutes':
+            #         time /= days_to_seconds / 60
+            #     if time_unit == 'hours':
+            #         time /= days_to_seconds / 3600
+            #
+            #     tmodel = batman.TransitModel(self.tmodel, time)
+            #     tmodel.rp = self.rp[col]
+            #     theory = tmodel.light_curve(tmodel)
+            #     theory *= max(lightcurve)/max(theory)
+            #
+            #     plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors], alpha=theory_alpha)
 
             data_time = self.time[self.ngrps-1::self.ngrps].copy()
 
