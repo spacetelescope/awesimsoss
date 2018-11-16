@@ -1,8 +1,9 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""Tests for `awesim` module."""
+
 from pkg_resources import resource_filename
 
-import matplotlib
-matplotlib.use('Qt5Agg')
-import matplotlib.pyplot as plt
 import numpy as np
 import astropy.units as q
 import astropy.constants as ac
@@ -50,5 +51,3 @@ def test_awesim_tso():
 
     # Plot the lightcurve
     tso.plot_lightcurve(column=range(10,2048,500))
-
-    plt.show()

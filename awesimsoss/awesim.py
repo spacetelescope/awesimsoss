@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 A module to generate simulated 2D time-series SOSS data
 
