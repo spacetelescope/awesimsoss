@@ -7,8 +7,14 @@ tox==3.5.2
 coverage==4.5.1
 Sphinx==1.8.1
 twine==1.12.1
+
 astropy==3.0.3
-batman-package==2.1.0
+numpy==1.15.3
+bokeh==1.0.0
+svo_filters
+scipy
+webbpsf
+# batman-package==2.1.0
 
 pytest==3.8.2
 pytest-runner==4.2

@@ -13,14 +13,12 @@ from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
 
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-import batman
+from bokeh.plotting import figure
+# import batman
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
-from ExoCTK import ModelGrid
-from sklearn.externals import joblib
+# from exoctk import modelgrid as mg
 
 from . import generate_darks as gd
 from . import make_trace as mt
@@ -200,52 +198,52 @@ class TSO(object):
         self.tso_order2_ideal = np.zeros(self.dims)
 
         # If there is a planet transmission spectrum but no LDCs generate them
-        is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
-        if planet is not None and is_tmodel:
-
-            if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
-                raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
-
-            # Check if the stellar params are the same
-            plist = ['teff','logg','feh','limb_dark']
-            old_params = [getattr(self.tmodel, p, None) for p in plist]
-
-            # Store planet details
-            self.planet = planet
-            self.tmodel = tmodel
-
-            if self.tmodel.limb_dark is None:
-                self.tmodel.limb_dark = ld_profile
-
-            # Set time of inferior conjunction
-            if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
-                self.tmodel.t0 = self.time[self.nframes//2]
-
-            # Convert seconds to days, in order to match the Period and T0 parameters
-            days_to_seconds = 86400.
-            if time_unit == 'seconds':
-                self.tmodel.t /= days_to_seconds
-            if time_unit == 'minutes':
-                self.tmodel.t /= days_to_seconds / 60
-            if time_unit == 'hours':
-                self.tmodel.t /= days_to_seconds / 3600
-
-            # Set the ld_coeffs if provided
-            stellar_params = [getattr(tmodel, p) for p in plist]
-            changed = stellar_params != old_params
-            if ld_coeffs is not None:
-                self.ld_coeffs = ld_coeffs
-
-            # Update the limb darkning coeffs if the stellar params or
-            # ld profile have changed
-            elif isinstance(model_grid, ModelGrid) and changed:
-
-                # Try to set the model grid
-                self.model_grid = model_grid
-                self.ld_coeffs = tmodel
-
-            else:
-                pass
+        # is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
+        # if planet is not None and is_tmodel:
+        #
+        #     if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+        #         raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
+        #
+        #     # Check if the stellar params are the same
+        #     plist = ['teff','logg','feh','limb_dark']
+        #     old_params = [getattr(self.tmodel, p, None) for p in plist]
+        #
+        #     # Store planet details
+        #     self.planet = planet
+        #     self.tmodel = tmodel
+        #
+        #     if self.tmodel.limb_dark is None:
+        #         self.tmodel.limb_dark = ld_profile
+        #
+        #     # Set time of inferior conjunction
+        #     if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
+        #         self.tmodel.t0 = self.time[self.nframes//2]
+        #
+        #     # Convert seconds to days, in order to match the Period and T0 parameters
+        #     days_to_seconds = 86400.
+        #     if time_unit == 'seconds':
+        #         self.tmodel.t /= days_to_seconds
+        #     if time_unit == 'minutes':
+        #         self.tmodel.t /= days_to_seconds / 60
+        #     if time_unit == 'hours':
+        #         self.tmodel.t /= days_to_seconds / 3600
+        #
+        #     # Set the ld_coeffs if provided
+        #     stellar_params = [getattr(tmodel, p) for p in plist]
+        #     changed = stellar_params != old_params
+        #     if ld_coeffs is not None:
+        #         self.ld_coeffs = ld_coeffs
+        #
+        #     # Update the limb darkning coeffs if the stellar params or
+        #     # ld profile have changed
+        #     elif isinstance(model_grid, mg.ModelGrid) and changed:
+        #
+        #         # Try to set the model grid
+        #         self.model_grid = model_grid
+        #         self.ld_coeffs = tmodel
+        #
+        #     else:
+        #         pass
 
         # Generate simulation for each order
         for order in self.orders:
@@ -351,16 +349,17 @@ class TSO(object):
         feh: float, int
             The logarithm of the star metallicity/solar metallicity
         """
-        # Use input ld coeff array
-        if isinstance(coeffs, np.ndarray) and len(coeffs.shape)==3:
-            self._ld_coeffs = coeffs
-
-        # Or generate them if the stellar parameters have changed
-        elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, ModelGrid):
-            self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff','logg','feh']], model_grid=self.model_grid) for order in self.orders]
-
-        else:
-            raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
+        pass
+        # # Use input ld coeff array
+        # if isinstance(coeffs, np.ndarray) and len(coeffs.shape)==3:
+        #     self._ld_coeffs = coeffs
+        #
+        # # Or generate them if the stellar parameters have changed
+        # elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, mg.ModelGrid):
+        #     self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff','logg','feh']], model_grid=self.model_grid) for order in self.orders]
+        #
+        # else:
+        #     raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
 
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -413,293 +412,291 @@ class TSO(object):
 
         print('Noise model finished:', time.time()-start)
 
-    def plot_frame(self, frame='', scale='linear', order=None, noise=True, traces=False, cmap=plt.cm.jet):
-        """
-        Plot a TSO frame
+    # def plot_frame(self, frame='', scale='linear', order=None, noise=True, traces=False):
+    #     """
+    #     Plot a TSO frame
+    #
+    #     Parameters
+    #     ----------
+    #     frame: int
+    #         The frame number to plot
+    #     scale: str
+    #         Plot in linear or log scale
+    #     orders: sequence
+    #         The order to isolate
+    #     noise: bool
+    #         Plot with the noise model
+    #     traces: bool
+    #         Plot the traces used to generate the frame
+    #     """
+    #     if order:
+    #         tso = getattr(self, 'tso_order{}_ideal'.format(order))
+    #     else:
+    #         if noise:
+    #             tso = self.tso
+    #         else:
+    #             tso = self.tso_ideal
+    #
+    #     # Get data for plotting
+    #     vmax = int(np.nanmax(tso[tso<np.inf]))
+    #     frame = np.array(tso[frame or self.nframes//2].data)
+    #
+    #     # Draw plot
+    #     plt.figure(figsize=(13,2))
+    #     if scale == 'log':
+    #         frame[frame<1.] = 1.
+    #         plt.imshow(frame, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
+    #     else:
+    #         plt.imshow(frame, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+    #
+    #     # Plot the polynomial too
+    #     if traces:
+    #         coeffs = trace_polynomials(subarray=self.subarray)
+    #         X = np.linspace(0, 2048, 2048)
+    #
+    #         # Order 1
+    #         Y = np.polyval(coeffs[0], X)
+    #         plt.plot(X, Y, color='r')
+    #
+    #         # Order 2
+    #         Y = np.polyval(coeffs[1], X)
+    #         plt.plot(X, Y, color='r')
+    #
+    #     plt.colorbar()
+    #     plt.xlim(0,2048)
+    #     plt.ylim(0,256)
+    #
+    # def plot_snr(self, frame='', cmap=plt.cm.jet):
+    #     """
+    #     Plot the SNR of a TSO frame
+    #
+    #     Parameters
+    #     ----------
+    #     frame: int
+    #         The frame number to plot
+    #     cmap: matplotlib.cm.colormap
+    #         The color map to use
+    #     """
+    #     # Get the SNR
+    #     snr  = np.sqrt(self.tso[frame or self.nframes//2].data)
+    #     vmax = int(np.nanmax(snr))
+    #
+    #     # Plot it
+    #     plt.figure(figsize=(13,2))
+    #     plt.imshow(snr, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
+    #     plt.colorbar()
+    #     plt.title('SNR over Spectrum')
+    #
+    # def plot_saturation(self, frame='', saturation=80.0, cmap=plt.cm.jet):
+    #     """
+    #     Plot the saturation of a TSO frame
+    #
+    #     Parameters
+    #     ----------
+    #     frame: int
+    #         The frame number to plot
+    #     saturation: float
+    #         Percentage of full well that defines saturation
+    #     cmap: matplotlib.cm.colormap
+    #         The color map to use
+    #     """
+    #     # The full well of the detector pixels
+    #     fullWell = 65536.0
+    #
+    #     # Get saturated pixels
+    #     saturated = np.array(self.tso[frame or self.nframes//2].data) > (saturation/100.0) * fullWell
+    #
+    #     # Plot it
+    #     plt.figure(figsize=(13,2))
+    #     plt.imshow(saturated, origin='lower', interpolation='none', cmap=cmap)
+    #     plt.colorbar()
+    #     plt.title('{} Saturated Pixels'.format(len(saturated[saturated>fullWell])))
+    #
+    # def plot_slice(self, column, trace='tso', frame=0, order='', **kwargs):
+    #     """
+    #     Plot a column of a frame to see the PSF in the cross dispersion direction
+    #
+    #     Parameters
+    #     ----------
+    #     column: int, sequence
+    #         The column index(es) to plot a light curve for
+    #     trace: str
+    #         The attribute name to plot
+    #     frame: int
+    #         The frame number to plot
+    #     """
+    #     if order:
+    #         tso = getattr(self, 'tso_order{}_ideal'.format(order))
+    #     else:
+    #         tso = self.tso
+    #
+    #     flux = tso[frame].T
+    #
+    #     if isinstance(column, int):
+    #         column = [column]
+    #
+    #     for col in column:
+    #         plt.plot(flux[col], label='Column {}'.format(col), **kwargs)
+    #
+    #     plt.xlim(0,256)
+    #
+    #     plt.legend(loc=0, frameon=False)
+    #
+    # def plot_ramp(self):
+    #     """
+    #     Plot the total flux on each frame to display the ramp
+    #     """
+    #     plt.figure()
+    #     plt.plot(np.sum(self.tso, axis=(-1, -2)), ls='--', marker='o')
+    #     plt.xlabel('Group')
+    #     plt.ylabel('Count Rate [ADU/s]')
+    #     plt.grid()
+    #
+    # def plot_lightcurve(self, column=None, time_unit='seconds',
+    #                     cmap=plt.cm.coolwarm, resolution_mult=20,
+    #                     theory_alpha=0.1):
+    #     """
+    #     Plot a lightcurve for each column index given
+    #
+    #     Parameters
+    #     ----------
+    #     column: int, float, sequence
+    #         The integer column index(es) or float wavelength(s) in microns
+    #         to plot as a light curve
+    #     time_unit: string
+    #         The string indicator for the units that the self.time array is in
+    #         options: 'seconds', 'minutes', 'hours', 'days' (default)
+    #     cmap: matplotlib.pyplot.cm entry
+    #         A selection from the matplotlib.pyplot.cm color maps library
+    #     resolution_mult: int
+    #         The number of theoretical points to plot for each data point plotted here
+    #     """
+    #     # Get the scaled flux in each column for the last group in
+    #     # each integration
+    #     flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
+    #     flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
+    #
+    #     # Make it into an array
+    #     if isinstance(column, (int, float)): column = [column]
+    #
+    #     if column is None: column = list(range(self.tso.shape[-1]))
+    #
+    #     n_colors = len(column)
+    #     color_cycle = cmap(np.linspace(0, cmap.N, n_colors, dtype=int))
+    #
+    #     for kcol, col in tqdm(enumerate(column), total=len(column)):
+    #
+    #         # If it is an index
+    #         if isinstance(col, int):
+    #             lightcurve = flux_cols[:, col]
+    #             label = 'Column {}'.format(col)
+    #
+    #         # Or assumed to be a wavelength in microns
+    #         elif isinstance(col, float):
+    #             waves = np.mean(self.wave[0], axis=0)
+    #             lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
+    #             label = '{} um'.format(col)
+    #
+    #         else:
+    #             print('Please enter an index, astropy quantity, or array thereof.')
+    #             return
+    #
+    #         # Plot the theoretical light curve
+    #         # if self.rp is not None:
+    #         #     if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+    #         #         raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
+    #         #
+    #         #     time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
+    #         #
+    #         #     days_to_seconds = 86400.
+    #         #     if time_unit == 'seconds':
+    #         #         time /= days_to_seconds
+    #         #     if time_unit == 'minutes':
+    #         #         time /= days_to_seconds / 60
+    #         #     if time_unit == 'hours':
+    #         #         time /= days_to_seconds / 3600
+    #         #
+    #         #     tmodel = batman.TransitModel(self.tmodel, time)
+    #         #     tmodel.rp = self.rp[col]
+    #         #     theory = tmodel.light_curve(tmodel)
+    #         #     theory *= max(lightcurve)/max(theory)
+    #         #
+    #         #     plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors], alpha=theory_alpha)
+    #
+    #         data_time = self.time[self.ngrps-1::self.ngrps].copy()
+    #
+    #         if time_unit == 'seconds':
+    #             data_time /= days_to_seconds
+    #         if time_unit == 'minutes':
+    #             data_time /= days_to_seconds / 60
+    #         if time_unit == 'hours':
+    #             data_time /= days_to_seconds / 3600
+    #
+    #         plt.plot(data_time, lightcurve, label=label, marker='o', ls='None', color=color_cycle[kcol%n_colors])
+    #
+    #     plt.legend(loc=0, frameon=False)
+    #
+    # def plot_spectrum(self, frame=0, order=None):
+    #     """
+    #     Parameters
+    #     ----------
+    #     frame: int
+    #         The frame number to plot
+    #     """
+    #     if order is not None:
+    #         tso = getattr(self, 'tso_order{}_ideal'.format(order))
+    #     else:
+    #         tso = self.tso
+    #
+    #     # Get extracted spectrum (Column sum for now)
+    #     wave = np.mean(self.wave[0], axis=0)
+    #     flux = np.sum(tso[frame].data, axis=0)
+    #     response = 1./self.photom_order1
+    #
+    #     # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
+    #     # that we can convert the flux at each wavelegth into [ADU/s]
+    #     flux *= response/self.time[np.mod(self.ngrps, frame)]
+    #
+    #     # Plot it along with input spectrum
+    #     plt.figure(figsize=(13,5))
+    #     plt.loglog(wave, flux, label='Extracted')
+    #     plt.loglog(*self.star, label='Injected')
+    #     plt.xlim(wave[0]*0.95, wave[-1]*1.05)
+    #     plt.ylim(np.min(flux)*0.9, np.max(flux)*1.1)
+    #     plt.legend()
 
-        Parameters
-        ----------
-        frame: int
-            The frame number to plot
-        scale: str
-            Plot in linear or log scale
-        orders: sequence
-            The order to isolate
-        noise: bool
-            Plot with the noise model
-        traces: bool
-            Plot the traces used to generate the frame
-        cmap: str
-            The color map to use
-        """
-        if order:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Get data for plotting
-        vmax = int(np.nanmax(tso[tso<np.inf]))
-        frame = np.array(tso[frame or self.nframes//2].data)
-
-        # Draw plot
-        plt.figure(figsize=(13,2))
-        if scale == 'log':
-            frame[frame<1.] = 1.
-            plt.imshow(frame, origin='lower', interpolation='none', norm=matplotlib.colors.LogNorm(), vmin=1, vmax=vmax, cmap=cmap)
-        else:
-            plt.imshow(frame, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
-
-        # Plot the polynomial too
-        if traces:
-            coeffs = trace_polynomials(subarray=self.subarray)
-            X = np.linspace(0, 2048, 2048)
-
-            # Order 1
-            Y = np.polyval(coeffs[0], X)
-            plt.plot(X, Y, color='r')
-
-            # Order 2
-            Y = np.polyval(coeffs[1], X)
-            plt.plot(X, Y, color='r')
-
-        plt.colorbar()
-        plt.xlim(0,2048)
-        plt.ylim(0,256)
-
-    def plot_snr(self, frame='', cmap=plt.cm.jet):
-        """
-        Plot the SNR of a TSO frame
-
-        Parameters
-        ----------
-        frame: int
-            The frame number to plot
-        cmap: matplotlib.cm.colormap
-            The color map to use
-        """
-        # Get the SNR
-        snr  = np.sqrt(self.tso[frame or self.nframes//2].data)
-        vmax = int(np.nanmax(snr))
-
-        # Plot it
-        plt.figure(figsize=(13,2))
-        plt.imshow(snr, origin='lower', interpolation='none', vmin=1, vmax=vmax, cmap=cmap)
-        plt.colorbar()
-        plt.title('SNR over Spectrum')
-
-    def plot_saturation(self, frame='', saturation=80.0, cmap=plt.cm.jet):
-        """
-        Plot the saturation of a TSO frame
-
-        Parameters
-        ----------
-        frame: int
-            The frame number to plot
-        saturation: float
-            Percentage of full well that defines saturation
-        cmap: matplotlib.cm.colormap
-            The color map to use
-        """
-        # The full well of the detector pixels
-        fullWell = 65536.0
-
-        # Get saturated pixels
-        saturated = np.array(self.tso[frame or self.nframes//2].data) > (saturation/100.0) * fullWell
-
-        # Plot it
-        plt.figure(figsize=(13,2))
-        plt.imshow(saturated, origin='lower', interpolation='none', cmap=cmap)
-        plt.colorbar()
-        plt.title('{} Saturated Pixels'.format(len(saturated[saturated>fullWell])))
-
-    def plot_slice(self, column, trace='tso', frame=0, order='', **kwargs):
-        """
-        Plot a column of a frame to see the PSF in the cross dispersion direction
-
-        Parameters
-        ----------
-        column: int, sequence
-            The column index(es) to plot a light curve for
-        trace: str
-            The attribute name to plot
-        frame: int
-            The frame number to plot
-        """
-        if order:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            tso = self.tso
-
-        flux = tso[frame].T
-
-        if isinstance(column, int):
-            column = [column]
-
-        for col in column:
-            plt.plot(flux[col], label='Column {}'.format(col), **kwargs)
-
-        plt.xlim(0,256)
-
-        plt.legend(loc=0, frameon=False)
-
-    def plot_ramp(self):
-        """
-        Plot the total flux on each frame to display the ramp
-        """
-        plt.figure()
-        plt.plot(np.sum(self.tso, axis=(-1, -2)), ls='--', marker='o')
-        plt.xlabel('Group')
-        plt.ylabel('Count Rate [ADU/s]')
-        plt.grid()
-
-    def plot_lightcurve(self, column=None, time_unit='seconds',
-                        cmap=plt.cm.coolwarm, resolution_mult=20,
-                        theory_alpha=0.1):
-        """
-        Plot a lightcurve for each column index given
-
-        Parameters
-        ----------
-        column: int, float, sequence
-            The integer column index(es) or float wavelength(s) in microns
-            to plot as a light curve
-        time_unit: string
-            The string indicator for the units that the self.time array is in
-            options: 'seconds', 'minutes', 'hours', 'days' (default)
-        cmap: matplotlib.pyplot.cm entry
-            A selection from the matplotlib.pyplot.cm color maps library
-        resolution_mult: int
-            The number of theoretical points to plot for each data point plotted here
-        """
-        # Get the scaled flux in each column for the last group in
-        # each integration
-        flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
-        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
-
-        # Make it into an array
-        if isinstance(column, (int, float)): column = [column]
-
-        if column is None: column = list(range(self.tso.shape[-1]))
-
-        n_colors = len(column)
-        color_cycle = cmap(np.linspace(0, cmap.N, n_colors, dtype=int))
-
-        for kcol, col in tqdm(enumerate(column), total=len(column)):
-
-            # If it is an index
-            if isinstance(col, int):
-                lightcurve = flux_cols[:, col]
-                label = 'Column {}'.format(col)
-
-            # Or assumed to be a wavelength in microns
-            elif isinstance(col, float):
-                waves = np.mean(self.wave[0], axis=0)
-                lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
-                label = '{} um'.format(col)
-
-            else:
-                print('Please enter an index, astropy quantity, or array thereof.')
-                return
-
-            # Plot the theoretical light curve
-            if self.rp is not None:
-                if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
-                    raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
-
-                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-
-                days_to_seconds = 86400.
-                if time_unit == 'seconds':
-                    time /= days_to_seconds
-                if time_unit == 'minutes':
-                    time /= days_to_seconds / 60
-                if time_unit == 'hours':
-                    time /= days_to_seconds / 3600
-
-                tmodel = batman.TransitModel(self.tmodel, time)
-                tmodel.rp = self.rp[col]
-                theory = tmodel.light_curve(tmodel)
-                theory *= max(lightcurve)/max(theory)
-
-                plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors], alpha=theory_alpha)
-
-            data_time = self.time[self.ngrps-1::self.ngrps].copy()
-
-            if time_unit == 'seconds':
-                data_time /= days_to_seconds
-            if time_unit == 'minutes':
-                data_time /= days_to_seconds / 60
-            if time_unit == 'hours':
-                data_time /= days_to_seconds / 3600
-
-            plt.plot(data_time, lightcurve, label=label, marker='o', ls='None', color=color_cycle[kcol%n_colors])
-
-        plt.legend(loc=0, frameon=False)
-
-    def plot_spectrum(self, frame=0, order=None):
-        """
-        Parameters
-        ----------
-        frame: int
-            The frame number to plot
-        """
-        if order is not None:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            tso = self.tso
-
-        # Get extracted spectrum (Column sum for now)
-        wave = np.mean(self.wave[0], axis=0)
-        flux = np.sum(tso[frame].data, axis=0)
-        response = 1./self.photom_order1
-
-        # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
-        # that we can convert the flux at each wavelegth into [ADU/s]
-        flux *= response/self.time[np.mod(self.ngrps, frame)]
-
-        # Plot it along with input spectrum
-        plt.figure(figsize=(13,5))
-        plt.loglog(wave, flux, label='Extracted')
-        plt.loglog(*self.star, label='Injected')
-        plt.xlim(wave[0]*0.95, wave[-1]*1.05)
-        plt.ylim(np.min(flux)*0.9, np.max(flux)*1.1)
-        plt.legend()
-
-    def save(self, filename='dummy.save'):
-        """
-        Save the TSO data to file
-
-        Parameters
-        ----------
-        filename: str
-            The path of the save file
-        """
-        print('Saving TSO class dict to {}'.format(filename))
-        joblib.dump(self.__dict__, filename)
-
-    def load(self, filename):
-        """
-        Load a previously calculated TSO
-
-        Paramaters
-        ----------
-        filename: str
-            The path of the save file
-
-        Returns
-        -------
-        TSO
-            A TSO class dict
-        """
-        print('Loading TSO instance from {}'.format(filename))
-        load_dict = joblib.load(filename)
-        # for p in [i for i in dir(load_dict)]:
-        #     setattr(self, p, getattr(params, p))
-        for key in load_dict.keys():
-            exec("self." + key + " = load_dict['" + key + "']")
+    # def save(self, filename='dummy.save'):
+    #     """
+    #     Save the TSO data to file
+    #
+    #     Parameters
+    #     ----------
+    #     filename: str
+    #         The path of the save file
+    #     """
+    #     print('Saving TSO class dict to {}'.format(filename))
+    #     joblib.dump(self.__dict__, filename)
+    #
+    # def load(self, filename):
+    #     """
+    #     Load a previously calculated TSO
+    #
+    #     Paramaters
+    #     ----------
+    #     filename: str
+    #         The path of the save file
+    #
+    #     Returns
+    #     -------
+    #     TSO
+    #         A TSO class dict
+    #     """
+    #     print('Loading TSO instance from {}'.format(filename))
+    #     load_dict = joblib.load(filename)
+    #     # for p in [i for i in dir(load_dict)]:
+    #     #     setattr(self, p, getattr(params, p))
+    #     for key in load_dict.keys():
+    #         exec("self." + key + " = load_dict['" + key + "']")
 
     def to_fits(self, outfile):
         """
