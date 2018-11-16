@@ -11,7 +11,7 @@ twine==1.12.1
 astropy==3.0.5
 numpy==1.15.4
 bokeh==1.0.1
-svo_filters
+svo_filters==0.2.16
 scipy
 webbpsf
 # batman-package==2.1.0
