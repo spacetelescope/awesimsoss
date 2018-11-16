@@ -101,7 +101,7 @@ And here are some parameters for our planetary system:
    params = batman.TransitParams()
    params.t0 = 0. # time of inferior conjunction
    params.per = 5.7214742 # orbital period (days)
-   params.a = 0.0558\ *q.AU.to(ac.R_sun)*\ 0.66 # semi-major axis (in units of stellar radii)
+   params.a = 0.0558\ *q.AU.to(ac.R_sun)*0.66 # semi-major axis (in units of stellar radii)
    params.rp = 0.1 # radius ratio for Jupiter orbiting the Sun
    params.inc = 89.8 # orbital inclination (in degrees)
    params.ecc = 0. # eccentricity
