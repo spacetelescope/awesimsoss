@@ -5,17 +5,16 @@ Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
 
 import os
+import pkg_resources
+import multiprocessing
+import time
+import warnings
+
 import numpy as np
 import bokeh
 # import batman
 from astropy.io import fits
-
-import multiprocessing
-import time
-import warnings
 import webbpsf
-import pkg_resources
-
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from functools import partial
