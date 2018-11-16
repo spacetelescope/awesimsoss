@@ -19,7 +19,7 @@ import batman
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
-from ExoCTK import ModelGrid
+from exoctk import ModelGrid
 from sklearn.externals import joblib
 
 from . import generate_darks as gd
