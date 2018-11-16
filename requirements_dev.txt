@@ -16,5 +16,5 @@ scipy==1.1.0
 webbpsf==0.7.0
 # batman-package==2.1.0
 
-pytest==3.8.2
+pytest==4.0.0
 pytest-runner==4.2
