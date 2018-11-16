@@ -118,10 +118,12 @@ And here are some parameters for our planetary system:
 Now the code to generate a simulated planetary transit around our star might look like:
 
 .. code:: python
+
    tso.run_simulation(planet=planet1D, tmodel=tmodel, time_unit='seconds')
    tso.plot_lightcurve(column=42)
 
 We can write this to a FITS file directly ingestible by the JWST pipeline with:
 
 .. code:: python
+
    tso.to_fits('my_SOSS_simulation.fits')
