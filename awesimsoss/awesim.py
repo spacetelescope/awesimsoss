@@ -19,7 +19,6 @@ import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
 # from exoctk import modelgrid as mg
-from sklearn.externals import joblib
 
 from . import generate_darks as gd
 from . import make_trace as mt
@@ -666,38 +665,38 @@ class TSO(object):
         plt.ylim(np.min(flux)*0.9, np.max(flux)*1.1)
         plt.legend()
 
-    def save(self, filename='dummy.save'):
-        """
-        Save the TSO data to file
-
-        Parameters
-        ----------
-        filename: str
-            The path of the save file
-        """
-        print('Saving TSO class dict to {}'.format(filename))
-        joblib.dump(self.__dict__, filename)
-
-    def load(self, filename):
-        """
-        Load a previously calculated TSO
-
-        Paramaters
-        ----------
-        filename: str
-            The path of the save file
-
-        Returns
-        -------
-        TSO
-            A TSO class dict
-        """
-        print('Loading TSO instance from {}'.format(filename))
-        load_dict = joblib.load(filename)
-        # for p in [i for i in dir(load_dict)]:
-        #     setattr(self, p, getattr(params, p))
-        for key in load_dict.keys():
-            exec("self." + key + " = load_dict['" + key + "']")
+    # def save(self, filename='dummy.save'):
+    #     """
+    #     Save the TSO data to file
+    #
+    #     Parameters
+    #     ----------
+    #     filename: str
+    #         The path of the save file
+    #     """
+    #     print('Saving TSO class dict to {}'.format(filename))
+    #     joblib.dump(self.__dict__, filename)
+    #
+    # def load(self, filename):
+    #     """
+    #     Load a previously calculated TSO
+    #
+    #     Paramaters
+    #     ----------
+    #     filename: str
+    #         The path of the save file
+    #
+    #     Returns
+    #     -------
+    #     TSO
+    #         A TSO class dict
+    #     """
+    #     print('Loading TSO instance from {}'.format(filename))
+    #     load_dict = joblib.load(filename)
+    #     # for p in [i for i in dir(load_dict)]:
+    #     #     setattr(self, p, getattr(params, p))
+    #     for key in load_dict.keys():
+    #         exec("self." + key + " = load_dict['" + key + "']")
 
     def to_fits(self, outfile):
         """
