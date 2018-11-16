@@ -6,8 +6,8 @@ Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
 import os
 import numpy as np
-import matplotlib.pyplot as plt
-import batman
+import bokeh
+# import batman
 from astropy.io import fits
 
 import multiprocessing
@@ -16,9 +16,7 @@ import warnings
 import webbpsf
 import pkg_resources
 
-from ExoCTK import modelgrid
 from svo_filters import svo
-from ExoCTK.limb_darkening import limb_darkening_fit as lf
 from scipy.interpolate import interp1d
 from functools import partial
 from scipy.ndimage.interpolation import rotate
@@ -246,6 +244,12 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
     from awesimsoss.sim2D import awesim
     lookup = awesim.soss_ldc('quadratic', [3300, 4.5, 0])
     """
+    try:
+        from exoctk import modelgrid
+        from exoctk.limb_darkening import limb_darkening_fit as lf
+    except ImportError:
+        return
+        
     # Get the model grid
     if not isinstance(model_grid, modelgrid.ModelGrid):
         model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700)
@@ -276,11 +280,11 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
     coeff_cols = [c for c in coeff_table.colnames if c.startswith('c')]
     coeffs = [np.interp(wavelengths, coeff_table['wavelength'], coeff_table[c]) for c in coeff_cols]
 
-    # Compare
-    if plot:
-        plt.figure()
-        plt.scatter(coeff_table['c1'], coeff_table['c2'], c=coeff_table['wavelength'], marker='x')
-        plt.scatter(coeffs[0], coeffs[1], c=wavelengths, marker='o')
+    # # Compare
+    # if plot:
+    #     plt.figure()
+    #     plt.scatter(coeff_table['c1'], coeff_table['c2'], c=coeff_table['wavelength'], marker='x')
+    #     plt.scatter(coeffs[0], coeffs[1], c=wavelengths, marker='o')
 
     return np.array(coeffs).T
 
@@ -547,26 +551,26 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     flux = np.tile(psf, (len(time),1,1))
 
     # If there is a transiting planet...
-    if ld_coeffs is not None and rp is not None and isinstance(tmodel, batman.transitmodel.TransitModel):
-
-        # Set the wavelength dependent orbital parameters
-        tmodel.u = ld_coeffs
-        tmodel.rp = rp
-
-        # Generate the light curve for this pixel
-        lightcurve = tmodel.light_curve(tmodel)
-
-        # Scale the flux with the lightcurve
-        flux *= lightcurve[:, None, None]
+    # if ld_coeffs is not None and rp is not None and isinstance(tmodel, batman.transitmodel.TransitModel):
+    #
+    #     # Set the wavelength dependent orbital parameters
+    #     tmodel.u = ld_coeffs
+    #     tmodel.rp = rp
+    #
+    #     # Generate the light curve for this pixel
+    #     lightcurve = tmodel.light_curve(tmodel)
+    #
+    #     # Scale the flux with the lightcurve
+    #     flux *= lightcurve[:, None, None]
 
     # Apply the filter response to convert to [ADU/s]
     flux *= response
 
     # Plot
-    if plot:
-        plt.plot(time, np.nanmean(flux, axis=(1,2)))
-        plt.xlabel("Time from central transit")
-        plt.ylabel("Flux Density [photons/s/cm2/A]")
+    # if plot:
+    #     plt.plot(time, np.nanmean(flux, axis=(1,2)))
+    #     plt.xlabel("Time from central transit")
+    #     plt.ylabel("Flux Density [photons/s/cm2/A]")
 
     return flux
 
@@ -690,18 +694,18 @@ def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate
         fit1 = np.polyfit(x1, y1, poly_order)
         fit2 = np.polyfit(x2, y2, poly_order)
 
-        # Plot the results
-        plt.figure(figsize=(13,2))
-        plt.plot(x1, y1, c='b', marker='o', ls='none', label='Order 1')
-        plt.plot(x2, y2, c='b', marker='o', ls='none', label='Order 2')
-        plt.plot(x1, np.polyval(fit1, x1), c='r', label='Order 1 Fit')
-        plt.plot(x2, np.polyval(fit2, x2), c='r', label='Order 2 Fit')
-        plt.xlim(0,2048)
-        if subarray == 'SUBSTRIP96':
-            plt.ylim(0,96)
-        else:
-            plt.ylim(0,256)
-        plt.legend(loc=0)
+        # # Plot the results
+        # plt.figure(figsize=(13,2))
+        # plt.plot(x1, y1, c='b', marker='o', ls='none', label='Order 1')
+        # plt.plot(x2, y2, c='b', marker='o', ls='none', label='Order 2')
+        # plt.plot(x1, np.polyval(fit1, x1), c='r', label='Order 1 Fit')
+        # plt.plot(x2, np.polyval(fit2, x2), c='r', label='Order 2 Fit')
+        # plt.xlim(0,2048)
+        # if subarray == 'SUBSTRIP96':
+        #     plt.ylim(0,96)
+        # else:
+        #     plt.ylim(0,256)
+        # plt.legend(loc=0)
 
         return fit1, fit2
 
