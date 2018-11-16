@@ -13,13 +13,12 @@ from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
 
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
+from bokeh.plotting import figure
 # import batman
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
-from exoctk import ModelGrid
+# from exoctk import modelgrid as mg
 from sklearn.externals import joblib
 
 from . import generate_darks as gd
@@ -238,7 +237,7 @@ class TSO(object):
         #
         #     # Update the limb darkning coeffs if the stellar params or
         #     # ld profile have changed
-        #     elif isinstance(model_grid, ModelGrid) and changed:
+        #     elif isinstance(model_grid, mg.ModelGrid) and changed:
         #
         #         # Try to set the model grid
         #         self.model_grid = model_grid
@@ -357,7 +356,7 @@ class TSO(object):
         #     self._ld_coeffs = coeffs
         #
         # # Or generate them if the stellar parameters have changed
-        # elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, ModelGrid):
+        # elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, mg.ModelGrid):
         #     self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff','logg','feh']], model_grid=self.model_grid) for order in self.orders]
         #
         # else:
@@ -414,7 +413,7 @@ class TSO(object):
 
         print('Noise model finished:', time.time()-start)
 
-    def plot_frame(self, frame='', scale='linear', order=None, noise=True, traces=False, cmap=plt.cm.jet):
+    def plot_frame(self, frame='', scale='linear', order=None, noise=True, traces=False):
         """
         Plot a TSO frame
 
@@ -430,8 +429,6 @@ class TSO(object):
             Plot with the noise model
         traces: bool
             Plot the traces used to generate the frame
-        cmap: str
-            The color map to use
         """
         if order:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
