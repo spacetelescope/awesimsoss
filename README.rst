@@ -7,7 +7,7 @@ awesimsoss
         :target: https://pypi.python.org/pypi/awesimsoss
 
 .. image:: https://img.shields.io/travis/hover2pi/awesimsoss.svg
-        :target: https://travis-ci.org/hover2pi/awesimsoss
+        :target: https://travis-ci.com/hover2pi/awesimsoss
 
 .. image:: https://readthedocs.org/projects/awesimsoss/badge/?version=latest
         :target: https://awesimsoss.readthedocs.io/en/latest/?badge=latest
