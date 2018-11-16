@@ -30,6 +30,7 @@ Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument
 onboard the James Webb Space Telescope.
 
 Additional resources:
+
 - `Full documentation <https://awesimsoss.readthedocs.io/en/latest/>`_
 - `Jupyter notebook <https://github.com/spacetelescope/awesimsoss/blob/master/notebooks/awesimsoss_demo.ipynb>`_
 - `Build history <https://travis-ci.com/hover2pi/awesimsoss>`_
