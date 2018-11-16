@@ -91,8 +91,6 @@ Here is a sample transmission spectrum generated with PANDEXO:
 .. figure:: awesimsoss/img/1D_planet.png
    :alt: The input transmission spectrum
 
-   planet_input
-
 And here are some parameters for our planetary system:
 
 .. code:: python
