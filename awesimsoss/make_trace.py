@@ -1,13 +1,14 @@
 """
 A module to generate simulated 2D time-series SOSS data
 
-Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
+Authors: Joe Filippazzo
 """
 
 import os
 import pkg_resources
 import multiprocessing
 import time
+from functools import partial
 import warnings
 
 import numpy as np
@@ -17,7 +18,6 @@ from astropy.io import fits
 import webbpsf
 from svo_filters import svo
 from scipy.interpolate import interp1d
-from functools import partial
 from scipy.ndimage.interpolation import rotate
 from scipy.interpolate import interp2d, RectBivariateSpline
 

@@ -92,11 +92,12 @@ from __future__ import division, print_function
 
 import os
 import warnings
+import datetime
+
 from astropy.io import fits
 import numpy as np
 from scipy.ndimage.interpolation import zoom
 from astropy.stats.funcs import median_absolute_deviation as mad
-import datetime
 # import matplotlib.pyplot as plt # Handy for debugging
 
 
