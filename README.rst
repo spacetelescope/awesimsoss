@@ -21,18 +21,13 @@ awesimsoss
 
 
 Advanced Webb Exposure SIMulator for SOSS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
-This pure Python package produces simulated TSO data for the Single
+This pure Python 3.5+ package produces simulated TSO data for the Single
 Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument
 onboard the James Webb Space Telescope.
-
-Dependencies
-~~~~~~~~~~~~
-
-The following packages are needed to run ``awesimsoss``: - numpy -
-batman-package - astropy - scipy - matplotlib - exoctk
 
 Simulating SOSS Observations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
