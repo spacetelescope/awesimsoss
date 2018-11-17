@@ -13,6 +13,8 @@ awesimsoss
         :target: https://awesimsoss.readthedocs.io/en/latest/?badge=latest
         :alt: Documentation Status
 
+.. image:: https://coveralls.io/repos/github/hover2pi/awesimsoss/badge.svg?branch=coveralls
+        :target: https://coveralls.io/github/hover2pi/awesimsoss?branch=coveralls
 
 .. image:: https://pyup.io/repos/github/hover2pi/awesimsoss/shield.svg
      :target: https://pyup.io/repos/github/hover2pi/awesimsoss/

@@ -7,10 +7,15 @@ python:
 
 # command to install dependencies, e.g. pip install -r requirements.txt --use-mirrors
 install:
-  - pip install -U tox-travis
+  - pip install -r requirements_dev.txt
+  - pip install batman-package pytest pytest-cov coveralls
+  - git clone https://github.com/ExoCTK/exoctk.git
+  - python exoctk/setup.py develop
 
 # command to run tests, e.g. python setup.py test
-script: tox
+script:
+  - pytest tests --cov
+  - coveralls
 
 # deploy new versions to PyPI
 deploy:
