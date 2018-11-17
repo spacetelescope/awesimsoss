@@ -7,6 +7,7 @@ python:
 
 # command to install dependencies, e.g. pip install -r requirements.txt --use-mirrors
 install:
+  - pip install -r requirements_dev.txt
   - pip install batman-package pytest pytest-cov coveralls
   - git clone https://github.com/ExoCTK/exoctk.git
   - python exoctk/setup.py develop
