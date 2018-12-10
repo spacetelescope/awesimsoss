@@ -183,7 +183,7 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale,
     dims1 = cube.shape
     dims2 = signals.shape
     if dims1 != dims2:
-        raise ValueError
+        raise ValueError(dims1, "not equal to", dims2)
 
     # Make a new ramp
     newcube = cube.copy()*0.

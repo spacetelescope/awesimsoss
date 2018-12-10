@@ -27,7 +27,7 @@ FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
 SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
 
 
-def make_frame(psfs, subarray='SUBSTRIP256'):
+def make_frame(psfs):
     """
     Generate a frame from an array of psfs
 
@@ -35,8 +35,6 @@ def make_frame(psfs, subarray='SUBSTRIP256'):
     ----------
     psfs: sequence
         An array of psfs of shape (2048, 76, 76)
-    subarray: str
-        The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256']
 
     Returns
     -------
@@ -50,10 +48,7 @@ def make_frame(psfs, subarray='SUBSTRIP256'):
     for n, psf in enumerate(psfs):
         frame[:, n:n+76] += psf
 
-    # Trim if 96 subarray
-    idx = 160 if subarray == 'SUBSTRIP96' else 0
-
-    return frame[idx:, 38:-38]
+    return frame[:, 38:-38]
 
 def get_angle(pf, p0=np.array([0, 0]), pi=None):
     """Compute angle (in degrees) for pf-p0-pi corner
