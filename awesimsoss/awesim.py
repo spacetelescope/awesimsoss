@@ -435,7 +435,7 @@ class TSO(object):
         idx: int
             The frame index to plot
         scale: str
-            Plot in linear or log scale
+            Plot scale, ['linear', 'log']
         order: sequence
             The order to isolate
         noise: bool
@@ -659,35 +659,53 @@ class TSO(object):
     #         plt.plot(data_time, lightcurve, label=label, marker='o', ls='None', color=color_cycle[kcol%n_colors])
     #
     #     plt.legend(loc=0, frameon=False)
-    #
-    # def plot_spectrum(self, frame=0, order=None):
-    #     """
-    #     Parameters
-    #     ----------
-    #     frame: int
-    #         The frame number to plot
-    #     """
-    #     if order is not None:
-    #         tso = getattr(self, 'tso_order{}_ideal'.format(order))
-    #     else:
-    #         tso = self.tso
-    #
-    #     # Get extracted spectrum (Column sum for now)
-    #     wave = np.mean(self.wave[0], axis=0)
-    #     flux = np.sum(tso[frame].data, axis=0)
-    #     response = 1./self.photom_order1
-    #
-    #     # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
-    #     # that we can convert the flux at each wavelegth into [ADU/s]
-    #     flux *= response/self.time[np.mod(self.ngrps, frame)]
-    #
-    #     # Plot it along with input spectrum
-    #     plt.figure(figsize=(13, 5))
-    #     plt.loglog(wave, flux, label='Extracted')
-    #     plt.loglog(*self.star, label='Injected')
-    #     plt.xlim(wave[0]*0.95, wave[-1]*1.05)
-    #     plt.ylim(np.min(flux)*0.9, np.max(flux)*1.1)
-    #     plt.legend()
+
+    def plot_spectrum(self, frame=0, order=None, noise=False, scale='log'):
+        """
+        Parameters
+        ----------
+        frame: int
+            The frame number to plot
+        order: sequence
+            The order to isolate
+        noise: bool
+            Plot with the noise model
+        scale: str
+            Plot scale, ['linear', 'log']
+        """
+        if order in [1, 2]:
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
+        else:
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
+
+        # Get extracted spectrum (Column sum for now)
+        wave = np.mean(self.wave[0], axis=0)
+        flux_out = np.sum(tso[frame].data, axis=0)
+        response = 1./self.photom_order1
+
+        # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
+        # that we can convert the flux at each wavelegth into [ADU/s]
+        flux_out *= response/self.time[np.mod(self.ngrps, frame)]
+
+        # Plot it along with input spectrum
+        flux_in = np.interp(wave, self.star[0], self.star[1])
+
+        # Make the spectrum plot
+        spec = figure(x_axis_type=scale, y_axis_type=scale)
+        spec.line(wave, flux_out, legend='Extracted', color='red')
+        spec.line(wave, flux_in, legend='Injected', alpha=0.5)
+        spec.yaxis.axis_label = 'Flux Density [{}]'.format(self.star[1].unit)
+
+        # Get the residuals
+        res = figure(x_axis_type=scale, height=200, x_range=spec.x_range)
+        res.line(wave, flux_out-flux_in)
+        res.xaxis.axis_label = 'Wavelength [{}]'.format(self.star[0].unit)
+        res.yaxis.axis_label = 'Residuals'
+
+        show(column(spec, res))
 
     def to_fits(self, outfile):
         """
