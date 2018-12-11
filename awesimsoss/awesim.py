@@ -436,7 +436,7 @@ class TSO(object):
             The frame index to plot
         scale: str
             Plot in linear or log scale
-        orders: sequence
+        order: sequence
             The order to isolate
         noise: bool
             Plot with the noise model
@@ -445,7 +445,7 @@ class TSO(object):
         saturation: float
             The fraction of full well defined as saturation
         """
-        if order:
+        if order in [1, 2]:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
             if noise:
@@ -501,23 +501,23 @@ class TSO(object):
 
         # Plot the polynomial too
         if traces:
-            coeffs = trace_polynomials(subarray=self.subarray)
+            coeffs = mt.trace_polynomials(subarray=self.subarray)
             X = np.linspace(0, 2048, 2048)
 
             # Order 1
             Y = np.polyval(coeffs[0], X)
-            fig.line(X, Y, color='r')
+            fig.line(X, Y, color='red')
 
             # Order 2
             Y = np.polyval(coeffs[1], X)
-            fig.line(X, Y, color='r')
+            fig.line(X, Y, color='red')
 
         if draw:
             show(fig)
         else:
             return fig
 
-    def plot_slice(self, col, trace='tso', idx=0, order=None, **kwargs):
+    def plot_slice(self, col, idx=0, order=None, noise=False, **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
 
@@ -525,15 +525,20 @@ class TSO(object):
         ----------
         col: int, sequence
             The column index(es) to plot a light curve for
-        trace: str
-            The attribute name to plot
         idx: int
             The frame index to plot
+        order: sequence
+            The order to isolate
+        noise: bool
+            Plot with the noise model
         """
-        if order is not None:
+        if order in [1, 2]:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
-            tso = self.tso
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
 
         # Transpose data
         flux = tso[idx].T
@@ -543,7 +548,7 @@ class TSO(object):
             col = [col]
 
         # Get the data
-        dfig = self.plot(ptype='data', idx=idx, order=order, traces=False, draw=False)
+        dfig = self.plot(ptype='data', idx=idx, order=order, draw=False, noise=noise, **kwargs)
 
         # Make the figure
         fig = figure(width=1024, height=500)
@@ -552,8 +557,7 @@ class TSO(object):
         fig.legend.click_policy = 'mute'
         for c in col:
             color = next(COLORS)
-            fig.line(np.arange(flux[c].size), flux[c], color=color,
-                     legend='Column {}'.format(c), **kwargs)
+            fig.line(np.arange(flux[c].size), flux[c], color=color, legend='Column {}'.format(c))
             vline = Span(location=c, dimension='height', line_color=color, line_width=3)
             dfig.add_layout(vline)
 
