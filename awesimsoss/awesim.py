@@ -14,7 +14,10 @@ from multiprocessing import cpu_count
 
 import numpy as np
 from bokeh.plotting import figure, show
-from bokeh.models import LogColorMapper, LogTicker, LinearColorMapper, ColorBar
+from bokeh.models import LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
+from bokeh.layouts import column
+from bokeh.palettes import Category20
+import itertools
 import batman
 import astropy.units as q
 import astropy.constants as ac
@@ -33,6 +36,9 @@ except:
 
 warnings.simplefilter('ignore')
 
+def color_gen():
+    yield from itertools.cycle(Category20[20])
+COLORS = color_gen()
 
 class TSO(object):
     """
@@ -511,18 +517,18 @@ class TSO(object):
         else:
             return fig
 
-    def plot_slice(self, column, trace='tso', frame=0, order=None, **kwargs):
+    def plot_slice(self, col, trace='tso', idx=0, order=None, **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
 
         Parameters
         ----------
-        column: int, sequence
+        col: int, sequence
             The column index(es) to plot a light curve for
         trace: str
             The attribute name to plot
-        frame: int
-            The frame number to plot
+        idx: int
+            The frame index to plot
         """
         if order is not None:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
@@ -530,29 +536,42 @@ class TSO(object):
             tso = self.tso
 
         # Transpose data
-        flux = tso[frame].T
+        flux = tso[idx].T
 
         # Turn one column into a list
-        if isinstance(column, int):
-            column = [column]
+        if isinstance(col, int):
+            col = [col]
+
+        # Get the data
+        dfig = self.plot(ptype='data', idx=idx, order=order, traces=False, draw=False)
 
         # Make the figure
-        fig = figure()
-        for col in column:
-            fig.line(np.arange(flux[col].size), flux[col], legend='Column {}'.format(col), **kwargs)
+        fig = figure(width=1024, height=500)
+        fig.xaxis.axis_label = 'Row'
+        fig.yaxis.axis_label = 'Count Rate [ADU/s]'
+        fig.legend.click_policy = 'mute'
+        for c in col:
+            color = next(COLORS)
+            fig.line(np.arange(flux[c].size), flux[c], color=color,
+                     legend='Column {}'.format(c), **kwargs)
+            vline = Span(location=c, dimension='height', line_color=color, line_width=3)
+            dfig.add_layout(vline)
 
-        show(fig)
+        show(column(fig, dfig))
 
-    # def plot_ramp(self):
-    #     """
-    #     Plot the total flux on each frame to display the ramp
-    #     """
-    #     plt.figure()
-    #     plt.plot(np.sum(self.tso, axis=(-1, -2)), ls='--', marker='o')
-    #     plt.xlabel('Group')
-    #     plt.ylabel('Count Rate [ADU/s]')
-    #     plt.grid()
-    #
+    def plot_ramp(self):
+        """
+        Plot the total flux on each frame to display the ramp
+        """
+        ramp = figure()
+        x = range(self.tso.shape[0])
+        y = np.sum(self.tso, axis=(-1, -2))
+        ramp.circle(x, y, size=12)
+        ramp.xaxis.axis_label = 'Group'
+        ramp.yaxis.axis_label = 'Count Rate [ADU/s]'
+
+        show(ramp)
+
     # def plot_lightcurve(self, column=None, time_unit='seconds', 
     #                     cmap=plt.cm.coolwarm, resolution_mult=20, 
     #                     theory_alpha=0.1):
