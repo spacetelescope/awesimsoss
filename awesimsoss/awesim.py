@@ -576,89 +576,91 @@ class TSO(object):
 
         show(ramp)
 
-    # def plot_lightcurve(self, column=None, time_unit='seconds', 
-    #                     cmap=plt.cm.coolwarm, resolution_mult=20, 
-    #                     theory_alpha=0.1):
-    #     """
-    #     Plot a lightcurve for each column index given
-    #
-    #     Parameters
-    #     ----------
-    #     column: int, float, sequence
-    #         The integer column index(es) or float wavelength(s) in microns
-    #         to plot as a light curve
-    #     time_unit: string
-    #         The string indicator for the units that the self.time array is in
-    #         options: 'seconds', 'minutes', 'hours', 'days' (default)
-    #     cmap: matplotlib.pyplot.cm entry
-    #         A selection from the matplotlib.pyplot.cm color maps library
-    #     resolution_mult: int
-    #         The number of theoretical points to plot for each data point plotted here
-    #     """
-    #     # Get the scaled flux in each column for the last group in
-    #     # each integration
-    #     flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
-    #     flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
-    #
-    #     # Make it into an array
-    #     if isinstance(column, (int, float)): column = [column]
-    #
-    #     if column is None: column = list(range(self.tso.shape[-1]))
-    #
-    #     n_colors = len(column)
-    #     color_cycle = cmap(np.linspace(0, cmap.N, n_colors, dtype=int))
-    #
-    #     for kcol, col in tqdm(enumerate(column), total=len(column)):
-    #
-    #         # If it is an index
-    #         if isinstance(col, int):
-    #             lightcurve = flux_cols[:, col]
-    #             label = 'Column {}'.format(col)
-    #
-    #         # Or assumed to be a wavelength in microns
-    #         elif isinstance(col, float):
-    #             waves = np.mean(self.wave[0], axis=0)
-    #             lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
-    #             label = '{} um'.format(col)
-    #
-    #         else:
-    #             print('Please enter an index, astropy quantity, or array thereof.')
-    #             return
-    #
-    #         # Plot the theoretical light curve
-    #         # if self.rp is not None:
-    #         #     if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
-    #         #         raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
-    #         #
-    #         #     time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-    #         #
-    #         #     days_to_seconds = 86400.
-    #         #     if time_unit == 'seconds':
-    #         #         time /= days_to_seconds
-    #         #     if time_unit == 'minutes':
-    #         #         time /= days_to_seconds / 60
-    #         #     if time_unit == 'hours':
-    #         #         time /= days_to_seconds / 3600
-    #         #
-    #         #     tmodel = batman.TransitModel(self.tmodel, time)
-    #         #     tmodel.rp = self.rp[col]
-    #         #     theory = tmodel.light_curve(tmodel)
-    #         #     theory *= max(lightcurve)/max(theory)
-    #         #
-    #         #     plt.plot(time, theory, label=label+' model', marker='.', ls='--', color=color_cycle[kcol%n_colors], alpha=theory_alpha)
-    #
-    #         data_time = self.time[self.ngrps-1::self.ngrps].copy()
-    #
-    #         if time_unit == 'seconds':
-    #             data_time /= days_to_seconds
-    #         if time_unit == 'minutes':
-    #             data_time /= days_to_seconds / 60
-    #         if time_unit == 'hours':
-    #             data_time /= days_to_seconds / 3600
-    #
-    #         plt.plot(data_time, lightcurve, label=label, marker='o', ls='None', color=color_cycle[kcol%n_colors])
-    #
-    #     plt.legend(loc=0, frameon=False)
+    def plot_lightcurve(self, column=None, time_unit='seconds', resolution_mult=20, theory_alpha=0.1):
+        """
+        Plot a lightcurve for each column index given
+
+        Parameters
+        ----------
+        column: int, float, sequence
+            The integer column index(es) or float wavelength(s) in microns
+            to plot as a light curve
+        time_unit: string
+            The string indicator for the units that the self.time array is in
+            options: 'seconds', 'minutes', 'hours', 'days' (default)
+        resolution_mult: int
+            The number of theoretical points to plot for each data point plotted here
+        """
+        # Get the scaled flux in each column for the last group in
+        # each integration
+        flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
+        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
+
+        # Make it into an array
+        if isinstance(column, (int, float)):
+            column = [column]
+
+        if column is None:
+            column = list(range(self.tso.shape[-1]))
+
+        # Make the figure
+        lc = figure()
+
+        for kcol, col in tqdm(enumerate(column), total=len(column)):
+
+            color = next(COLORS)
+
+            # If it is an index
+            if isinstance(col, int):
+                lightcurve = flux_cols[:, col]
+                label = 'Column {}'.format(col)
+
+            # Or assumed to be a wavelength in microns
+            elif isinstance(col, float):
+                waves = np.mean(self.wave[0], axis=0)
+                lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
+                label = '{} um'.format(col)
+
+            else:
+                print('Please enter an index, astropy quantity, or array thereof.')
+                return
+
+            # Plot the theoretical light curve
+            if self.tmodel is not None:
+                if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
+                    raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
+
+                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
+
+                if time_unit == 'seconds':
+                    time /= 86400
+                if time_unit == 'minutes':
+                    time /= 1440
+                if time_unit == 'hours':
+                    time /= 24
+
+                tmodel = batman.TransitModel(self.tmodel, time)
+                tmodel.rp = self.rp[col]
+                theory = tmodel.light_curve(tmodel)
+                theory *= max(lightcurve)/max(theory)
+
+                lc.line(time, theory, legend=label+' model', color=color, alpha=theory_alpha)
+
+            data_time = self.time[self.ngrps-1::self.ngrps].copy()
+
+            if time_unit == 'seconds':
+                data_time /= 86400
+            if time_unit == 'minutes':
+                data_time /= 1440
+            if time_unit == 'hours':
+                data_time /= 24
+
+            # Plot the lightcurve
+            lc.circle(data_time, lightcurve, legend=label, color=color)
+
+        lc.xaxis.axis_label = 'Time [{}]'.format(time_unit)
+        lc.yaxis.axis_label = 'Transit Depth'
+        show(lc)
 
     def plot_spectrum(self, frame=0, order=None, noise=False, scale='log'):
         """
@@ -694,13 +696,13 @@ class TSO(object):
         flux_in = np.interp(wave, self.star[0], self.star[1])
 
         # Make the spectrum plot
-        spec = figure(x_axis_type=scale, y_axis_type=scale)
+        spec = figure(x_axis_type=scale, y_axis_type=scale, height=400)
         spec.line(wave, flux_out, legend='Extracted', color='red')
         spec.line(wave, flux_in, legend='Injected', alpha=0.5)
         spec.yaxis.axis_label = 'Flux Density [{}]'.format(self.star[1].unit)
 
         # Get the residuals
-        res = figure(x_axis_type=scale, height=200, x_range=spec.x_range)
+        res = figure(x_axis_type=scale, height=150, x_range=spec.x_range)
         res.line(wave, flux_out-flux_in)
         res.xaxis.axis_label = 'Wavelength [{}]'.format(self.star[0].unit)
         res.yaxis.axis_label = 'Residuals'
