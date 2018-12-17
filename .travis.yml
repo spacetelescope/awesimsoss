@@ -9,6 +9,8 @@ python:
 install:
   - pip install -r requirements_dev.txt
   - pip install batman-package pytest pytest-cov coveralls
+
+before_script:
   - git clone https://github.com/ExoCTK/exoctk.git
   - python exoctk/setup.py develop
 
