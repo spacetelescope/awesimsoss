@@ -80,6 +80,9 @@ class TSO(object):
         # Initialize simulation
         tso = TSO(ngrps=3, nints=10, star=star1D)
         """
+        # Check the star units
+        self._check_star(star)
+
         # Set instance attributes for the exposure
         self.subarray = subarray
         self.nrows = mt.SUBARRAY_Y[subarray]
@@ -100,7 +103,6 @@ class TSO(object):
         self.model_grid = None
 
         # Set instance attributes for the target
-        self.star = star
         self.wave = mt.wave_solutions(subarray)
         self.avg_wave = np.mean(self.wave, axis=1)
         self._ld_coeffs = np.zeros((3, 2048, 2))
@@ -131,12 +133,47 @@ class TSO(object):
         caldata = fits.getdata(calfile)
         self.photom = caldata[caldata['pupil'] == 'GR700XD']
 
+        # Save the trace polynomial coefficients
+        self.coeffs = mt.trace_polynomials(subarray=self.subarray)
+
         # Create the empty exposure
         self.dims = (self.nframes, self.nrows, self.ncols)
         self.tso = np.zeros(self.dims)
         self.tso_ideal = np.zeros(self.dims)
         self.tso_order1_ideal = np.zeros(self.dims)
         self.tso_order2_ideal = np.zeros(self.dims)
+
+    def _check_star(self, star):
+        """Make sure the input star has units
+
+        Parameters
+        ----------
+        star: sequence
+            The [W, F] or [W, F, E] of the star to simulate
+
+        Returns
+        -------
+        bool
+            True or False
+        """
+        # Check star is a sequence of length 2 or 3
+        if not isinstance(star, (list, tuple)) or not len(star) in [2, 3]:
+            raise ValueError(type(star), ': Star input must be a sequence of [W, F] or [W, F, E]')
+
+        # Check star has units
+        if not all([isinstance(i, q.quantity.Quantity) for i in star]):
+            types = ', '.join([type(i) for i in star])
+            raise ValueError('[{}]: Spectrum must be in astropy units'.format(types))
+
+        # Check the units
+        if not star[0].unit.is_equivalent(q.um):
+            raise ValueError(star[0].unit, ': Wavelength must be in units of distance')
+
+        if not all([i.unit.is_equivalent(q.erg/q.s/q.cm**2/q.AA) for i in star[1:]]):
+            raise ValueError(star[1].unit, ': Flux density must be in units of F_lambda')
+
+        # Good to go
+        self.star = star
 
     def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
                        ld_profile='quadratic', model_grid=None, n_jobs=1, verbose=True):
@@ -226,7 +263,8 @@ class TSO(object):
             if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
                 self.tmodel.t0 = self.time[self.nframes//2]
 
-            # Convert seconds to days, in order to match the Period and T0 parameters
+            # Convert seconds to days, in order to match the Period and
+            # T0 parameters
             days_to_seconds = 86400.
             if time_unit == 'seconds':
                 self.tmodel.t /= days_to_seconds
@@ -313,7 +351,6 @@ class TSO(object):
 
             # Make the 2048*N lightcurves into N frames
             pool = ThreadPool(n_jobs)
-            # func = partial(mt.make_frame, subarray=self.subarray)
             psfs = np.asarray(pool.map(mt.make_frame, psfs))
             pool.close()
             pool.join()
@@ -326,17 +363,19 @@ class TSO(object):
             setattr(self, 'tso_order{}_ideal'.format(order), np.array(psfs))
 
         # Add to the master TSO
-        self.tso = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
+        self.tso_ideal = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
 
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
-        self.tso_ideal = self.tso.copy()
+        self.tso = self.tso_ideal.copy()
         self.add_noise()
 
         # Trim if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
-            self.tso = self.tso[:, 256-self.nrows:, :]
-            self.tso_ideal = self.tso_ideal[:, 256-self.nrows:, :]
+            self.tso = self.tso[:, :self.nrows, :]
+            self.tso_ideal = self.tso_ideal[:, :self.nrows, :]
+            self.tso_order1_ideal = self.tso_order1_ideal[:, :self.nrows, :]
+            self.tso_order2_ideal = self.tso_order2_ideal[:, :self.nrows, :]
 
         if verbose:
             print('\nTotal time:', time.time()-begin)
@@ -501,15 +540,14 @@ class TSO(object):
 
         # Plot the polynomial too
         if traces:
-            coeffs = mt.trace_polynomials(subarray=self.subarray)
             X = np.linspace(0, 2048, 2048)
 
             # Order 1
-            Y = np.polyval(coeffs[0], X)
+            Y = np.polyval(self.coeffs[0], X)
             fig.line(X, Y, color='red')
 
             # Order 2
-            Y = np.polyval(coeffs[1], X)
+            Y = np.polyval(self.coeffs[1], X)
             fig.line(X, Y, color='red')
 
         if draw:
@@ -888,14 +926,28 @@ class TSO(object):
         # Store the header in the object too
         self.header = prihdr
 
-        # Put data into detector coordinates
-        data = np.swapaxes(self.tso, 1, 2)[:, :, ::-1]
+        # Make the HDUList containing:
+        # 1. Datacube with noise model, orders 1 and 2
+        hdu1 = fits.PrimaryHDU(data=self.tso, header=prihdr)
 
-        # Make the HDUList
-        prihdu = fits.PrimaryHDU(data=data, header=prihdr)
+        # 2. Datavube with no noise model, orders 1 and 2
+        hdu2 = fits.ImageHDU(data=self.tso_ideal, name='RAW')
 
-        # Write the file
-        prihdu.writeto(outfile, overwrite=True)
+        # 3. Datacube with no noise model, only order 1
+        hdu3 = fits.ImageHDU(data=self.tso_order1_ideal, name='RAW_ORD1')
+
+        # 4. Datacube with no noise model, only order 2
+        hdu4 = fits.ImageHDU(data=self.tso_order2_ideal, name='RAW_ORD2')
+
+        # 5. The wavelength and flux of the input star
+        hdu5 = fits.ImageHDU(data=self.star, name='STAR')
+
+        # 6. The wavelength and transmission of the input planet
+        hdu6 = fits.ImageHDU(data=self.planet, name='PLANET')
+
+        # Put it all together and write to file
+        hdulist = fits.HDUList([hdu1, hdu2, hdu3, hdu4, hdu5, hdu6])
+        hdulist.writeto(outfile, overwrite=True)
 
         print('File saved as', outfile)
 
