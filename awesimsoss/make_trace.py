@@ -15,7 +15,6 @@ import copy
 import numpy as np
 import bokeh
 from astropy.io import fits
-import webbpsf
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
@@ -25,6 +24,11 @@ try:
     import batman
 except ImportError:
     print("Could not import `batman` package. Functionality limited.")
+
+try:
+    import webbpsf
+except ImportError:
+    print("Could not import `webbpsf` package. Functionality limited.")
 
 warnings.simplefilter('ignore')
 
