@@ -19,9 +19,9 @@ script:
 deploy:
   provider: pypi
   distributions: sdist bdist_wheel
-  user: hover2pi
+  user: meowmix
   password:
-    secure: B0b0th#dog123pypi
+    secure: foobar
   on:
     tags: true
     repo: spacetelescope/awesimsoss
