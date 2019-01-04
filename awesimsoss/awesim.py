@@ -928,16 +928,16 @@ class TSO(object):
 
         # Make the HDUList containing:
         # 1. Datacube with noise model, orders 1 and 2
-        hdu1 = fits.PrimaryHDU(data=self.tso, header=prihdr)
+        hdu1 = fits.PrimaryHDU(data=np.swapaxes(self.tso, 1, 2), header=prihdr)
 
         # 2. Datavube with no noise model, orders 1 and 2
-        hdu2 = fits.ImageHDU(data=self.tso_ideal, name='RAW')
+        hdu2 = fits.ImageHDU(data=np.swapaxes(self.tso_ideal, 1, 2), name='RAW')
 
         # 3. Datacube with no noise model, only order 1
-        hdu3 = fits.ImageHDU(data=self.tso_order1_ideal, name='RAW_ORD1')
+        hdu3 = fits.ImageHDU(data=np.swapaxes(self.tso_order1_ideal, 1, 2), name='RAW_ORD1')
 
         # 4. Datacube with no noise model, only order 2
-        hdu4 = fits.ImageHDU(data=self.tso_order2_ideal, name='RAW_ORD2')
+        hdu4 = fits.ImageHDU(data=np.swapaxes(self.tso_order2_ideal, 1, 2), name='RAW_ORD2')
 
         # 5. The wavelength and flux of the input star
         hdu5 = fits.ImageHDU(data=self.star, name='STAR')
