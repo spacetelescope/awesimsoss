@@ -86,25 +86,18 @@ been changed and a couple of the defaults have been changed as well.
 - Version 2.6
 
 """
-# Necessary for Python 2.6 and later (JML)
-# Should still work under Python 3.x (JML)
-from __future__ import division, print_function
-
 import os
 import warnings
 import datetime
+import logging
 
 from astropy.io import fits
 import numpy as np
 from scipy.ndimage.interpolation import zoom
 from astropy.stats.funcs import median_absolute_deviation as mad
-# import matplotlib.pyplot as plt # Handy for debugging
 
 
 warnings.filterwarnings('ignore')
-
-# Have not verified this in Python 3.x (JML)
-import logging
 _log = logging.getLogger('nghxrg')
 
 class HXRGNoise:

@@ -18,21 +18,29 @@ from bokeh.models import LogColorMapper, LogTicker, LinearColorMapper, ColorBar,
 from bokeh.layouts import column
 from bokeh.palettes import Category20
 import itertools
-import batman
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
-from exoctk import modelgrid as mg
+
+try:
+    import batman
+except ImportError:
+    print("Could not import `batman` package. Functionality limited.")
+
+try:
+    from exoctk import modelgrid as mg
+except ImportError:
+    print("Could not import `exoctk` package. Functionality limited.")
+
+try:
+    from tqdm import tqdmmg
+except ImportError:
+    print("Could not import `tqdm` package. Functionality limited.")
+    tqdm = lambda iterable, total=None: iterable
 
 from . import generate_darks as gd
 from . import make_trace as mt
 
-try:
-    # Use a progress bar if one is available
-    from tqdm import tqdm
-except:
-    print('`pip install tqdm` to make this procedure prettier')
-    tqdm = lambda iterable, total=None: iterable
 
 warnings.simplefilter('ignore')
 
@@ -242,7 +250,7 @@ class TSO(object):
         self.tso_order2_ideal = np.zeros(self.dims)
 
         # If there is a planet transmission spectrum but no LDCs generate them
-        is_tmodel = isinstance(tmodel, batman.transitmodel.TransitModel)
+        is_tmodel = str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>"
         if planet is not None and is_tmodel:
 
             if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
@@ -281,7 +289,7 @@ class TSO(object):
 
             # Update the limb darkning coeffs if the stellar params or
             # ld profile have changed
-            elif isinstance(model_grid, mg.ModelGrid) and changed:
+            elif str(type(model_grid)) == "<class 'exoctk.modelgrid.ModelGrid'>" and changed:
 
                 # Try to set the model grid
                 self.model_grid = model_grid
@@ -405,7 +413,7 @@ class TSO(object):
             self._ld_coeffs = coeffs
 
         # Or generate them if the stellar parameters have changed
-        elif isinstance(coeffs, batman.transitmodel.TransitModel) and isinstance(self.model_grid, mg.ModelGrid):
+        elif str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>" and str(type(self.model_grid)) == "<class 'exoctk.modelgrid.ModelGrid'>":
             self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
 
         else:
@@ -664,7 +672,7 @@ class TSO(object):
                 return
 
             # Plot the theoretical light curve
-            if self.tmodel is not None:
+            if str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
                 if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
                     raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
 

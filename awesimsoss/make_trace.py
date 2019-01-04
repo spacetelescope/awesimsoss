@@ -14,13 +14,17 @@ import copy
 
 import numpy as np
 import bokeh
-# import batman
 from astropy.io import fits
 import webbpsf
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
 from scipy.interpolate import interp2d, RectBivariateSpline
+
+try:
+    import batman
+except ImportError:
+    print("Could not import `batman` package. Functionality limited.")
 
 warnings.simplefilter('ignore')
 
@@ -556,26 +560,20 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     flux = np.tile(psf, (len(time), 1, 1))
 
     # If there is a transiting planet...
-    # if ld_coeffs is not None and rp is not None and isinstance(tmodel, batman.transitmodel.TransitModel):
-    #
-    #     # Set the wavelength dependent orbital parameters
-    #     tmodel.u = ld_coeffs
-    #     tmodel.rp = rp
-    #
-    #     # Generate the light curve for this pixel
-    #     lightcurve = tmodel.light_curve(tmodel)
-    #
-    #     # Scale the flux with the lightcurve
-    #     flux *= lightcurve[:, None, None]
+    if ld_coeffs is not None and rp is not None and str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
+
+        # Set the wavelength dependent orbital parameters
+        tmodel.u = ld_coeffs
+        tmodel.rp = rp
+
+        # Generate the light curve for this pixel
+        lightcurve = tmodel.light_curve(tmodel)
+
+        # Scale the flux with the lightcurve
+        flux *= lightcurve[:, None, None]
 
     # Apply the filter response to convert to [ADU/s]
     flux *= response
-
-    # Plot
-    # if plot:
-    #     plt.plot(time, np.nanmean(flux, axis=(1, 2)))
-    #     plt.xlabel("Time from central transit")
-    #     plt.ylabel("Flux Density [photons/s/cm2/A]")
 
     return flux
 
