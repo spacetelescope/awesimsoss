@@ -1,29 +1,28 @@
-language: generic
+# Config file for automatic testing at travis-ci.org
 
-sudo: false
-
-cache:
-  directories:
-    - $HOME/miniconda3
-
-before_cache:
-  - rm -rf $HOME/miniconda3/pkgs/cache
-  - rm -rf $HOME/miniconda3/envs/awesimsoss
-
-os:
-  - linux
-  - osx
-
-env:
-  - PYTHON_VERSION="3.5"
-  - PYTHON_VERSION="3.6"
-  - PYTHON_VERSION="3.7"
-
-before_install:
-  - export PATH="$HOME/miniconda3/bin:$PATH"
+language: python
+python:
+  - 3.6
+  - 3.5
 
 install:
-  - ci/install_conda.sh
-  - ci/setup_conda_env.sh
-  - source activate awesimsoss
-  - python setup.py install
+  - pip install -r requirements_dev.txt
+  - pip install pytest pytest-cov coveralls
+
+# command to run tests, e.g. python setup.py test
+script:
+  - python -m pytest tests/
+  # - pytest tests --cov
+  # - coveralls
+
+# deploy new versions to PyPI
+deploy:
+  provider: pypi
+  distributions: sdist bdist_wheel
+  user: hover2pi
+  password:
+    secure: HR9v0eHcHdj1U3quVZACdTxZO7atf/avqq63mhFjiPDCfmdNUeq3WucpgwPMO2rx2xlLyeSqSHxbW84X46efKFh/DbgxC9HWpv7QoWEgwjJWhQ384BfDbHa+4Khj7+JtxKAyuU4JMay87QcQiCvilBJFguQ3KWVrlE5kC+PPieVjT3iRLuwakc+pUKKXub38CPhDv7LY6WEtjpxkHSCKPSMT5u+/SbPwOEqQjwQe2HSOcfRCYo/DjRQa933Bziwd563wuxusRH2YoIXRGQyYss/psUi2GQEzrlIe7lsAeEEcSAWQv0J7P8tMXw0+EisQe4gXNjxIV1/9oWulwnL6wBeEP4Ytsxw2I3FM7YPdXgZvkxAY69cyqDIzFK6qfvsdaW0VEz5Cgu2AfBEu0XcK6OlOUWjT8NFb5cYgtAPa1ATD0g0z0Yy3uv3qruhLUkegEhCealbowmy8yTOSfAG4cOGe/SAElpAfbrHkPdNdCB5BwY6L7xEbb5Xjy8NnqlfYHPwtsfKOP85SZiEMy3wYptHVMmgl/sv6hwoOZHZn1rZtuj9MwoyActREdxxHkhLiGKPrw+A0/g5R55j5Bf6V712v/ZPH/ikdQVYTAUkmPleUSyzwALugxLwiYU7oqEXmZk2KEq1rcyA/3WU+YhsE5j/g+5yCQ0FR65hOgL0z9+Y=
+  on:
+    tags: true
+    repo: spacetelescope/awesimsoss
+    python: 3.5

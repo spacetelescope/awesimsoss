@@ -1,8 +1,11 @@
 #! /usr/bin/env python
+import os
+
 import numpy as np
 import astropy.io.fits as fits
+
 from . import noise_simulation as ng
-import os
+
 
 def add_dark_current(ramp, seed, gain, darksignal):
     """
@@ -37,7 +40,9 @@ def add_dark_current(ramp, seed, gain, darksignal):
 
     return ramp
 
-def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, dark_seed=None, offset=500):
+
+def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None,
+                  dark_seed=None, offset=500):
     """
     Make a simulated exposure with no source signal
 
@@ -93,13 +98,20 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, da
     dc_seed = dark_seed
     bias_offset = offset*gain
 
-    # Define the HXRGN instance to make a SUSBSTRIP256 array (in detector coordinates)
-    noisecube = ng.HXRGNoise(naxis1=nrows, naxis2=ncols, naxis3=ngrps, pca0_file=pca0_file, x0=0, y0=0, det_size=2048, verbose=False)
+    # Define the HXRGN instance to make a SUSBSTRIP256 array
+    #(in detector coordinates)
+    noisecube = ng.HXRGNoise(naxis1=nrows, naxis2=ncols, naxis3=ngrps,
+                             pca0_file=pca0_file, x0=0, y0=0, det_size=2048,
+                             verbose=False)
 
     # iterate over integrations
     for loop in range(nints):
         seed1 = noise_seed+24*int(loop)
-        ramp = noisecube.mknoise(c_pink=c_pink, u_pink=u_pink, bias_amp=bias_amp, bias_offset=bias_offset, acn=acn, pca0_amp=pca0_amp, rd_noise=rd_noise, pedestal=pedestal, dark_current=dark_current, dc_seed=dc_seed, noise_seed=seed1, gain=gain)
+        ramp = noisecube.mknoise(c_pink=c_pink, u_pink=u_pink,
+                                 bias_amp=bias_amp, bias_offset=bias_offset,
+                                 acn=acn, pca0_amp=pca0_amp, rd_noise=rd_noise,
+                                 pedestal=pedestal, dark_current=dark_current,
+                                 dc_seed=dc_seed, noise_seed=seed1, gain=gain)
         if len(ramp.shape)==2:
             ramp = ramp[np.newaxis,:,:]
         ramp = np.transpose(ramp,(0,2,1))
@@ -109,6 +121,7 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None, da
         ramp = 0
 
     return simulated_data
+
 
 def make_photon_yield(photon_yield, orders):
     """
@@ -143,7 +156,9 @@ def make_photon_yield(photon_yield, orders):
 
     return pyimage
 
-def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon_yield=False):
+
+def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale,
+               photon_yield=False):
     """
     Add the science signal to the generated noise
 
@@ -168,7 +183,7 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
     dims1 = cube.shape
     dims2 = signals.shape
     if dims1 != dims2:
-        raise ValueError
+        raise ValueError(dims1, "not equal to", dims2)
 
     # Make a new ramp
     newcube = cube.copy()*0.
@@ -194,7 +209,8 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
 
         # Or don't
         else:
-            newvalues = np.random.poisson(np.abs(framesignal*pyimage+background))
+            vals = np.abs(framesignal*pyimage+background)
+            newvalues = np.random.poisson(vals)
 
         # First ramp image
         if n==0:
@@ -205,6 +221,7 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
     newcube = cube+newcube/gain
 
     return newcube
+
 
 def non_linearity(cube, nonlinearity, offset=0):
     """
@@ -243,6 +260,7 @@ def non_linearity(cube, nonlinearity, offset=0):
     newcube = newcube+offset
 
     return newcube
+
 
 def add_pedestal(cube, pedestal, offset=500):
     """
