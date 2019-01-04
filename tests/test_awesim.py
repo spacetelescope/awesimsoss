@@ -7,7 +7,6 @@ from pkg_resources import resource_filename
 import numpy as np
 import astropy.units as q
 import astropy.constants as ac
-# import batman
 
 from awesimsoss import TSO
 
