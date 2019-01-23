@@ -21,6 +21,8 @@ import itertools
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
+from astropy.modeling.models import BlackBody1D
+from astropy.modeling.blackbody import FLAM
 
 try:
     import batman
@@ -964,4 +966,17 @@ class TestTSO(TSO):
         star = np.genfromtxt(file, unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
         super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filt=filt)
+        self.run_simulation()
+
+
+class BlackbodyTSO(TSO):
+    """Generate a test object with a blackbody spectrum"""
+    def __init__(self, teff=1800, subarray='SUBSTRIP256', filt='CLEAR'):
+        """Get the test data and load the object"""
+        # Generate a blackbody at the given temperature
+        bb = BlackBody1D(temperature=teff*q.K)
+        wav = np.linspace(0.5, 2.9, 1000) * q.um
+        flux = bb(wav).to(FLAM, q.spectral_density(wav))
+
+        super().__init__(ngrps=2, nints=2, star=[wav, flux], subarray=subarray, filt=filt)
         self.run_simulation()
