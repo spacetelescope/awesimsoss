@@ -137,7 +137,8 @@ class TSO(object):
             setattr(self, 'order{}_psfs'.format(order), cube)
 
         # Get absolute calibration reference file
-        calfile = resource_filename('awesimsoss', 'files/jwst_niriss_photom_0028.fits')
+        # calfile = resource_filename('awesimsoss', 'files/jwst_niriss_photom_0028.fits')
+        calfile = resource_filename('awesimsoss', 'files/niriss_ref_photom.fits')
         caldata = fits.getdata(calfile)
         self.photom = caldata[caldata['pupil'] == 'GR700XD']
 
@@ -570,7 +571,7 @@ class TSO(object):
         Parameters
         ----------
         col: int, sequence
-            The column index(es) to plot a light curve for
+            The column index(es) to plot
         idx: int
             The frame index to plot
         order: sequence
@@ -622,7 +623,7 @@ class TSO(object):
 
         show(ramp)
 
-    def plot_lightcurve(self, column=None, time_unit='seconds', resolution_mult=20, theory_alpha=0.1):
+    def plot_lightcurve(self, column=None, time_unit='s', resolution_mult=20):
         """
         Plot a lightcurve for each column index given
 
@@ -633,10 +634,14 @@ class TSO(object):
             to plot as a light curve
         time_unit: string
             The string indicator for the units that the self.time array is in
-            options: 'seconds', 'minutes', 'hours', 'days' (default)
+            ['s', 'min', 'h', 'd' (default)]
         resolution_mult: int
-            The number of theoretical points to plot for each data point plotted here
+            The number of theoretical points to plot for each data point
         """
+        # Check time_units
+        if time_unit not in ['s', 'min', 'h', 'd']:
+            raise ValueError("time_unit must be 's', 'min', 'h' or 'd']")
+
         # Get the scaled flux in each column for the last group in
         # each integration
         flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
@@ -673,33 +678,21 @@ class TSO(object):
 
             # Plot the theoretical light curve
             if str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
-                if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
-                    raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
 
+                # Make time axis and convert to desired units
                 time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-
-                if time_unit == 'seconds':
-                    time /= 86400
-                if time_unit == 'minutes':
-                    time /= 1440
-                if time_unit == 'hours':
-                    time /= 24
+                time = time*q.d.to(time_unit)
 
                 tmodel = batman.TransitModel(self.tmodel, time)
                 tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
 
-                lc.line(time, theory, legend=label+' model', color=color, alpha=theory_alpha)
+                lc.line(time, theory, legend=label+' model', color=color, alpha=0.1)
 
+            # Convert datetime
             data_time = self.time[self.ngrps-1::self.ngrps].copy()
-
-            if time_unit == 'seconds':
-                data_time /= 86400
-            if time_unit == 'minutes':
-                data_time /= 1440
-            if time_unit == 'hours':
-                data_time /= 24
+            data_time*q.d.to(time_unit)
 
             # Plot the lightcurve
             lc.circle(data_time, lightcurve, legend=label, color=color)
@@ -738,18 +731,21 @@ class TSO(object):
         # that we can convert the flux at each wavelegth into [ADU/s]
         flux_out *= response/self.time[np.mod(self.ngrps, frame)]
 
+        # Trim wacky extracted edges
+        flux_out[0] = flux_out[-1] = np.nan
+
         # Plot it along with input spectrum
         flux_in = np.interp(wave, self.star[0], self.star[1])
 
         # Make the spectrum plot
-        spec = figure(x_axis_type=scale, y_axis_type=scale, height=400)
-        spec.line(wave, flux_out, legend='Extracted', color='red')
-        spec.line(wave, flux_in, legend='Injected', alpha=0.5)
+        spec = figure(x_axis_type=scale, y_axis_type=scale, width=1024, height=500)
+        spec.step(wave, flux_out, mode='center', legend='Extracted', color='red')
+        spec.step(wave, flux_in, mode='center', legend='Injected', alpha=0.5)
         spec.yaxis.axis_label = 'Flux Density [{}]'.format(self.star[1].unit)
 
         # Get the residuals
-        res = figure(x_axis_type=scale, height=150, x_range=spec.x_range)
-        res.line(wave, flux_out-flux_in)
+        res = figure(x_axis_type=scale, x_range=spec.x_range, width=1024, height=150)
+        res.step(wave, flux_out-flux_in, mode='center')
         res.xaxis.axis_label = 'Wavelength [{}]'.format(self.star[0].unit)
         res.yaxis.axis_label = 'Residuals'
 
