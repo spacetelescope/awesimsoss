@@ -23,6 +23,7 @@ import astropy.constants as ac
 from astropy.io import fits
 from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
+from jwst.datamodels import RampModel
 
 try:
     import batman
@@ -56,7 +57,7 @@ class TSO(object):
     """
     def __init__(self, ngrps, nints, star, snr=700, filt='CLEAR',
                  subarray='SUBSTRIP256', orders=[1, 2], t0=0,
-                 target='Simulated Target', verbose=True):
+                 target='Simulated Target', title=None, verbose=True):
         """
         Initialize the TSO object and do all pre-calculations
 
@@ -76,6 +77,8 @@ class TSO(object):
             The start time of the exposure [days]
         target: str (optional)
             The name of the target
+        title: str
+            A title for the simulation
 
         Example
         -------
@@ -104,6 +107,7 @@ class TSO(object):
         self.time = mt.get_frame_times(subarray, ngrps, nints, t0, self.nresets)
         self.nframes = len(self.time)
         self.target = target
+        self.title = title or self.target
         self.obs_date = '2016-01-04'
         self.obs_time = '23:37:52.226'
         self.filter = filt
@@ -148,7 +152,8 @@ class TSO(object):
         self.coeffs = mt.trace_polynomials(subarray=self.subarray)
 
         # Create the empty exposure
-        self.dims = (self.nframes, self.nrows, self.ncols)
+        self.dims = (self.nints, self.ngrps, self.nrows, self.ncols)
+        self.dims3 = (self.nints*self.ngrps, self.nrows, self.ncols)
         self.tso = np.zeros(self.dims)
         self.tso_ideal = np.zeros(self.dims)
         self.tso_order1_ideal = np.zeros(self.dims)
@@ -187,9 +192,9 @@ class TSO(object):
         self.star = star
 
     def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
-                       ld_profile='quadratic', model_grid=None, n_jobs=1, verbose=True):
+                       ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
         """
-        Generate the simulated 2D data given the initialized TSO object
+        Generate the simulated 4D ramp data given the initialized TSO object
 
         Parameters
         ----------
@@ -381,12 +386,21 @@ class TSO(object):
         self.tso = self.tso_ideal.copy()
         self.add_noise()
 
+        # Make fake reference pixels
+        self.add_refpix()
+
         # Trim if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
             self.tso = self.tso[:, :self.nrows, :]
             self.tso_ideal = self.tso_ideal[:, :self.nrows, :]
             self.tso_order1_ideal = self.tso_order1_ideal[:, :self.nrows, :]
             self.tso_order2_ideal = self.tso_order2_ideal[:, :self.nrows, :]
+
+        # Reshape into (nints, ngrps, y, x)
+        self.tso = self.tso.reshape(self.dims)
+        self.tso_ideal = self.tso_ideal.reshape(self.dims)
+        self.tso_order1_ideal = self.tso_order1_ideal.reshape(self.dims)
+        self.tso_order2_ideal = self.tso_order2_ideal.reshape(self.dims)
 
         if verbose:
             print('\nTotal time:', time.time()-begin)
@@ -473,6 +487,19 @@ class TSO(object):
 
         print('Noise model finished:', time.time()-start)
 
+    def add_refpix(self, counts=0):
+        """Add reference pixels to detector edges
+
+        Parameters
+        ----------
+        counts: int
+            The number of counts or the reference pixels
+        """
+        # Left, right, and top
+        self.tso[:, :, :4] = counts
+        self.tso[:, :, -4:] = counts
+        self.tso[:, -4:, :] = counts
+
     def plot(self, ptype='data', idx=0, scale='linear', order=None, noise=True,
              traces=False, saturation=0.8, draw=True):
         """
@@ -505,7 +532,7 @@ class TSO(object):
 
         # Get data for plotting
         vmax = int(np.nanmax(tso[tso < np.inf]))
-        frame = np.array(tso[idx].data)
+        frame = np.array(tso.reshape(self.dims3)[idx].data)
 
         # Modify the data
         if ptype == 'snr':
@@ -617,8 +644,8 @@ class TSO(object):
         Plot the total flux on each frame to display the ramp
         """
         ramp = figure()
-        x = range(self.tso.shape[0])
-        y = np.sum(self.tso, axis=(-1, -2))
+        x = range(self.dims3[0])
+        y = np.sum(self.tso.reshape(self.dims3), axis=(-1, -2))
         ramp.circle(x, y, size=12)
         ramp.xaxis.axis_label = 'Group'
         ramp.yaxis.axis_label = 'Count Rate [ADU/s]'
@@ -753,7 +780,7 @@ class TSO(object):
 
         show(column(spec, res))
 
-    def to_fits(self, outfile):
+    def to_fits(self, outfile, all_data=False):
         """
         Save the data to a JWST pipeline ingestible FITS file
 
@@ -762,200 +789,321 @@ class TSO(object):
         outfile: str
             The path of the output file
         """
-        # Make the cards
-        cards = [('DATE', datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), 'Date file created yyyy-mm-ddThh:mm:ss, UTC'), 
-                ('FILENAME', outfile, 'Name of the file'), 
-                ('DATAMODL', 'RampModel', 'Type of data model'), 
-                ('ORIGIN', 'STScI', 'Institution responsible for creating FITS file'), 
-                ('TIMESYS', 'UTC', 'principal time system for time-related keywords'), 
-                ('FILETYPE', 'uncalibrated', 'Type of data in the file'), 
-                ('SDP_VER', '2016_1', 'data processing software version number'), 
-                ('PRD_VER', 'PRDDEVSOC-D-012', 'S&OC PRD version number used in data processing'), 
-                ('TELESCOP', 'JWST', 'Telescope used to acquire data'), 
-                ('RADESYS', 'ICRS', 'Name of the coordinate reference frame'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Program information', ''), 
-                ('TITLE', 'UNKNOWN', 'Proposal title'), 
-                ('PI_NAME', 'N/A', 'Principal investigator name'), 
-                ('CATEGORY', 'UNKNOWN', 'Program category'), 
-                ('SUBCAT', '', 'Program sub-category'), 
-                ('SCICAT', '', 'Science category assigned during TAC process'), 
-                ('CONT_ID', 0, 'Continuation of previous program'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Observation identifiers', ''), 
-                ('DATE-OBS', self.obs_date, 'UT date at start of exposure'), 
-                ('TIME-OBS', self.obs_time, 'UT time at the start of exposure'), 
-                ('OBS_ID', 'V87600007001P0000000002102', 'Programmatic observation identifier'), 
-                ('VISIT_ID', '87600007001', 'Visit identifier'), 
-                ('PROGRAM', '87600', 'Program number'), 
-                ('OBSERVTN', '001', 'Observation number'), 
-                ('VISIT', '001', 'Visit number'), 
-                ('VISITGRP', '02', 'Visit group identifier'), 
-                ('SEQ_ID', '1', 'Parallel sequence identifier'), 
-                ('ACT_ID', '02', 'Activity identifier'), 
-                ('EXPOSURE', '1', 'Exposure request number'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Visit information', ''), 
-                ('TEMPLATE', 'NIRISS SOSS', 'Proposal instruction template used'), 
-                ('OBSLABEL', 'Observation label', 'Proposer label for the observation'), 
-                ('VISITYPE', '', 'Visit type'), 
-                ('VSTSTART', self.obs_date, 'UTC visit start time'), 
-                ('WFSVISIT', '', 'Wavefront sensing and control visit indicator'), 
-                ('VISITSTA', 'SUCCESSFUL', 'Status of a visit'), 
-                ('NEXPOSUR', 1, 'Total number of planned exposures in visit'), 
-                ('INTARGET', False, 'At least one exposure in visit is internal'), 
-                ('TARGOOPP', False, 'Visit scheduled as target of opportunity'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Target information', ''), 
-                ('TARGPROP', '', "Proposer's name for the target"), 
-                ('TARGNAME', self.target, 'Standard astronomical catalog name for tar'), 
-                ('TARGTYPE', 'FIXED', 'Type of target (fixed, moving, generic)'), 
-                ('TARG_RA', 175.5546225, 'Target RA at mid time of exposure'), 
-                ('TARG_DEC', 26.7065694, 'Target Dec at mid time of exposure'), 
-                ('TARGURA', 0.01, 'Target RA uncertainty'), 
-                ('TARGUDEC', 0.01, 'Target Dec uncertainty'), 
-                ('PROP_RA', 175.5546225, 'Proposer specified RA for the target'), 
-                ('PROP_DEC', 26.7065694, 'Proposer specified Dec for the target'), 
-                ('PROPEPOC', '2000-01-01 00:00:00', 'Proposer specified epoch for RA and Dec'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Exposure parameters', ''), 
-                ('INSTRUME', 'NIRISS', 'Identifier for niriss used to acquire data'), 
-                ('DETECTOR', 'NIS', 'ASCII Mnemonic corresponding to the SCA_ID'), 
-                ('LAMP', 'NULL', 'Internal lamp state'), 
-                ('FILTER', self.filter, 'Name of the filter element used'), 
-                ('PUPIL', 'GR700XD', 'Name of the pupil element used'), 
-                ('FOCUSPOS', 0.0, 'Focus position'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Exposure information', ''), 
-                ('PNTG_SEQ', 2, 'Pointing sequence number'), 
-                ('EXPCOUNT', 0, 'Running count of exposures in visit'), 
-                ('EXP_TYPE', 'NIS_SOSS', 'Type of data in the exposure'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Exposure times', ''), 
-                ('EXPSTART', self.time[0], 'UTC exposure start time'), 
-                ('EXPMID', self.time[len(self.time)//2], 'UTC exposure mid time'), 
-                ('EXPEND', self.time[-1], 'UTC exposure end time'), 
-                ('READPATT', 'NISRAPID', 'Readout pattern'), 
-                ('NINTS', self.nints, 'Number of integrations in exposure'), 
-                ('NGROUPS', self.ngrps, 'Number of groups in integration'), 
-                ('NFRAMES', self.nframes, 'Number of frames per group'), 
-                ('GROUPGAP', 0, 'Number of frames dropped between groups'), 
-                ('NSAMPLES', 1, 'Number of A/D samples per pixel'), 
-                ('TSAMPLE', 10.0, 'Time between samples (microsec)'), 
-                ('TFRAME', mt.FRAME_TIMES[self.subarray], 'Time in seconds between frames'), 
-                ('TGROUP', mt.FRAME_TIMES[self.subarray], 'Delta time between groups (s)'), 
-                ('EFFINTTM', 15.8826, 'Effective integration time (sec)'), 
-                ('EFFEXPTM', 15.8826, 'Effective exposure time (sec)'), 
-                ('CHRGTIME', 0.0, 'Charge accumulation time per integration (sec)'), 
-                ('DURATION', self.time[-1]-self.time[0], 'Total duration of exposure (sec)'), 
-                ('NRSTSTRT', self.nresets, 'Number of resets at start of exposure'), 
-                ('NRESETS', self.nresets, 'Number of resets between integrations'), 
-                ('FWCPOS', float(75.02400207519531), ''), 
-                ('PWCPOS', float(245.6344451904297), ''), 
-                ('ZEROFRAM', False, 'Zero frame was downlinkws separately'), 
-                ('DATAPROB', False, 'Science telemetry indicated a problem'), 
-                ('SCA_NUM', 496, 'Sensor Chip Assembly number'), 
-                ('DATAMODE', 91, 'post-processing method used in FPAP'), 
-                ('COMPRSSD', False, 'data compressed on-board (T/F)'), 
-                ('SUBARRAY', True, 'Subarray pattern name'), 
-                # ('SUBARRAY', self.subarray, 'Subarray pattern name'), 
-                ('SUBSTRT1', 1, 'Starting pixel in axis 1 direction'), 
-                ('SUBSTRT2', 1793, 'Starting pixel in axis 2 direction'), 
-                ('SUBSIZE1', self.ncols, 'Number of pixels in axis 1 direction'), 
-                ('SUBSIZE2', self.nrows, 'Number of pixels in axis 2 direction'), 
-                ('FASTAXIS', -2, 'Fast readout axis direction'), 
-                ('SLOWAXIS', -1, 'Slow readout axis direction'), 
-                ('COORDSYS', '', 'Ephemeris coordinate system'), 
-                ('EPH_TIME', 57403, 'UTC time from ephemeris start time (sec)'), 
-                ('JWST_X', 1462376.39634336, 'X spatial coordinate of JWST (km)'), 
-                ('JWST_Y', -178969.457007469, 'Y spatial coordinate of JWST (km)'), 
-                ('JWST_Z', -44183.7683640854, 'Z spatial coordinate of JWST (km)'), 
-                ('JWST_DX', 0.147851665036734, 'X component of JWST velocity (km/sec)'), 
-                ('JWST_DY', 0.352194454527743, 'Y component of JWST velocity (km/sec)'), 
-                ('JWST_DZ', 0.032553742839182, 'Z component of JWST velocity (km/sec)'), 
-                ('APERNAME', 'NIS-CEN', 'PRD science aperture used'), 
-                ('PA_APER', -290.1, 'Position angle of aperture used (deg)'), 
-                ('SCA_APER', -697.500000000082, 'SCA for intended target'), 
-                ('DVA_RA', 0.0, 'Velocity aberration correction RA offset (rad)'), 
-                ('DVA_DEC', 0.0, 'Velocity aberration correction Dec offset (rad)'), 
-                ('VA_SCALE', 0.0, 'Velocity aberration scale factor'), 
-                ('BARTDELT', 0.0, 'Barycentric time correction'), 
-                ('BSTRTIME', 0.0, 'Barycentric exposure start time'), 
-                ('BENDTIME', 0.0, 'Barycentric exposure end time'), 
-                ('BMIDTIME', 0.0, 'Barycentric exposure mid time'), 
-                ('HELIDELT', 0.0, 'Heliocentric time correction'), 
-                ('HSTRTIME', 0.0, 'Heliocentric exposure start time'), 
-                ('HENDTIME', 0.0, 'Heliocentric exposure end time'), 
-                ('HMIDTIME', 0.0, 'Heliocentric exposure mid time'), 
-                ('WCSAXES', 2, 'Number of WCS axes'), 
-                ('CRPIX1', 1955.0, 'Axis 1 coordinate of the reference pixel in the'), 
-                ('CRPIX2', 1199.0, 'Axis 2 coordinate of the reference pixel in the'), 
-                ('CRVAL1', 175.5546225, 'First axis value at the reference pixel (RA in'), 
-                ('CRVAL2', 26.7065694, 'Second axis value at the reference pixel (RA in'), 
-                ('CTYPE1', 'RA---TAN', 'First axis coordinate type'), 
-                ('CTYPE2', 'DEC--TAN', 'Second axis coordinate type'), 
-                ('CUNIT1', 'deg', 'units for first axis'), 
-                ('CUNIT2', 'deg', 'units for second axis'), 
-                ('CDELT1', 0.065398, 'first axis increment per pixel, increasing east'), 
-                ('CDELT2', 0.065893, 'Second axis increment per pixel, increasing nor'), 
-                ('PC1_1', -0.5446390350150271, 'linear transformation matrix element cos(theta)'), 
-                ('PC1_2', 0.8386705679454239, 'linear transformation matrix element -sin(theta'), 
-                ('PC2_1', 0.8386705679454239, 'linear transformation matrix element sin(theta)'), 
-                ('PC2_2', -0.5446390350150271, 'linear transformation matrix element cos(theta)'), 
-                ('S_REGION', '', 'spatial extent of the observation, footprint'), 
-                ('GS_ORDER', 0, 'index of guide star within listed of selected g'), 
-                ('GSSTRTTM', '1999-01-01 00:00:00', 'UTC time when guide star activity started'), 
-                ('GSENDTIM', '1999-01-01 00:00:00', 'UTC time when guide star activity completed'), 
-                ('GDSTARID', '', 'guide star identifier'), 
-                ('GS_RA', 0.0, 'guide star right ascension'), 
-                ('GS_DEC', 0.0, 'guide star declination'), 
-                ('GS_URA', 0.0, 'guide star right ascension uncertainty'), 
-                ('GS_UDEC', 0.0, 'guide star declination uncertainty'), 
-                ('GS_MAG', 0.0, 'guide star magnitude in FGS detector'), 
-                ('GS_UMAG', 0.0, 'guide star magnitude uncertainty'), 
-                ('PCS_MODE', 'COARSE', 'Pointing Control System mode'), 
-                ('GSCENTX', 0.0, 'guide star centroid x postion in the FGS ideal'), 
-                ('GSCENTY', 0.0, 'guide star centroid x postion in the FGS ideal'), 
-                ('JITTERMS', 0.0, 'RMS jitter over the exposure (arcsec).'), 
-                ('VISITEND', '2017-03-02 15:58:45.36', 'Observatory UTC time when the visit st'), 
-                ('WFSCFLAG', '', 'Wavefront sensing and control visit indicator'), 
-                ('BSCALE', 1, ''), 
-                ('BZERO', 32768, ''), 
-                ('NCOLS', float(self.nrows-1), ''), 
-                ('NROWS', float(self.ncols-1), '')]
+        # Make a RampModel
+        data = self.tso#.reshape((self.nrows, self.ncols, self.ngrps, self.nints))
+        mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
+        pix = subarray(self.subarray)
 
-        # Make the header
-        prihdr = fits.Header()
-        for card in cards:
-            prihdr.append(card, end=True)
+        # Set meta data values for header keywords
+        mod.meta.telescope = 'JWST'
+        mod.meta.instrument.name = 'NIRISS'
+        mod.meta.instrument.detector = 'NIS'
+        mod.meta.instrument.filter = self.filter
+        mod.meta.instrument.pupil = 'CLEARP'
+        mod.meta.exposure.type = 'NIS_SOSS'
+        mod.meta.exposure.nints = self.nints
+        mod.meta.exposure.ngroups = self.ngrps
+        mod.meta.exposure.nframes = self.nframes
+        mod.meta.exposure.readpatt = 'NISRAPID'
+        mod.meta.exposure.groupgap = 0
+        mod.meta.subarray.name = self.subarray
+        mod.meta.subarray.xsize = data.shape[3]
+        mod.meta.subarray.ysize = data.shape[2]
+        mod.meta.subarray.xstart = pix.get('xloc', 1)
+        mod.meta.subarray.ystart = pix.get('yloc', 1)
+        mod.meta.subarray.fastaxis = -2
+        mod.meta.subarray.slowaxis = -1
+        mod.meta.observation.date = self.obs_date
+        mod.meta.observation.time = self.obs_time
 
-        # Store the header in the object too
-        self.header = prihdr
+        # Save the file
+        mod.save(outfile, overwrite=True)
 
-        # Make the HDUList containing:
-        # 1. Datacube with noise model, orders 1 and 2
-        hdu1 = fits.PrimaryHDU(data=np.swapaxes(self.tso, 1, 2), header=prihdr)
-
-        # 2. Datavube with no noise model, orders 1 and 2
-        hdu2 = fits.ImageHDU(data=np.swapaxes(self.tso_ideal, 1, 2), name='RAW')
-
-        # 3. Datacube with no noise model, only order 1
-        hdu3 = fits.ImageHDU(data=np.swapaxes(self.tso_order1_ideal, 1, 2), name='RAW_ORD1')
-
-        # 4. Datacube with no noise model, only order 2
-        hdu4 = fits.ImageHDU(data=np.swapaxes(self.tso_order2_ideal, 1, 2), name='RAW_ORD2')
-
-        # 5. The wavelength and flux of the input star
-        hdu5 = fits.ImageHDU(data=self.star, name='STAR')
-
-        # 6. The wavelength and transmission of the input planet
-        hdu6 = fits.ImageHDU(data=self.planet, name='PLANET')
-
-        # Put it all together and write to file
-        hdulist = fits.HDUList([hdu1, hdu2, hdu3, hdu4, hdu5, hdu6])
-        hdulist.writeto(outfile, overwrite=True)
+        # # Make the cards
+        # cards = [('SIMPLE', True, 'conforms to FITS standard'),
+        #         ('BITPIX', 8, 'array data type'),
+        #         ('NAXIS', 0, 'number of array dimensions'),
+        #         ('EXTEND', True, ''),
+        #         ('DATE', datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), 'Date file created yyyy-mm-ddThh:mm:ss, UTC'),
+        #         ('FILENAME', outfile, 'Name of the file'),
+        #         ('DATAMODL', 'RampModel', 'Type of data model'),
+        #         ('ORIGIN', 'STScI', 'Institution responsible for creating FITS file'),
+        #         ('TIMESYS', 'UTC', 'principal time system for time-related keywords'),
+        #         ('FILETYPE', 'uncalibrated', 'Type of data in the file'),
+        #         ('SDP_VER', '2016_1', 'data processing software version number'),
+        #         ('PRD_VER', 'PRDDEVSOC-D-012', 'S&OC PRD version number used in data processing'),
+        #         ('TELESCOP', 'JWST', 'Telescope used to acquire data'),
+        #         ('RADESYS', 'ICRS', 'Name of the coordinate reference frame'),
+        #         ('', '', ''),
+        #         ('COMMENT', '/ Program information', ''),
+        #         ('TITLE', 'UNKNOWN', 'Proposal title'),
+        #         ('PI_NAME', 'N/A', 'Principal investigator name'),
+        #         ('CATEGORY', 'UNKNOWN', 'Program category'),
+        #         ('SUBCAT', '', 'Program sub-category'),
+        #         ('SCICAT', '', 'Science category assigned during TAC process'),
+        #         ('CONT_ID', 0, 'Continuation of previous program'),
+        #         ('', '', ''),
+        #         ('COMMENT', '/ Observation identifiers', ''),
+        #         ('DATE-OBS', self.obs_date, 'UT date at start of exposure'),
+        #         ('TIME-OBS', self.obs_time, 'UT time at the start of exposure'),
+        #         ('OBS_ID', 'V87600007001P0000000002102', 'Programmatic observation identifier'),
+        #         ('VISIT_ID', '87600007001', 'Visit identifier'),
+        #         ('PROGRAM', '87600', 'Program number'),
+        #         ('OBSERVTN', '001', 'Observation number'),
+        #         ('VISIT', '001', 'Visit number'),
+        #         ('VISITGRP', '02', 'Visit group identifier'),
+        #         ('SEQ_ID', '1', 'Parallel sequence identifier'),
+        #         ('ACT_ID', '02', 'Activity identifier'),
+        #         ('EXPOSURE', '1', 'Exposure request number'),
+        #         ('', '', ''),
+        #         ('COMMENT', '/ Visit information', ''),
+        #         ('TEMPLATE', 'NIRISS SOSS', 'Proposal instruction template used'),
+        #         ('OBSLABEL', 'Observation label', 'Proposer label for the observation'),
+        #         ('VISITYPE', '', 'Visit type'),
+        #         ('VSTSTART', self.obs_date, 'UTC visit start time'),
+        #         ('WFSVISIT', '', 'Wavefront sensing and control visit indicator'),
+        #         ('VISITSTA', 'SUCCESSFUL', 'Status of a visit'),
+        #         ('NEXPOSUR', 1, 'Total number of planned exposures in visit'),
+        #         ('INTARGET', False, 'At least one exposure in visit is internal'),
+        #         ('TARGOOPP', False, 'Visit scheduled as target of opportunity'),
+        #         ('', '', ''),
+        #         ('COMMENT', '/ Target information', ''),
+        #         ('TARGPROP', '', "Proposer's name for the target"),
+        #         ('TARGNAME', self.target, 'Standard astronomical catalog name for tar'),
+        #         ('TARGTYPE', 'FIXED', 'Type of target (fixed, moving, generic)'),
+        #         ('TARG_RA', 175.5546225, 'Target RA at mid time of exposure'),
+        #         ('TARG_DEC', 26.7065694, 'Target Dec at mid time of exposure'),
+        #         ('TARGURA', 0.01, 'Target RA uncertainty'),
+        #         ('TARGUDEC', 0.01, 'Target Dec uncertainty'),
+        #         ('PROP_RA', 175.5546225, 'Proposer specified RA for the target'),
+        #         ('PROP_DEC', 26.7065694, 'Proposer specified Dec for the target'),
+        #         ('PROPEPOC', '2000-01-01 00:00:00', 'Proposer specified epoch for RA and Dec'),
+        #         ('', '', ''),
+        #         ('COMMENT', '/ Exposure parameters', ''),
+        #         ('INSTRUME', 'NIRISS', 'Identifier for niriss used to acquire data'),
+        #         ('DETECTOR', 'NIS', 'ASCII Mnemonic corresponding to the SCA_ID'),
+        #         ('LAMP', 'NULL', 'Internal lamp state'),
+        #         ('FILTER', self.filter, 'Name of the filter element used'),
+        #         ('PUPIL', 'GR700XD', 'Name of the pupil element used'),
+        #         ('FOCUSPOS', 0.0, 'Focus position'),
+        #         ('', '', ''),
+        #         ('COMMENT', '/ Exposure information', ''),
+        #         ('PNTG_SEQ', 2, 'Pointing sequence number'),
+        #         ('EXPCOUNT', 0, 'Running count of exposures in visit'),
+        #         ('EXP_TYPE', 'NIS_SOSS', 'Type of data in the exposure'),
+        #         ('', '', ''),
+        #         ('COMMENT', '/ Exposure times', ''),
+        #         ('EXPSTART', self.time[0], 'UTC exposure start time'),
+        #         ('EXPMID', self.time[len(self.time)//2], 'UTC exposure mid time'),
+        #         ('EXPEND', self.time[-1], 'UTC exposure end time'),
+        #         ('READPATT', 'NISRAPID', 'Readout pattern'),
+        #         ('NINTS', self.nints, 'Number of integrations in exposure'),
+        #         ('NGROUPS', self.ngrps, 'Number of groups in integration'),
+        #         ('NFRAMES', self.nframes, 'Number of frames per group'),
+        #         ('GROUPGAP', 0, 'Number of frames dropped between groups'),
+        #         ('NSAMPLES', 1, 'Number of A/D samples per pixel'),
+        #         ('TSAMPLE', 10.0, 'Time between samples (microsec)'),
+        #         ('TFRAME', mt.FRAME_TIMES[self.subarray], 'Time in seconds between frames'),
+        #         ('TGROUP', mt.FRAME_TIMES[self.subarray], 'Delta time between groups (s)'),
+        #         ('EFFINTTM', 15.8826, 'Effective integration time (sec)'),
+        #         ('EFFEXPTM', 15.8826, 'Effective exposure time (sec)'),
+        #         ('CHRGTIME', 0.0, 'Charge accumulation time per integration (sec)'),
+        #         ('DURATION', self.time[-1]-self.time[0], 'Total duration of exposure (sec)'),
+        #         ('NRSTSTRT', self.nresets, 'Number of resets at start of exposure'),
+        #         ('NRESETS', self.nresets, 'Number of resets between integrations'),
+        #         ('FWCPOS', float(75.02400207519531), ''),
+        #         ('PWCPOS', float(245.6344451904297), ''),
+        #         ('ZEROFRAM', False, 'Zero frame was downlinkws separately'),
+        #         ('DATAPROB', False, 'Science telemetry indicated a problem'),
+        #         ('SCA_NUM', 496, 'Sensor Chip Assembly number'),
+        #         ('DATAMODE', 91, 'post-processing method used in FPAP'),
+        #         ('COMPRSSD', False, 'data compressed on-board (T/F)'),
+        #         ('SUBARRAY', self.subarray, 'Subarray pattern name'),
+        #         ('SUBSTRT1', 1, 'Starting pixel in axis 1 direction'),
+        #         ('SUBSTRT2', 1793, 'Starting pixel in axis 2 direction'),
+        #         ('SUBSIZE1', self.ncols, 'Number of pixels in axis 1 direction'),
+        #         ('SUBSIZE2', self.nrows, 'Number of pixels in axis 2 direction'),
+        #         ('FASTAXIS', -2, 'Fast readout axis direction'),
+        #         ('SLOWAXIS', -1, 'Slow readout axis direction'),
+        #         ('COORDSYS', '', 'Ephemeris coordinate system'),
+        #         ('EPH_TIME', 57403, 'UTC time from ephemeris start time (sec)'),
+        #         ('JWST_X', 1462376.39634336, 'X spatial coordinate of JWST (km)'),
+        #         ('JWST_Y', -178969.457007469, 'Y spatial coordinate of JWST (km)'),
+        #         ('JWST_Z', -44183.7683640854, 'Z spatial coordinate of JWST (km)'),
+        #         ('JWST_DX', 0.147851665036734, 'X component of JWST velocity (km/sec)'),
+        #         ('JWST_DY', 0.352194454527743, 'Y component of JWST velocity (km/sec)'),
+        #         ('JWST_DZ', 0.032553742839182, 'Z component of JWST velocity (km/sec)'),
+        #         ('APERNAME', 'NIS-CEN', 'PRD science aperture used'),
+        #         ('PA_APER', -290.1, 'Position angle of aperture used (deg)'),
+        #         ('SCA_APER', -697.500000000082, 'SCA for intended target'),
+        #         ('DVA_RA', 0.0, 'Velocity aberration correction RA offset (rad)'),
+        #         ('DVA_DEC', 0.0, 'Velocity aberration correction Dec offset (rad)'),
+        #         ('VA_SCALE', 0.0, 'Velocity aberration scale factor'),
+        #         ('BARTDELT', 0.0, 'Barycentric time correction'),
+        #         ('BSTRTIME', 0.0, 'Barycentric exposure start time'),
+        #         ('BENDTIME', 0.0, 'Barycentric exposure end time'),
+        #         ('BMIDTIME', 0.0, 'Barycentric exposure mid time'),
+        #         ('HELIDELT', 0.0, 'Heliocentric time correction'),
+        #         ('HSTRTIME', 0.0, 'Heliocentric exposure start time'),
+        #         ('HENDTIME', 0.0, 'Heliocentric exposure end time'),
+        #         ('HMIDTIME', 0.0, 'Heliocentric exposure mid time'),
+        #         ('WCSAXES', 2, 'Number of WCS axes'),
+        #         ('CRPIX1', 1955.0, 'Axis 1 coordinate of the reference pixel in the'),
+        #         ('CRPIX2', 1199.0, 'Axis 2 coordinate of the reference pixel in the'),
+        #         ('CRVAL1', 175.5546225, 'First axis value at the reference pixel (RA in'),
+        #         ('CRVAL2', 26.7065694, 'Second axis value at the reference pixel (RA in'),
+        #         ('CTYPE1', 'RA---TAN', 'First axis coordinate type'),
+        #         ('CTYPE2', 'DEC--TAN', 'Second axis coordinate type'),
+        #         ('CUNIT1', 'deg', 'units for first axis'),
+        #         ('CUNIT2', 'deg', 'units for second axis'),
+        #         ('CDELT1', 0.065398, 'first axis increment per pixel, increasing east'),
+        #         ('CDELT2', 0.065893, 'Second axis increment per pixel, increasing nor'),
+        #         ('PC1_1', -0.5446390350150271, 'linear transformation matrix element cos(theta)'),
+        #         ('PC1_2', 0.8386705679454239, 'linear transformation matrix element -sin(theta'),
+        #         ('PC2_1', 0.8386705679454239, 'linear transformation matrix element sin(theta)'),
+        #         ('PC2_2', -0.5446390350150271, 'linear transformation matrix element cos(theta)'),
+        #         ('S_REGION', '', 'spatial extent of the observation, footprint'),
+        #         ('GS_ORDER', 0, 'index of guide star within listed of selected g'),
+        #         ('GSSTRTTM', '1999-01-01 00:00:00', 'UTC time when guide star activity started'),
+        #         ('GSENDTIM', '1999-01-01 00:00:00', 'UTC time when guide star activity completed'),
+        #         ('GDSTARID', '', 'guide star identifier'),
+        #         ('GS_RA', 0.0, 'guide star right ascension'),
+        #         ('GS_DEC', 0.0, 'guide star declination'),
+        #         ('GS_URA', 0.0, 'guide star right ascension uncertainty'),
+        #         ('GS_UDEC', 0.0, 'guide star declination uncertainty'),
+        #         ('GS_MAG', 0.0, 'guide star magnitude in FGS detector'),
+        #         ('GS_UMAG', 0.0, 'guide star magnitude uncertainty'),
+        #         ('PCS_MODE', 'COARSE', 'Pointing Control System mode'),
+        #         ('GSCENTX', 0.0, 'guide star centroid x postion in the FGS ideal'),
+        #         ('GSCENTY', 0.0, 'guide star centroid x postion in the FGS ideal'),
+        #         ('JITTERMS', 0.0, 'RMS jitter over the exposure (arcsec).'),
+        #         ('VISITEND', '2017-03-02 15:58:45.36', 'Observatory UTC time when the visit st'),
+        #         ('WFSCFLAG', '', 'Wavefront sensing and control visit indicator'),
+        #         ('BSCALE', 1, ''),
+        #         ('BZERO', 32768, ''),
+        #         ('NCOLS', float(self.nrows-1), ''),
+        #         ('NROWS', float(self.ncols-1), '')]
+        #
+        # # Make the header
+        # prihdr = fits.Header()
+        # for card in cards:
+        #     prihdr.append(card, end=True)
+        #
+        # # Store the header in the object and the file
+        # self.header = prihdr
+        # hdulist[0].header = prihdr
+        #
+        # # SCI: 4-D data array containing the pixel values. The first two
+        # # dimensions are equal to the size of the detector readout, with the
+        # # data from multiple groups (NGROUPS) within each integration stored
+        # # along the 3rd axis, and the multiple integrations (NINTS) stored
+        # # along the 4th axis
+        # hdulist['SCI'].data = np.swapaxes(self.tso, 1, 2)
+        #
+        # # PIXELDQ: 2-D data array containing DQ flags that apply to all groups
+        # #  and all integrations for a given pixel (e.g. a hot pixel is hot in
+        # # all groups and integrations).
+        # hdulist['PIXELDQ'].data = np.zeros((self.ncols, self.nrows))
+        #
+        # # GROUPDQ: 4-D data array containing DQ flags that pertain to
+        # # individual groups within individual integrations, such as the point
+        # # at which a pixel becomes saturated within a given integration.
+        # hdulist['GROUPDQ'].data = np.zeros_like(np.swapaxes(self.tso, 1, 2))
+        #
+        # # ERR: 4-D data array containing uncertainty estimates on a per-group
+        # # and per-integration basis.
+        # hdulist['ERR'].data = np.zeros_like(np.swapaxes(self.tso, 1, 2))
+        #
+        # # # Add the input data to the FITS file for testing
+        # # if all_data:
+        # #
+        # #     # Datacube with no noise model, orders 1 and 2
+        # #     hdu_list.append(fits.ImageHDU(data=np.swapaxes(self.tso_ideal, 1, 2), name='RAW'))
+        # #
+        # #     # Datacube with no noise model, only order 1
+        # #     hdu_list.append(fits.ImageHDU(data=np.swapaxes(self.tso_order1_ideal, 1, 2), name='RAW_ORD1'))
+        # #
+        # #     # Datacube with no noise model, only order 2
+        # #     hdu_list.append(fits.ImageHDU(data=np.swapaxes(self.tso_order2_ideal, 1, 2), name='RAW_ORD2'))
+        # #
+        # #     # The wavelength and flux of the input star
+        # #     hdu_list.append(fits.ImageHDU(data=self.star, name='STAR'))
+        # #
+        # #     # The wavelength and transmission of the input planet
+        # #     hdu_list.append(fits.ImageHDU(data=self.planet, name='PLANET'))
+        #
+        # # Write to a new file
+        # hdulist.writeto(outfile, overwrite=True)
 
         print('File saved as', outfile)
+
+
+def subarray(arr=''):
+    """
+    Get the pixel information for each NIRISS subarray.     
+    
+    The returned dictionary defines the extent ('x' and 'y'),
+    the starting pixel ('xloc' and 'yloc'), and the number 
+    of reference pixels at each subarray edge ('x1', 'x2',
+    'y1', 'y2) as defined by SSB/DMS coordinates shown below:
+        ___________________________________
+       |               y2                  |
+       |                                   |
+       |                                   |
+       | x1                             x2 |
+       |                                   |
+       |               y1                  |
+       |___________________________________|
+    (1,1)
+    
+    Parameters
+    ----------
+    arr: str
+        The FITS header SUBARRAY value
+    
+    Returns
+    -------
+    dict
+        The dictionary of the specified subarray
+        or a nested dictionary of all subarrays
+    
+    """
+    pix = {'FULL': {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
+                    'yloc':1, 'y':2048, 'y1':4, 'y2':4,
+                    'tfrm':10.73676, 'tgrp':10.73676},
+           'SUBSTRIP96' : {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
+                           'yloc':1803, 'y':96, 'y1':0, 'y2':0,
+                           'tfrm':2.3, 'tgrp':2.3},
+           'SUBSTRIP256' : {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
+                            'yloc':1793, 'y':256, 'y1':0, 'y2':4,
+                            'tfrm':5.4, 'tgrp':5.4},
+           'SUB80' : {'xloc':None, 'x':80, 'x1':0, 'x2':0,
+                      'yloc':None, 'y':80, 'y1':4, 'y2':0},
+           'SUB64' : {'xloc':None, 'x':64, 'x1':0, 'x2':4,
+                      'yloc':None, 'y':64, 'y1':0, 'y2':4},
+           'SUB128' : {'xloc':None, 'x':128, 'x1':0, 'x2':4,
+                       'yloc':None, 'y':128, 'y1':0, 'y2':4},
+           'SUB256' : {'xloc':None, 'x':256, 'x1':0, 'x2':4,
+                       'yloc':None, 'y':256, 'y1':0, 'y2':4},
+           'SUBAMPCAL' : {'xloc':None, 'x':512, 'x1':4, 'x2':0,
+                          'yloc':None, 'y':1792, 'y1':4, 'y2':0},
+           'WFSS64R' : {'xloc':None, 'x':64, 'x1':0, 'x2':4,
+                        'yloc':1, 'y':2048, 'y1':4, 'y2':0},
+           'WFSS64C' : {'xloc':1, 'x':2048, 'x1':4, 'x2':0,
+                        'yloc':None, 'y':64, 'y1':0, 'y2':4},
+           'WFSS128R' : {'xloc':None, 'x':128, 'x1':0, 'x2':4,
+                         'yloc':1, 'y':2048, 'y1':4, 'y2':0},
+           'WFSS128C' : {'xloc':1, 'x':2048, 'x1':4, 'x2':0,
+                         'yloc':None, 'y':128, 'y1':0, 'y2':4},
+           'SUBTASOSS' : {'xloc':None, 'x':64, 'x1':0, 'x2':0,
+                          'yloc':None, 'y':64, 'y1':0, 'y2':0},
+           'SUBTAAMI' : {'xloc':None, 'x':64, 'x1':0, 'x2':0,
+                         'yloc':None, 'y':64, 'y1':0, 'y2':0}}
+    
+    try:
+        return pix[arr]
+    except:
+        return pix
 
 
 class TestTSO(TSO):
@@ -971,12 +1119,12 @@ class TestTSO(TSO):
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, teff=1800, subarray='SUBSTRIP256', filt='CLEAR'):
+    def __init__(self, teff=1800, subarray='SUBSTRIP256', filt='CLEAR', nints=2, ngrps=2):
         """Get the test data and load the object"""
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
         wav = np.linspace(0.5, 2.9, 1000) * q.um
-        flux = bb(wav).to(FLAM, q.spectral_density(wav))
+        flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
 
-        super().__init__(ngrps=2, nints=2, star=[wav, flux], subarray=subarray, filt=filt)
+        super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filt=filt)
         self.run_simulation()
