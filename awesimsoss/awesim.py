@@ -12,6 +12,7 @@ from pkg_resources import resource_filename
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
 
+from astroquery.simbad import Simbad
 import numpy as np
 from bokeh.plotting import figure, show
 from bokeh.models import LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
@@ -23,6 +24,7 @@ import astropy.constants as ac
 from astropy.io import fits
 from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
+from astropy.coordinates import SkyCoord
 from jwst.datamodels import RampModel
 
 try:
@@ -57,7 +59,7 @@ class TSO(object):
     """
     def __init__(self, ngrps, nints, star, snr=700, filt='CLEAR',
                  subarray='SUBSTRIP256', orders=[1, 2], t0=0,
-                 target='Simulated Target', title=None, verbose=True):
+                 target='New Target', title=None, verbose=True):
         """
         Initialize the TSO object and do all pre-calculations
 
@@ -93,6 +95,8 @@ class TSO(object):
         # Initialize simulation
         tso = TSO(ngrps=3, nints=10, star=star1D)
         """
+        self.verbose = verbose
+
         # Check the star units
         self._check_star(star)
 
@@ -106,8 +110,6 @@ class TSO(object):
         self.frame_time = mt.FRAME_TIMES[subarray]
         self.time = mt.get_frame_times(subarray, ngrps, nints, t0, self.nresets)
         self.nframes = len(self.time)
-        self.target = target
-        self.title = title or self.target
         self.obs_date = '2016-01-04'
         self.obs_time = '23:37:52.226'
         self.filter = filt
@@ -115,6 +117,23 @@ class TSO(object):
         self.gain = 1.61
         self.snr = snr
         self.model_grid = None
+
+        # Meta data for the target
+        self.target = target
+        self.title = title or '{} Simulation'.format(self.target)
+        try:
+            rec = Simbad.query_object(self.target)
+            coords = SkyCoord(ra=rec[0]['RA'], dec=rec[0]['DEC'], unit=(q.hour, q.degree), frame='icrs')
+            self.ra = coords.ra.degree
+            self.dec = coords.dec.degree
+            if self.verbose:
+                print("Coordinates for '{}' found in Simbad!".format(self.target))
+        except TypeError:
+            self.ra = 1.23456
+            self.dec = 2.34567
+            if self.verbose:
+                print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
+                print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
 
         # Set instance attributes for the target
         self.wave = mt.wave_solutions(subarray)
@@ -818,6 +837,8 @@ class TSO(object):
         mod.meta.subarray.slowaxis = -1
         mod.meta.observation.date = self.obs_date
         mod.meta.observation.time = self.obs_time
+        mod.meta.target.ra = 4.123456#self.ra
+        mod.meta.target.dec = 12.123456#self.dec
 
         # Save the file
         mod.save(outfile, overwrite=True)
@@ -895,23 +916,23 @@ def subarray(arr=''):
 
 class TestTSO(TSO):
     """Generate a test object for quick access"""
-    def __init__(self, subarray='SUBSTRIP256', filt='CLEAR'):
+    def __init__(self, subarray='SUBSTRIP256', filt='CLEAR', **kwargs):
         """Get the test data and load the object"""
         file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
         star = np.genfromtxt(file, unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-        super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filt=filt)
+        super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filt=filt, **kwargs)
         self.run_simulation()
 
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, teff=1800, subarray='SUBSTRIP256', filt='CLEAR', nints=2, ngrps=2):
+    def __init__(self, teff=1800, subarray='SUBSTRIP256', filt='CLEAR', nints=2, ngrps=2, **kwargs):
         """Get the test data and load the object"""
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
         wav = np.linspace(0.5, 2.9, 1000) * q.um
         flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
 
-        super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filt=filt)
+        super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filt=filt, **kwargs)
         self.run_simulation()
