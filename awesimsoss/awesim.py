@@ -25,7 +25,11 @@ from astropy.io import fits
 from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
 from astropy.coordinates import SkyCoord
-from jwst.datamodels import RampModel
+
+try:
+    from jwst.datamodels import RampModel
+except ImportError:
+    print("Could not import `jwst` package. Functionality limited.")
 
 try:
     import batman
@@ -956,42 +960,47 @@ class TSO(object):
         outfile: str
             The path of the output file
         """
-        # Make a RampModel
-        data = self.tso
-        mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
-        pix = subarray(self.subarray)
+        try:
 
-        # Set meta data values for header keywords
-        mod.meta.telescope = 'JWST'
-        mod.meta.instrument.name = 'NIRISS'
-        mod.meta.instrument.detector = 'NIS'
-        mod.meta.instrument.filter = self.filter
-        mod.meta.instrument.pupil = 'GR700XD'
-        mod.meta.exposure.type = 'NIS_SOSS'
-        mod.meta.exposure.nints = self.nints
-        mod.meta.exposure.ngroups = self.ngrps
-        mod.meta.exposure.nframes = self.nframes
-        mod.meta.exposure.readpatt = 'NISRAPID'
-        mod.meta.exposure.groupgap = 0
-        mod.meta.exposure.frame_time = mt.FRAME_TIMES[self.subarray]
-        mod.meta.exposure.group_time = mt.FRAME_TIMES[self.subarray]
-        mod.meta.exposure.duration = self.time[-1]-self.time[0]
-        mod.meta.subarray.name = self.subarray
-        mod.meta.subarray.xsize = data.shape[3]
-        mod.meta.subarray.ysize = data.shape[2]
-        mod.meta.subarray.xstart = pix.get('xloc', 1)
-        mod.meta.subarray.ystart = pix.get('yloc', 1)
-        mod.meta.subarray.fastaxis = -2
-        mod.meta.subarray.slowaxis = -1
-        mod.meta.observation.date = self.obs_date
-        mod.meta.observation.time = self.obs_time
-        mod.meta.target.ra = self.ra
-        mod.meta.target.dec = self.dec
+            # Make a RampModel
+            data = self.tso
+            mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
+            pix = subarray(self.subarray)
 
-        # Save the file
-        mod.save(outfile, overwrite=True)
+            # Set meta data values for header keywords
+            mod.meta.telescope = 'JWST'
+            mod.meta.instrument.name = 'NIRISS'
+            mod.meta.instrument.detector = 'NIS'
+            mod.meta.instrument.filter = self.filter
+            mod.meta.instrument.pupil = 'GR700XD'
+            mod.meta.exposure.type = 'NIS_SOSS'
+            mod.meta.exposure.nints = self.nints
+            mod.meta.exposure.ngroups = self.ngrps
+            mod.meta.exposure.nframes = self.nframes
+            mod.meta.exposure.readpatt = 'NISRAPID'
+            mod.meta.exposure.groupgap = 0
+            mod.meta.exposure.frame_time = mt.FRAME_TIMES[self.subarray]
+            mod.meta.exposure.group_time = mt.FRAME_TIMES[self.subarray]
+            mod.meta.exposure.duration = self.time[-1]-self.time[0]
+            mod.meta.subarray.name = self.subarray
+            mod.meta.subarray.xsize = data.shape[3]
+            mod.meta.subarray.ysize = data.shape[2]
+            mod.meta.subarray.xstart = pix.get('xloc', 1)
+            mod.meta.subarray.ystart = pix.get('yloc', 1)
+            mod.meta.subarray.fastaxis = -2
+            mod.meta.subarray.slowaxis = -1
+            mod.meta.observation.date = self.obs_date
+            mod.meta.observation.time = self.obs_time
+            mod.meta.target.ra = self.ra
+            mod.meta.target.dec = self.dec
 
-        print('File saved as', outfile)
+            # Save the file
+            mod.save(outfile, overwrite=True)
+
+            print('File saved as', outfile)
+
+        except:
+            print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
 
 
 def subarray(arr=''):
