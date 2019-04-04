@@ -1091,7 +1091,13 @@ class TestTSO(TSO):
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
     def __init__(self, teff=1800, subarray='SUBSTRIP256', filter='CLEAR', nints=2, ngrps=2, **kwargs):
-        """Get the test data and load the object"""
+        """Get the test data and load the object
+
+        Parmeters
+        ---------
+        teff: int
+            The effective temperature of the test source
+        """
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
         wav = np.linspace(0.5, 2.9, 1000) * q.um

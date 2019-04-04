@@ -14,7 +14,7 @@ try:
 except ImportError:
     print("Could not import `batman` package. Functionality limited.")
 
-from awesimsoss import TSO
+from awesimsoss import TSO, BlackbodyTSO, TestTSO
 
 
 class TestTSO(unittest.TestCase):
@@ -107,3 +107,11 @@ class TestTSO(unittest.TestCase):
         except:
             pass
 
+
+def test_TestTSO():
+    """A test of the test instance!"""
+    x = TestTSO()
+
+def test_BlackbodyTSO():
+    """A test of the BlackbodyTSO class"""
+    x = BlackbodyTSO(teff=2000)
