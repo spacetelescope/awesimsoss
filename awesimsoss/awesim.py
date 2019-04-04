@@ -74,7 +74,7 @@ class TSO(object):
         snr: float
             The signal-to-noise
         subarray: str
-            The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
+            The subarray name, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         t0: float
             The start time of the exposure [days]
         target: str (optional)
@@ -197,7 +197,6 @@ class TSO(object):
         start = time.time()
 
         # Get the separated orders
-        print(self.tso_order1_ideal.shape, self.tso_order2_ideal.shape)
         orders = np.asarray([self.tso_order1_ideal, self.tso_order2_ideal])
 
         # Load all the reference files
