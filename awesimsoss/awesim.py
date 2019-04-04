@@ -62,7 +62,7 @@ class TSO(object):
     Generate NIRISS SOSS time series observations
     """
     def __init__(self, ngrps, nints, star, snr=700, filter='CLEAR',
-                 subarray='SUBSTRIP256', orders=[1, 2], t0=0, nresets=1,
+                 subarray='SUBSTRIP256', orders=[1, 2], t0=0, nresets=0,
                  target='New Target', title=None, verbose=True):
         """
         Initialize the TSO object and do all pre-calculations

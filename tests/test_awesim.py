@@ -54,7 +54,7 @@ class TestTSO(unittest.TestCase):
 
         # Initialize the 256 subarray with two groups and two integrations
         # and the F277W filter
-        tso256f277w = TSO(ngrps=2, nints=2, star=self.star, filt='F277W')
+        tso256f277w = TSO(ngrps=2, nints=2, star=self.star, filter='F277W')
 
         self.assertEqual(tso256f277w.ngrps, 2)
         self.assertEqual(tso256f277w.nints, 2)
@@ -64,7 +64,7 @@ class TestTSO(unittest.TestCase):
 
         # Initialize the 96 subarray with two groups and two integrations
         # and the F277W filter
-        tso96f277w = TSO(ngrps=2, nints=2, star=self.star, filt='F277W')
+        tso96f277w = TSO(ngrps=2, nints=2, star=self.star, filter='F277W')
 
         self.assertEqual(tso96f277w.ngrps, 2)
         self.assertEqual(tso96f277w.nints, 2)
