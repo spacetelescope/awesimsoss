@@ -10,8 +10,8 @@ twine==1.12.1
 click
 
 astropy==3.0.3
-numpy==1.15.4
-bokeh==1.0.1
+numpy==1.16.0
+bokeh==1.0.4
 svo_filters==0.2.16
 scipy==1.1.0
 # webbpsf==0.7.0
