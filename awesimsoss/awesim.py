@@ -104,22 +104,23 @@ class TSO(object):
         # Check the star units
         self._check_star(star)
 
-        # Set static values
-        self.ncols = 2048
-        self.gain = 1.61
-
         # Set initial values
+        self._subarray = 'SUBSTRIP256'
         self._ngrps = 1
         self._nints = 1
         self._nresets = 1
-        self._nrows = 256
+        self.t0 = t0
+
+        # Set static values
+        self.nrows = 256
+        self.ncols = 2048
+        self.gain = 1.61
 
         # Set instance attributes for the exposure
         self.ngrps = ngrps
         self.nints = nints
         self.nresets = nresets
         self.nframes = (self.nresets+self.ngrps)*self.nints
-        self.t0 = t0
         self.obs_date = str(datetime.datetime.now()) 
         self.obs_time = str(datetime.datetime.now()) 
         self.filter = filter
@@ -1073,23 +1074,23 @@ def subarray(arr=''):
 
 class TestTSO(TSO):
     """Generate a test object for quick access"""
-    def __init__(self, subarray='SUBSTRIP256', filt='CLEAR', **kwargs):
+    def __init__(self, subarray='SUBSTRIP256', filter='CLEAR', **kwargs):
         """Get the test data and load the object"""
         file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
         star = np.genfromtxt(file, unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-        super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filt=filt, **kwargs)
+        super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filter=filter, **kwargs)
         self.run_simulation()
 
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, teff=1800, subarray='SUBSTRIP256', filt='CLEAR', nints=2, ngrps=2, **kwargs):
+    def __init__(self, teff=1800, subarray='SUBSTRIP256', filter='CLEAR', nints=2, ngrps=2, **kwargs):
         """Get the test data and load the object"""
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
         wav = np.linspace(0.5, 2.9, 1000) * q.um
         flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
 
-        super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filt=filt, **kwargs)
+        super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
         self.run_simulation()
