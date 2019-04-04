@@ -6,4 +6,4 @@ __author__ = """Joe Filippazzo"""
 __email__ = 'jfilippazzo@stsci.edu'
 __version__ = '0.1.0'
 
-from .awesim import TSO
+from .awesim import TSO, TestTSO, BlackbodyTSO

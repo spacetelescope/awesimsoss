@@ -12,6 +12,7 @@ from pkg_resources import resource_filename
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
 
+from astroquery.simbad import Simbad
 import numpy as np
 from bokeh.plotting import figure, show
 from bokeh.models import LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
@@ -21,6 +22,14 @@ import itertools
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
+from astropy.modeling.models import BlackBody1D
+from astropy.modeling.blackbody import FLAM
+from astropy.coordinates import SkyCoord
+
+try:
+    from jwst.datamodels import RampModel
+except ImportError:
+    print("Could not import `jwst` package. Functionality limited.")
 
 try:
     import batman
@@ -52,9 +61,9 @@ class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
-    def __init__(self, ngrps, nints, star, snr=700, filt='CLEAR',
-                 subarray='SUBSTRIP256', orders=[1, 2], t0=0,
-                 target='Simulated Target', verbose=True):
+    def __init__(self, ngrps, nints, star, snr=700, filter='CLEAR',
+                 subarray='SUBSTRIP256', orders=[1, 2], t0=0, nresets=0,
+                 target='New Target', title=None, verbose=True):
         """
         Initialize the TSO object and do all pre-calculations
 
@@ -69,11 +78,13 @@ class TSO(object):
         snr: float
             The signal-to-noise
         subarray: str
-            The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
+            The subarray name, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         t0: float
             The start time of the exposure [days]
         target: str (optional)
             The name of the target
+        title: str
+            A title for the simulation
 
         Example
         -------
@@ -88,27 +99,46 @@ class TSO(object):
         # Initialize simulation
         tso = TSO(ngrps=3, nints=10, star=star1D)
         """
+        self.verbose = verbose
+
         # Check the star units
         self._check_star(star)
 
-        # Set instance attributes for the exposure
-        self.subarray = subarray
-        self.nrows = mt.SUBARRAY_Y[subarray]
+        # Set initial values
+        self._subarray = 'SUBSTRIP256'
+        self._ngrps = 1
+        self._nints = 1
+        self._nresets = 0
+        self.t0 = t0
+
+        # Set static values
+        self.nrows = 256
         self.ncols = 2048
+        self.gain = 1.61
+
+        # Set instance attributes for the exposure
         self.ngrps = ngrps
         self.nints = nints
-        self.nresets = 1
-        self.frame_time = mt.FRAME_TIMES[subarray]
-        self.time = mt.get_frame_times(subarray, ngrps, nints, t0, self.nresets)
-        self.nframes = len(self.time)
-        self.target = target
-        self.obs_date = '2016-01-04'
-        self.obs_time = '23:37:52.226'
-        self.filter = filt
+        self.nresets = nresets
+        self.nframes = (self.nresets+self.ngrps)*self.nints
+        self.obs_date = str(datetime.datetime.now()) 
+        self.obs_time = str(datetime.datetime.now()) 
+        self.filter = filter
         self.header = ''
-        self.gain = 1.61
         self.snr = snr
         self.model_grid = None
+        self.subarray = subarray
+
+        # Set the data dimensions and create the empty exposure
+        self._reset_data()
+
+        # Set the time axis
+        self._reset_time()
+
+        # Meta data for the target
+        self.target = target
+        self.title = title or '{} Simulation'.format(self.target)
+        self.target_lookup()
 
         # Set instance attributes for the target
         self.wave = mt.wave_solutions(subarray)
@@ -137,19 +167,77 @@ class TSO(object):
             setattr(self, 'order{}_psfs'.format(order), cube)
 
         # Get absolute calibration reference file
-        calfile = resource_filename('awesimsoss', 'files/jwst_niriss_photom_0028.fits')
+        # calfile = resource_filename('awesimsoss', 'files/jwst_niriss_photom_0028.fits')
+        calfile = resource_filename('awesimsoss', 'files/niriss_ref_photom.fits')
         caldata = fits.getdata(calfile)
         self.photom = caldata[caldata['pupil'] == 'GR700XD']
 
         # Save the trace polynomial coefficients
         self.coeffs = mt.trace_polynomials(subarray=self.subarray)
 
-        # Create the empty exposure
-        self.dims = (self.nframes, self.nrows, self.ncols)
-        self.tso = np.zeros(self.dims)
-        self.tso_ideal = np.zeros(self.dims)
-        self.tso_order1_ideal = np.zeros(self.dims)
-        self.tso_order2_ideal = np.zeros(self.dims)
+    def add_noise(self, zodi_scale=1., offset=500):
+        """
+        Generate ramp and background noise
+
+        Parameters
+        ----------
+        zodi_scale: float
+            The scale factor of the zodiacal background
+        offset: int
+            The dark current offset
+        """
+        print('Adding noise to TSO...')
+        start = time.time()
+
+        # Get the separated orders
+        orders = np.asarray([self.tso_order1_ideal, self.tso_order2_ideal])
+
+        # Load all the reference files
+        photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photon_yield_dms.fits'))
+        pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
+        zodi = fits.getdata(resource_filename('awesimsoss', 'files/soss_zodiacal_background_scaled.fits'))
+        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/substrip256_forward_coefficients_dms.fits'))
+        pedestal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256pedestaldms.fits'))
+        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256signaldms.fits'))*self.gain
+
+        # Generate the photon yield factor values
+        pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
+
+        # Remove negatives from the dark ramp
+        darksignal[np.where(darksignal < 0.)] = 0.
+
+        # Make the exposure
+        RAMP = gd.make_exposure(1, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
+
+        # Iterate over integrations
+        for n in range(self.nints):
+
+            # Add in the SOSS signal
+            ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+
+            # Apply the non-linearity function
+            ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
+
+            # Add the pedestal to each frame in the integration
+            ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
+
+            # Update the TSO with one containing noise
+            self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
+
+        print('Noise model finished:', time.time()-start)
+
+    def add_refpix(self, counts=0):
+        """Add reference pixels to detector edges
+
+        Parameters
+        ----------
+        counts: int
+            The number of counts or the reference pixels
+        """
+        # Left, right, and top
+        self.tso[:, :, :4] = counts
+        self.tso[:, :, -4:] = counts
+        self.tso[:, -4:, :] = counts
 
     def _check_star(self, star):
         """Make sure the input star has units
@@ -183,10 +271,439 @@ class TSO(object):
         # Good to go
         self.star = star
 
-    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
-                       ld_profile='quadratic', model_grid=None, n_jobs=1, verbose=True):
+    @property
+    def filter(self):
+        """Getter for the filter"""
+        return self._filter
+
+    @filter.setter
+    def filter(self, filt):
+        """Setter for the filter
+
+        Properties
+        ----------
+        filt: str
+            The name of the filter to use,
+            ['CLEAR', 'F277W']
         """
-        Generate the simulated 2D data given the initialized TSO object
+        filts = ['CLEAR', 'F277W']
+
+        # Check the value
+        if filt not in filts:
+            raise ValueError("'{}' not a supported filter. Try {}".format(filt, filts))
+
+        # Set it
+        self._filter = filt
+
+    @property
+    def ld_coeffs(self):
+        """Get the limb darkening coefficients"""
+        return self._ld_coeffs
+
+    @ld_coeffs.setter
+    def ld_coeffs(self, coeffs=None):
+        """Set the limb darkening coefficients
+
+        Parameters
+        ----------
+        coeffs: sequence
+            The limb darkening coefficients
+        teff: float, int
+            The effective temperature of the star
+        logg: int, float
+            The surface gravity of the star
+        feh: float, int
+            The logarithm of the star metallicity/solar metallicity
+        """
+        # Use input ld coeff array
+        if isinstance(coeffs, np.ndarray) and len(coeffs.shape) == 3:
+            self._ld_coeffs = coeffs
+
+        # Or generate them if the stellar parameters have changed
+        elif str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>" and str(type(self.model_grid)) == "<class 'exoctk.modelgrid.ModelGrid'>":
+            self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
+
+        else:
+            raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
+
+    @property
+    def ngrps(self):
+        """Getter for the number of groups"""
+        return self._ngrps
+
+    @ngrps.setter
+    def ngrps(self, ngrp_val):
+        """Setter for the number of groups
+
+        Properties
+        ----------
+        ngrp_val: int
+            The number of groups
+        """
+        # Check the value
+        if not isinstance(ngrp_val, int):
+            raise TypeError("The number of groups must be an integer")
+
+        # Set it
+        self._ngrps = ngrp_val
+
+        # Update the results
+        self._reset_data()
+        self._reset_time()
+
+    @property
+    def nints(self):
+        """Getter for the number of integrations"""
+        return self._nints
+
+    @nints.setter
+    def nints(self, nint_val):
+        """Setter for the number of integrations
+
+        Properties
+        ----------
+        nint_val: int
+            The number of integrations
+        """
+        # Check the value
+        if not isinstance(nint_val, int):
+            raise TypeError("The number of integrations must be an integer")
+
+        # Set it
+        self._nints = nint_val
+
+        # Update the results
+        self._reset_data()
+        self._reset_time()
+
+    @property
+    def nresets(self):
+        """Getter for the number of resets"""
+        return self._nresets
+
+    @nresets.setter
+    def nresets(self, nreset_val):
+        """Setter for the number of resets
+
+        Properties
+        ----------
+        nreset_val: int
+            The number of resets
+        """
+        # Check the value
+        if not isinstance(nreset_val, int):
+            raise TypeError("The number of resets must be an integer")
+
+        # Set it
+        self._nresets = nreset_val
+
+        # Update the time (data shape doesn't change)
+        self._reset_time()
+
+    def plot(self, ptype='data', idx=0, scale='linear', order=None, noise=True,
+             traces=False, saturation=0.8, draw=True):
+        """
+        Plot a TSO frame
+
+        Parameters
+        ----------
+        ptype: str
+            The type of plot, ['data', 'snr', 'saturation']
+        idx: int
+            The frame index to plot
+        scale: str
+            Plot scale, ['linear', 'log']
+        order: sequence
+            The order to isolate
+        noise: bool
+            Plot with the noise model
+        traces: bool
+            Plot the traces used to generate the frame
+        saturation: float
+            The fraction of full well defined as saturation
+        """
+        if order in [1, 2]:
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
+        else:
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
+
+        # Get data for plotting
+        vmax = int(np.nanmax(tso[tso < np.inf]))
+        frame = np.array(tso.reshape(self.dims3)[idx].data)
+
+        # Modify the data
+        if ptype == 'snr':
+            frame = np.sqrt(frame.data)
+
+        elif ptype == 'saturation':
+            fullWell = 65536.0
+            frame = frame > saturation * fullWell
+            frame = frame.astype(int)
+
+        else:
+            pass
+
+        # Make the figure
+        height = 180 if self.subarray == 'SUBSTRIP96' else 225
+        fig = figure(x_range=(0, frame.shape[1]), y_range=(0, frame.shape[0]),
+                     tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")],
+                     width=int(frame.shape[1]/2), height=height,
+                     title='{}: Frame {}'.format(self.target, idx),
+                     toolbar_location='above', toolbar_sticky=True)
+
+        # Plot the frame
+        if scale == 'log':
+            frame[frame < 1.] = 1.
+            color_mapper = LogColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
+            fig.image(image=[frame], x=0, y=0, dw=frame.shape[1],
+                      dh=frame.shape[0], color_mapper=color_mapper)
+            color_bar = ColorBar(color_mapper=color_mapper, ticker=LogTicker(),
+                                 orientation="horizontal", label_standoff=12,
+                                 border_line_color=None, location=(0,0))
+
+        else:
+            color_mapper = LinearColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
+            fig.image(image=[frame], x=0, y=0, dw=frame.shape[1],
+                      dh=frame.shape[0], palette='Viridis256')
+            color_bar = ColorBar(color_mapper=color_mapper,
+                                 orientation="horizontal", label_standoff=12,
+                                 border_line_color=None, location=(0,0))
+
+        # Add color bar
+        if ptype != 'saturation':
+            fig.add_layout(color_bar, 'below')
+
+        # Plot the polynomial too
+        if traces:
+            X = np.linspace(0, 2048, 2048)
+
+            # Order 1
+            Y = np.polyval(self.coeffs[0], X)
+            fig.line(X, Y, color='red')
+
+            # Order 2
+            Y = np.polyval(self.coeffs[1], X)
+            fig.line(X, Y, color='red')
+
+        if draw:
+            show(fig)
+        else:
+            return fig
+
+    def plot_slice(self, col, idx=0, order=None, noise=False, **kwargs):
+        """
+        Plot a column of a frame to see the PSF in the cross dispersion direction
+
+        Parameters
+        ----------
+        col: int, sequence
+            The column index(es) to plot
+        idx: int
+            The frame index to plot
+        order: sequence
+            The order to isolate
+        noise: bool
+            Plot with the noise model
+        """
+        if order in [1, 2]:
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
+        else:
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
+
+        # Transpose data
+        flux = tso[idx].T
+
+        # Turn one column into a list
+        if isinstance(col, int):
+            col = [col]
+
+        # Get the data
+        dfig = self.plot(ptype='data', idx=idx, order=order, draw=False, noise=noise, **kwargs)
+
+        # Make the figure
+        fig = figure(width=1024, height=500)
+        fig.xaxis.axis_label = 'Row'
+        fig.yaxis.axis_label = 'Count Rate [ADU/s]'
+        fig.legend.click_policy = 'mute'
+        for c in col:
+            color = next(COLORS)
+            fig.line(np.arange(flux[c].size), flux[c], color=color, legend='Column {}'.format(c))
+            vline = Span(location=c, dimension='height', line_color=color, line_width=3)
+            dfig.add_layout(vline)
+
+        show(column(fig, dfig))
+
+    def plot_ramp(self):
+        """
+        Plot the total flux on each frame to display the ramp
+        """
+        ramp = figure()
+        x = range(self.dims3[0])
+        y = np.sum(self.tso.reshape(self.dims3), axis=(-1, -2))
+        ramp.circle(x, y, size=12)
+        ramp.xaxis.axis_label = 'Group'
+        ramp.yaxis.axis_label = 'Count Rate [ADU/s]'
+
+        show(ramp)
+
+    def plot_lightcurve(self, column=None, time_unit='s', resolution_mult=20):
+        """
+        Plot a lightcurve for each column index given
+
+        Parameters
+        ----------
+        column: int, float, sequence
+            The integer column index(es) or float wavelength(s) in microns
+            to plot as a light curve
+        time_unit: string
+            The string indicator for the units that the self.time array is in
+            ['s', 'min', 'h', 'd' (default)]
+        resolution_mult: int
+            The number of theoretical points to plot for each data point
+        """
+        # Check time_units
+        if time_unit not in ['s', 'min', 'h', 'd']:
+            raise ValueError("time_unit must be 's', 'min', 'h' or 'd']")
+
+        # Get the scaled flux in each column for the last group in
+        # each integration
+        flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
+        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
+
+        # Make it into an array
+        if isinstance(column, (int, float)):
+            column = [column]
+
+        if column is None:
+            column = list(range(self.tso.shape[-1]))
+
+        # Make the figure
+        lc = figure()
+
+        for kcol, col in tqdm(enumerate(column), total=len(column)):
+
+            color = next(COLORS)
+
+            # If it is an index
+            if isinstance(col, int):
+                lightcurve = flux_cols[:, col]
+                label = 'Column {}'.format(col)
+
+            # Or assumed to be a wavelength in microns
+            elif isinstance(col, float):
+                waves = np.mean(self.wave[0], axis=0)
+                lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
+                label = '{} um'.format(col)
+
+            else:
+                print('Please enter an index, astropy quantity, or array thereof.')
+                return
+
+            # Plot the theoretical light curve
+            if str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
+
+                # Make time axis and convert to desired units
+                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
+                time = time*q.d.to(time_unit)
+
+                tmodel = batman.TransitModel(self.tmodel, time)
+                tmodel.rp = self.rp[col]
+                theory = tmodel.light_curve(tmodel)
+                theory *= max(lightcurve)/max(theory)
+
+                lc.line(time, theory, legend=label+' model', color=color, alpha=0.1)
+
+            # Convert datetime
+            data_time = self.time[self.ngrps-1::self.ngrps].copy()
+            data_time*q.d.to(time_unit)
+
+            # Plot the lightcurve
+            lc.circle(data_time, lightcurve, legend=label, color=color)
+
+        lc.xaxis.axis_label = 'Time [{}]'.format(time_unit)
+        lc.yaxis.axis_label = 'Transit Depth'
+        show(lc)
+
+    def plot_spectrum(self, frame=0, order=None, noise=False, scale='log'):
+        """
+        Parameters
+        ----------
+        frame: int
+            The frame number to plot
+        order: sequence
+            The order to isolate
+        noise: bool
+            Plot with the noise model
+        scale: str
+            Plot scale, ['linear', 'log']
+        """
+        if order in [1, 2]:
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
+        else:
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
+
+        # Get extracted spectrum (Column sum for now)
+        wave = np.mean(self.wave[0], axis=0)
+        flux_out = np.sum(tso[frame].data, axis=0)
+        response = 1./self.photom_order1
+
+        # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
+        # that we can convert the flux at each wavelegth into [ADU/s]
+        flux_out *= response/self.time[np.mod(self.ngrps, frame)]
+
+        # Trim wacky extracted edges
+        flux_out[0] = flux_out[-1] = np.nan
+
+        # Plot it along with input spectrum
+        flux_in = np.interp(wave, self.star[0], self.star[1])
+
+        # Make the spectrum plot
+        spec = figure(x_axis_type=scale, y_axis_type=scale, width=1024, height=500)
+        spec.step(wave, flux_out, mode='center', legend='Extracted', color='red')
+        spec.step(wave, flux_in, mode='center', legend='Injected', alpha=0.5)
+        spec.yaxis.axis_label = 'Flux Density [{}]'.format(self.star[1].unit)
+
+        # Get the residuals
+        res = figure(x_axis_type=scale, x_range=spec.x_range, width=1024, height=150)
+        res.step(wave, flux_out-flux_in, mode='center')
+        res.xaxis.axis_label = 'Wavelength [{}]'.format(self.star[0].unit)
+        res.yaxis.axis_label = 'Residuals'
+
+        show(column(spec, res))
+
+    def _reset_data(self):
+        """Reset the results to all zeros"""
+        # Update the dimensions
+        self.dims = (self.nints, self.ngrps, self.nrows, self.ncols)
+        self.dims3 = (self.nints*self.ngrps, self.nrows, self.ncols)
+
+        # Reset the results
+        self.tso = None
+        self.tso_ideal = None
+        self.tso_order1_ideal = None
+        self.tso_order2_ideal = None
+
+    def _reset_time(self):
+        """Reset the time axis based on the observation settings"""
+        # Get frame time based on the subarray
+        self.frame_time = mt.FRAME_TIMES[self.subarray]
+
+        # Generate a time axis for the frames
+        self.time = mt.get_frame_times(self.subarray, self.ngrps, self.nints, self.t0, self.nresets)
+
+    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
+                       ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
+        """
+        Generate the simulated 4D ramp data given the initialized TSO object
 
         Parameters
         ----------
@@ -244,10 +761,7 @@ class TSO(object):
             n_jobs = max_cores
 
         # Clear previous results
-        self.tso = np.zeros(self.dims)
-        self.tso_ideal = np.zeros(self.dims)
-        self.tso_order1_ideal = np.zeros(self.dims)
-        self.tso_order2_ideal = np.zeros(self.dims)
+        self._reset_data()
 
         # If there is a planet transmission spectrum but no LDCs generate them
         is_tmodel = str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>"
@@ -321,9 +835,9 @@ class TSO(object):
 
             # Get relative spectral response for the order (from
             # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
-            throughput = self.photom[(self.photom['order'] == order)&(self.photom['filter'] == self.filter)]
-            ph_wave = throughput.wavelength[throughput.wavelength>0][1:-2]
-            ph_resp = throughput.relresponse[throughput.wavelength>0][1:-2]
+            throughput = self.photom[(self.photom['order'] == order) & (self.photom['filter'] == self.filter)]
+            ph_wave = throughput.wavelength[throughput.wavelength > 0][1:-2]
+            ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
             response = np.interp(wave, ph_wave, ph_resp)
 
             # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
@@ -378,384 +892,72 @@ class TSO(object):
         self.tso = self.tso_ideal.copy()
         self.add_noise()
 
-        # Trim if SUBSTRIP96
-        if self.subarray == 'SUBSTRIP96':
-            self.tso = self.tso[:, :self.nrows, :]
-            self.tso_ideal = self.tso_ideal[:, :self.nrows, :]
-            self.tso_order1_ideal = self.tso_order1_ideal[:, :self.nrows, :]
-            self.tso_order2_ideal = self.tso_order2_ideal[:, :self.nrows, :]
+        # Make fake reference pixels
+        self.add_refpix()
+        #
+        # # Trim if SUBSTRIP96
+        # if self.subarray == 'SUBSTRIP96':
+        #     self.tso = self.tso[:, :self.nrows, :]
+        #     self.tso_ideal = self.tso_ideal[:, :self.nrows, :]
+        #     self.tso_order1_ideal = self.tso_order1_ideal[:, :self.nrows, :]
+        #     self.tso_order2_ideal = self.tso_order2_ideal[:, :self.nrows, :]
+
+        # Reshape into (nints, ngrps, y, x)
+        self.tso = self.tso.reshape(self.dims)
+        self.tso_ideal = self.tso_ideal.reshape(self.dims)
+        self.tso_order1_ideal = self.tso_order1_ideal.reshape(self.dims)
+        self.tso_order2_ideal = self.tso_order2_ideal.reshape(self.dims)
 
         if verbose:
             print('\nTotal time:', time.time()-begin)
 
     @property
-    def ld_coeffs(self):
-        """Get the limb darkening coefficients"""
-        return self._ld_coeffs
+    def subarray(self):
+        """Getter for the subarray"""
+        return self._subarray
 
-    @ld_coeffs.setter
-    def ld_coeffs(self, coeffs=None):
-        """Set the limb darkening coefficients
+    @subarray.setter
+    def subarray(self, subarr):
+        """Setter for the subarray
 
-        Parameters
+        Properties
         ----------
-        coeffs: sequence
-            The limb darkening coefficients
-        teff: float, int
-            The effective temperature of the star
-        logg: int, float
-            The surface gravity of the star
-        feh: float, int
-            The logarithm of the star metallicity/solar metallicity
+        subarr: str
+            The name of the subarray to use,
+            ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         """
-        # Use input ld coeff array
-        if isinstance(coeffs, np.ndarray) and len(coeffs.shape) == 3:
-            self._ld_coeffs = coeffs
-
-        # Or generate them if the stellar parameters have changed
-        elif str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>" and str(type(self.model_grid)) == "<class 'exoctk.modelgrid.ModelGrid'>":
-            self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
-
-        else:
-            raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
-
-    def add_noise(self, zodi_scale=1., offset=500):
-        """
-        Generate ramp and background noise
-
-        Parameters
-        ----------
-        zodi_scale: float
-            The scale factor of the zodiacal background
-        offset: int
-            The dark current offset
-        """
-        print('Adding noise to TSO...')
-        start = time.time()
-
-        # Get the separated orders
-        orders = np.asarray([self.tso_order1_ideal, self.tso_order2_ideal])
-
-        # Load all the reference files
-        photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photon_yield_dms.fits'))
-        pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
-        zodi = fits.getdata(resource_filename('awesimsoss', 'files/soss_zodiacal_background_scaled.fits'))
-        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/substrip256_forward_coefficients_dms.fits'))
-        pedestal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256pedestaldms.fits'))
-        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256signaldms.fits'))*self.gain
-
-        # Generate the photon yield factor values
-        pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
-
-        # Remove negatives from the dark ramp
-        darksignal[np.where(darksignal < 0.)] = 0.
-
-        # Make the exposure
-        RAMP = gd.make_exposure(1, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
-
-        # Iterate over integrations
-        for n in range(self.nints):
-
-            # Add in the SOSS signal
-            ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
-
-            # Apply the non-linearity function
-            ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
-
-            # Add the pedestal to each frame in the integration
-            ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
-
-            # Update the TSO with one containing noise
-            self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
-
-        print('Noise model finished:', time.time()-start)
-
-    def plot(self, ptype='data', idx=0, scale='linear', order=None, noise=True,
-             traces=False, saturation=0.8, draw=True):
-        """
-        Plot a TSO frame
-
-        Parameters
-        ----------
-        ptype: str
-            The type of plot, ['data', 'snr', 'saturation']
-        idx: int
-            The frame index to plot
-        scale: str
-            Plot scale, ['linear', 'log']
-        order: sequence
-            The order to isolate
-        noise: bool
-            Plot with the noise model
-        traces: bool
-            Plot the traces used to generate the frame
-        saturation: float
-            The fraction of full well defined as saturation
-        """
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Get data for plotting
-        vmax = int(np.nanmax(tso[tso < np.inf]))
-        frame = np.array(tso[idx].data)
-
-        # Modify the data
-        if ptype == 'snr':
-            frame = np.sqrt(frame.data)
-
-        elif ptype == 'saturation':
-            fullWell = 65536.0
-            frame = frame > saturation * fullWell
-            frame = frame.astype(int)
-
-        else:
-            pass
-
-        # Make the figure
-        height = 180 if self.subarray == 'SUBSTRIP96' else 225
-        fig = figure(x_range=(0, frame.shape[1]), y_range=(0, frame.shape[0]),
-                     tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")],
-                     width=int(frame.shape[1]/2), height=height,
-                     title='{}: Frame {}'.format(self.target, idx),
-                     toolbar_location='above', toolbar_sticky=True)
-
-        # Plot the frame
-        if scale == 'log':
-            frame[frame < 1.] = 1.
-            color_mapper = LogColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
-            fig.image(image=[frame], x=0, y=0, dw=frame.shape[1],
-                      dh=frame.shape[0], color_mapper=color_mapper)
-            color_bar = ColorBar(color_mapper=color_mapper, ticker=LogTicker(),
-                                 orientation="horizontal", label_standoff=12,
-                                 border_line_color=None, location=(0,0))
-
-        else:
-            color_mapper = LinearColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
-            fig.image(image=[frame], x=0, y=0, dw=frame.shape[1],
-                      dh=frame.shape[0], palette='Viridis256')
-            color_bar = ColorBar(color_mapper=color_mapper,
-                                 orientation="horizontal", label_standoff=12,
-                                 border_line_color=None, location=(0,0))
-
-        # Add color bar
-        if ptype != 'saturation':
-            fig.add_layout(color_bar, 'below')
-
-        # Plot the polynomial too
-        if traces:
-            X = np.linspace(0, 2048, 2048)
-
-            # Order 1
-            Y = np.polyval(self.coeffs[0], X)
-            fig.line(X, Y, color='red')
-
-            # Order 2
-            Y = np.polyval(self.coeffs[1], X)
-            fig.line(X, Y, color='red')
-
-        if draw:
-            show(fig)
-        else:
-            return fig
-
-    def plot_slice(self, col, idx=0, order=None, noise=False, **kwargs):
-        """
-        Plot a column of a frame to see the PSF in the cross dispersion direction
-
-        Parameters
-        ----------
-        col: int, sequence
-            The column index(es) to plot a light curve for
-        idx: int
-            The frame index to plot
-        order: sequence
-            The order to isolate
-        noise: bool
-            Plot with the noise model
-        """
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Transpose data
-        flux = tso[idx].T
-
-        # Turn one column into a list
-        if isinstance(col, int):
-            col = [col]
-
-        # Get the data
-        dfig = self.plot(ptype='data', idx=idx, order=order, draw=False, noise=noise, **kwargs)
-
-        # Make the figure
-        fig = figure(width=1024, height=500)
-        fig.xaxis.axis_label = 'Row'
-        fig.yaxis.axis_label = 'Count Rate [ADU/s]'
-        fig.legend.click_policy = 'mute'
-        for c in col:
-            color = next(COLORS)
-            fig.line(np.arange(flux[c].size), flux[c], color=color, legend='Column {}'.format(c))
-            vline = Span(location=c, dimension='height', line_color=color, line_width=3)
-            dfig.add_layout(vline)
-
-        show(column(fig, dfig))
-
-    def plot_ramp(self):
-        """
-        Plot the total flux on each frame to display the ramp
-        """
-        ramp = figure()
-        x = range(self.tso.shape[0])
-        y = np.sum(self.tso, axis=(-1, -2))
-        ramp.circle(x, y, size=12)
-        ramp.xaxis.axis_label = 'Group'
-        ramp.yaxis.axis_label = 'Count Rate [ADU/s]'
-
-        show(ramp)
-
-    def plot_lightcurve(self, column=None, time_unit='seconds', resolution_mult=20, theory_alpha=0.1):
-        """
-        Plot a lightcurve for each column index given
-
-        Parameters
-        ----------
-        column: int, float, sequence
-            The integer column index(es) or float wavelength(s) in microns
-            to plot as a light curve
-        time_unit: string
-            The string indicator for the units that the self.time array is in
-            options: 'seconds', 'minutes', 'hours', 'days' (default)
-        resolution_mult: int
-            The number of theoretical points to plot for each data point plotted here
-        """
-        # Get the scaled flux in each column for the last group in
-        # each integration
-        flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
-        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
-
-        # Make it into an array
-        if isinstance(column, (int, float)):
-            column = [column]
-
-        if column is None:
-            column = list(range(self.tso.shape[-1]))
-
-        # Make the figure
-        lc = figure()
-
-        for kcol, col in tqdm(enumerate(column), total=len(column)):
-
-            color = next(COLORS)
-
-            # If it is an index
-            if isinstance(col, int):
-                lightcurve = flux_cols[:, col]
-                label = 'Column {}'.format(col)
-
-            # Or assumed to be a wavelength in microns
-            elif isinstance(col, float):
-                waves = np.mean(self.wave[0], axis=0)
-                lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
-                label = '{} um'.format(col)
-
-            else:
-                print('Please enter an index, astropy quantity, or array thereof.')
-                return
-
-            # Plot the theoretical light curve
-            if str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
-                if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
-                    raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
-
-                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-
-                if time_unit == 'seconds':
-                    time /= 86400
-                if time_unit == 'minutes':
-                    time /= 1440
-                if time_unit == 'hours':
-                    time /= 24
-
-                tmodel = batman.TransitModel(self.tmodel, time)
-                tmodel.rp = self.rp[col]
-                theory = tmodel.light_curve(tmodel)
-                theory *= max(lightcurve)/max(theory)
-
-                lc.line(time, theory, legend=label+' model', color=color, alpha=theory_alpha)
-
-            data_time = self.time[self.ngrps-1::self.ngrps].copy()
-
-            if time_unit == 'seconds':
-                data_time /= 86400
-            if time_unit == 'minutes':
-                data_time /= 1440
-            if time_unit == 'hours':
-                data_time /= 24
-
-            # Plot the lightcurve
-            lc.circle(data_time, lightcurve, legend=label, color=color)
-
-        lc.xaxis.axis_label = 'Time [{}]'.format(time_unit)
-        lc.yaxis.axis_label = 'Transit Depth'
-        show(lc)
-
-    def plot_spectrum(self, frame=0, order=None, noise=False, scale='log'):
-        """
-        Parameters
-        ----------
-        frame: int
-            The frame number to plot
-        order: sequence
-            The order to isolate
-        noise: bool
-            Plot with the noise model
-        scale: str
-            Plot scale, ['linear', 'log']
-        """
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Get extracted spectrum (Column sum for now)
-        wave = np.mean(self.wave[0], axis=0)
-        flux_out = np.sum(tso[frame].data, axis=0)
-        response = 1./self.photom_order1
-
-        # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
-        # that we can convert the flux at each wavelegth into [ADU/s]
-        flux_out *= response/self.time[np.mod(self.ngrps, frame)]
-
-        # Plot it along with input spectrum
-        flux_in = np.interp(wave, self.star[0], self.star[1])
-
-        # Make the spectrum plot
-        spec = figure(x_axis_type=scale, y_axis_type=scale, height=400)
-        spec.line(wave, flux_out, legend='Extracted', color='red')
-        spec.line(wave, flux_in, legend='Injected', alpha=0.5)
-        spec.yaxis.axis_label = 'Flux Density [{}]'.format(self.star[1].unit)
-
-        # Get the residuals
-        res = figure(x_axis_type=scale, height=150, x_range=spec.x_range)
-        res.line(wave, flux_out-flux_in)
-        res.xaxis.axis_label = 'Wavelength [{}]'.format(self.star[0].unit)
-        res.yaxis.axis_label = 'Residuals'
-
-        show(column(spec, res))
-
-    def to_fits(self, outfile):
+        subs = ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
+
+        # Check the value
+        if subarr not in subs:
+            raise ValueError("'{}' not a supported subarray. Try {}".format(subarr, subs))
+
+        # Set the subarray
+        self._subarray = subarr
+        self.nrows = mt.SUBARRAY_Y[subarr]
+
+        # Reset the data and time arrays
+        self._reset_data()
+        self._reset_time()
+
+    def target_lookup(self):
+        """Query Simbad for target RA and Dec"""
+        if self.target != 'New Target':
+            try:
+                rec = Simbad.query_object(self.target)
+                coords = SkyCoord(ra=rec[0]['RA'], dec=rec[0]['DEC'], unit=(q.hour, q.degree), frame='icrs')
+                self.ra = coords.ra.degree
+                self.dec = coords.dec.degree
+                if self.verbose:
+                    print("Coordinates for '{}' found in Simbad!".format(self.target))
+            except TypeError:
+                self.ra = 1.23456
+                self.dec = 2.34567
+                if self.verbose:
+                    print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
+                    print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
+
+    def to_fits(self, outfile, all_data=False):
         """
         Save the data to a JWST pipeline ingestible FITS file
 
@@ -764,208 +966,142 @@ class TSO(object):
         outfile: str
             The path of the output file
         """
-        # Make the cards
-        cards = [('DATE', datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), 'Date file created yyyy-mm-ddThh:mm:ss, UTC'), 
-                ('FILENAME', outfile, 'Name of the file'), 
-                ('DATAMODL', 'RampModel', 'Type of data model'), 
-                ('ORIGIN', 'STScI', 'Institution responsible for creating FITS file'), 
-                ('TIMESYS', 'UTC', 'principal time system for time-related keywords'), 
-                ('FILETYPE', 'uncalibrated', 'Type of data in the file'), 
-                ('SDP_VER', '2016_1', 'data processing software version number'), 
-                ('PRD_VER', 'PRDDEVSOC-D-012', 'S&OC PRD version number used in data processing'), 
-                ('TELESCOP', 'JWST', 'Telescope used to acquire data'), 
-                ('RADESYS', 'ICRS', 'Name of the coordinate reference frame'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Program information', ''), 
-                ('TITLE', 'UNKNOWN', 'Proposal title'), 
-                ('PI_NAME', 'N/A', 'Principal investigator name'), 
-                ('CATEGORY', 'UNKNOWN', 'Program category'), 
-                ('SUBCAT', '', 'Program sub-category'), 
-                ('SCICAT', '', 'Science category assigned during TAC process'), 
-                ('CONT_ID', 0, 'Continuation of previous program'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Observation identifiers', ''), 
-                ('DATE-OBS', self.obs_date, 'UT date at start of exposure'), 
-                ('TIME-OBS', self.obs_time, 'UT time at the start of exposure'), 
-                ('OBS_ID', 'V87600007001P0000000002102', 'Programmatic observation identifier'), 
-                ('VISIT_ID', '87600007001', 'Visit identifier'), 
-                ('PROGRAM', '87600', 'Program number'), 
-                ('OBSERVTN', '001', 'Observation number'), 
-                ('VISIT', '001', 'Visit number'), 
-                ('VISITGRP', '02', 'Visit group identifier'), 
-                ('SEQ_ID', '1', 'Parallel sequence identifier'), 
-                ('ACT_ID', '02', 'Activity identifier'), 
-                ('EXPOSURE', '1', 'Exposure request number'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Visit information', ''), 
-                ('TEMPLATE', 'NIRISS SOSS', 'Proposal instruction template used'), 
-                ('OBSLABEL', 'Observation label', 'Proposer label for the observation'), 
-                ('VISITYPE', '', 'Visit type'), 
-                ('VSTSTART', self.obs_date, 'UTC visit start time'), 
-                ('WFSVISIT', '', 'Wavefront sensing and control visit indicator'), 
-                ('VISITSTA', 'SUCCESSFUL', 'Status of a visit'), 
-                ('NEXPOSUR', 1, 'Total number of planned exposures in visit'), 
-                ('INTARGET', False, 'At least one exposure in visit is internal'), 
-                ('TARGOOPP', False, 'Visit scheduled as target of opportunity'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Target information', ''), 
-                ('TARGPROP', '', "Proposer's name for the target"), 
-                ('TARGNAME', self.target, 'Standard astronomical catalog name for tar'), 
-                ('TARGTYPE', 'FIXED', 'Type of target (fixed, moving, generic)'), 
-                ('TARG_RA', 175.5546225, 'Target RA at mid time of exposure'), 
-                ('TARG_DEC', 26.7065694, 'Target Dec at mid time of exposure'), 
-                ('TARGURA', 0.01, 'Target RA uncertainty'), 
-                ('TARGUDEC', 0.01, 'Target Dec uncertainty'), 
-                ('PROP_RA', 175.5546225, 'Proposer specified RA for the target'), 
-                ('PROP_DEC', 26.7065694, 'Proposer specified Dec for the target'), 
-                ('PROPEPOC', '2000-01-01 00:00:00', 'Proposer specified epoch for RA and Dec'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Exposure parameters', ''), 
-                ('INSTRUME', 'NIRISS', 'Identifier for niriss used to acquire data'), 
-                ('DETECTOR', 'NIS', 'ASCII Mnemonic corresponding to the SCA_ID'), 
-                ('LAMP', 'NULL', 'Internal lamp state'), 
-                ('FILTER', self.filter, 'Name of the filter element used'), 
-                ('PUPIL', 'GR700XD', 'Name of the pupil element used'), 
-                ('FOCUSPOS', 0.0, 'Focus position'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Exposure information', ''), 
-                ('PNTG_SEQ', 2, 'Pointing sequence number'), 
-                ('EXPCOUNT', 0, 'Running count of exposures in visit'), 
-                ('EXP_TYPE', 'NIS_SOSS', 'Type of data in the exposure'), 
-                ('', '', ''), 
-                ('COMMENT', '/ Exposure times', ''), 
-                ('EXPSTART', self.time[0], 'UTC exposure start time'), 
-                ('EXPMID', self.time[len(self.time)//2], 'UTC exposure mid time'), 
-                ('EXPEND', self.time[-1], 'UTC exposure end time'), 
-                ('READPATT', 'NISRAPID', 'Readout pattern'), 
-                ('NINTS', self.nints, 'Number of integrations in exposure'), 
-                ('NGROUPS', self.ngrps, 'Number of groups in integration'), 
-                ('NFRAMES', self.nframes, 'Number of frames per group'), 
-                ('GROUPGAP', 0, 'Number of frames dropped between groups'), 
-                ('NSAMPLES', 1, 'Number of A/D samples per pixel'), 
-                ('TSAMPLE', 10.0, 'Time between samples (microsec)'), 
-                ('TFRAME', mt.FRAME_TIMES[self.subarray], 'Time in seconds between frames'), 
-                ('TGROUP', mt.FRAME_TIMES[self.subarray], 'Delta time between groups (s)'), 
-                ('EFFINTTM', 15.8826, 'Effective integration time (sec)'), 
-                ('EFFEXPTM', 15.8826, 'Effective exposure time (sec)'), 
-                ('CHRGTIME', 0.0, 'Charge accumulation time per integration (sec)'), 
-                ('DURATION', self.time[-1]-self.time[0], 'Total duration of exposure (sec)'), 
-                ('NRSTSTRT', self.nresets, 'Number of resets at start of exposure'), 
-                ('NRESETS', self.nresets, 'Number of resets between integrations'), 
-                ('FWCPOS', float(75.02400207519531), ''), 
-                ('PWCPOS', float(245.6344451904297), ''), 
-                ('ZEROFRAM', False, 'Zero frame was downlinkws separately'), 
-                ('DATAPROB', False, 'Science telemetry indicated a problem'), 
-                ('SCA_NUM', 496, 'Sensor Chip Assembly number'), 
-                ('DATAMODE', 91, 'post-processing method used in FPAP'), 
-                ('COMPRSSD', False, 'data compressed on-board (T/F)'), 
-                ('SUBARRAY', True, 'Subarray pattern name'), 
-                # ('SUBARRAY', self.subarray, 'Subarray pattern name'), 
-                ('SUBSTRT1', 1, 'Starting pixel in axis 1 direction'), 
-                ('SUBSTRT2', 1793, 'Starting pixel in axis 2 direction'), 
-                ('SUBSIZE1', self.ncols, 'Number of pixels in axis 1 direction'), 
-                ('SUBSIZE2', self.nrows, 'Number of pixels in axis 2 direction'), 
-                ('FASTAXIS', -2, 'Fast readout axis direction'), 
-                ('SLOWAXIS', -1, 'Slow readout axis direction'), 
-                ('COORDSYS', '', 'Ephemeris coordinate system'), 
-                ('EPH_TIME', 57403, 'UTC time from ephemeris start time (sec)'), 
-                ('JWST_X', 1462376.39634336, 'X spatial coordinate of JWST (km)'), 
-                ('JWST_Y', -178969.457007469, 'Y spatial coordinate of JWST (km)'), 
-                ('JWST_Z', -44183.7683640854, 'Z spatial coordinate of JWST (km)'), 
-                ('JWST_DX', 0.147851665036734, 'X component of JWST velocity (km/sec)'), 
-                ('JWST_DY', 0.352194454527743, 'Y component of JWST velocity (km/sec)'), 
-                ('JWST_DZ', 0.032553742839182, 'Z component of JWST velocity (km/sec)'), 
-                ('APERNAME', 'NIS-CEN', 'PRD science aperture used'), 
-                ('PA_APER', -290.1, 'Position angle of aperture used (deg)'), 
-                ('SCA_APER', -697.500000000082, 'SCA for intended target'), 
-                ('DVA_RA', 0.0, 'Velocity aberration correction RA offset (rad)'), 
-                ('DVA_DEC', 0.0, 'Velocity aberration correction Dec offset (rad)'), 
-                ('VA_SCALE', 0.0, 'Velocity aberration scale factor'), 
-                ('BARTDELT', 0.0, 'Barycentric time correction'), 
-                ('BSTRTIME', 0.0, 'Barycentric exposure start time'), 
-                ('BENDTIME', 0.0, 'Barycentric exposure end time'), 
-                ('BMIDTIME', 0.0, 'Barycentric exposure mid time'), 
-                ('HELIDELT', 0.0, 'Heliocentric time correction'), 
-                ('HSTRTIME', 0.0, 'Heliocentric exposure start time'), 
-                ('HENDTIME', 0.0, 'Heliocentric exposure end time'), 
-                ('HMIDTIME', 0.0, 'Heliocentric exposure mid time'), 
-                ('WCSAXES', 2, 'Number of WCS axes'), 
-                ('CRPIX1', 1955.0, 'Axis 1 coordinate of the reference pixel in the'), 
-                ('CRPIX2', 1199.0, 'Axis 2 coordinate of the reference pixel in the'), 
-                ('CRVAL1', 175.5546225, 'First axis value at the reference pixel (RA in'), 
-                ('CRVAL2', 26.7065694, 'Second axis value at the reference pixel (RA in'), 
-                ('CTYPE1', 'RA---TAN', 'First axis coordinate type'), 
-                ('CTYPE2', 'DEC--TAN', 'Second axis coordinate type'), 
-                ('CUNIT1', 'deg', 'units for first axis'), 
-                ('CUNIT2', 'deg', 'units for second axis'), 
-                ('CDELT1', 0.065398, 'first axis increment per pixel, increasing east'), 
-                ('CDELT2', 0.065893, 'Second axis increment per pixel, increasing nor'), 
-                ('PC1_1', -0.5446390350150271, 'linear transformation matrix element cos(theta)'), 
-                ('PC1_2', 0.8386705679454239, 'linear transformation matrix element -sin(theta'), 
-                ('PC2_1', 0.8386705679454239, 'linear transformation matrix element sin(theta)'), 
-                ('PC2_2', -0.5446390350150271, 'linear transformation matrix element cos(theta)'), 
-                ('S_REGION', '', 'spatial extent of the observation, footprint'), 
-                ('GS_ORDER', 0, 'index of guide star within listed of selected g'), 
-                ('GSSTRTTM', '1999-01-01 00:00:00', 'UTC time when guide star activity started'), 
-                ('GSENDTIM', '1999-01-01 00:00:00', 'UTC time when guide star activity completed'), 
-                ('GDSTARID', '', 'guide star identifier'), 
-                ('GS_RA', 0.0, 'guide star right ascension'), 
-                ('GS_DEC', 0.0, 'guide star declination'), 
-                ('GS_URA', 0.0, 'guide star right ascension uncertainty'), 
-                ('GS_UDEC', 0.0, 'guide star declination uncertainty'), 
-                ('GS_MAG', 0.0, 'guide star magnitude in FGS detector'), 
-                ('GS_UMAG', 0.0, 'guide star magnitude uncertainty'), 
-                ('PCS_MODE', 'COARSE', 'Pointing Control System mode'), 
-                ('GSCENTX', 0.0, 'guide star centroid x postion in the FGS ideal'), 
-                ('GSCENTY', 0.0, 'guide star centroid x postion in the FGS ideal'), 
-                ('JITTERMS', 0.0, 'RMS jitter over the exposure (arcsec).'), 
-                ('VISITEND', '2017-03-02 15:58:45.36', 'Observatory UTC time when the visit st'), 
-                ('WFSCFLAG', '', 'Wavefront sensing and control visit indicator'), 
-                ('BSCALE', 1, ''), 
-                ('BZERO', 32768, ''), 
-                ('NCOLS', float(self.nrows-1), ''), 
-                ('NROWS', float(self.ncols-1), '')]
+        try:
 
-        # Make the header
-        prihdr = fits.Header()
-        for card in cards:
-            prihdr.append(card, end=True)
+            # Make a RampModel
+            data = self.tso
+            mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
+            pix = subarray(self.subarray)
 
-        # Store the header in the object too
-        self.header = prihdr
+            # Set meta data values for header keywords
+            mod.meta.telescope = 'JWST'
+            mod.meta.instrument.name = 'NIRISS'
+            mod.meta.instrument.detector = 'NIS'
+            mod.meta.instrument.filter = self.filter
+            mod.meta.instrument.pupil = 'GR700XD'
+            mod.meta.exposure.type = 'NIS_SOSS'
+            mod.meta.exposure.nints = self.nints
+            mod.meta.exposure.ngroups = self.ngrps
+            mod.meta.exposure.nframes = self.nframes
+            mod.meta.exposure.readpatt = 'NISRAPID'
+            mod.meta.exposure.groupgap = 0
+            mod.meta.exposure.frame_time = mt.FRAME_TIMES[self.subarray]
+            mod.meta.exposure.group_time = mt.FRAME_TIMES[self.subarray]
+            mod.meta.exposure.duration = self.time[-1]-self.time[0]
+            mod.meta.subarray.name = self.subarray
+            mod.meta.subarray.xsize = data.shape[3]
+            mod.meta.subarray.ysize = data.shape[2]
+            mod.meta.subarray.xstart = pix.get('xloc', 1)
+            mod.meta.subarray.ystart = pix.get('yloc', 1)
+            mod.meta.subarray.fastaxis = -2
+            mod.meta.subarray.slowaxis = -1
+            mod.meta.observation.date = self.obs_date
+            mod.meta.observation.time = self.obs_time
+            mod.meta.target.ra = self.ra
+            mod.meta.target.dec = self.dec
 
-        # Make the HDUList containing:
-        # 1. Datacube with noise model, orders 1 and 2
-        hdu1 = fits.PrimaryHDU(data=np.swapaxes(self.tso, 1, 2), header=prihdr)
+            # Save the file
+            mod.save(outfile, overwrite=True)
 
-        # 2. Datavube with no noise model, orders 1 and 2
-        hdu2 = fits.ImageHDU(data=np.swapaxes(self.tso_ideal, 1, 2), name='RAW')
+            print('File saved as', outfile)
 
-        # 3. Datacube with no noise model, only order 1
-        hdu3 = fits.ImageHDU(data=np.swapaxes(self.tso_order1_ideal, 1, 2), name='RAW_ORD1')
+        except:
+            print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
 
-        # 4. Datacube with no noise model, only order 2
-        hdu4 = fits.ImageHDU(data=np.swapaxes(self.tso_order2_ideal, 1, 2), name='RAW_ORD2')
 
-        # 5. The wavelength and flux of the input star
-        hdu5 = fits.ImageHDU(data=self.star, name='STAR')
-
-        # 6. The wavelength and transmission of the input planet
-        hdu6 = fits.ImageHDU(data=self.planet, name='PLANET')
-
-        # Put it all together and write to file
-        hdulist = fits.HDUList([hdu1, hdu2, hdu3, hdu4, hdu5, hdu6])
-        hdulist.writeto(outfile, overwrite=True)
-
-        print('File saved as', outfile)
+def subarray(arr=''):
+    """
+    Get the pixel information for each NIRISS subarray.     
+    
+    The returned dictionary defines the extent ('x' and 'y'),
+    the starting pixel ('xloc' and 'yloc'), and the number 
+    of reference pixels at each subarray edge ('x1', 'x2',
+    'y1', 'y2) as defined by SSB/DMS coordinates shown below:
+        ___________________________________
+       |               y2                  |
+       |                                   |
+       |                                   |
+       | x1                             x2 |
+       |                                   |
+       |               y1                  |
+       |___________________________________|
+    (1,1)
+    
+    Parameters
+    ----------
+    arr: str
+        The FITS header SUBARRAY value
+    
+    Returns
+    -------
+    dict
+        The dictionary of the specified subarray
+        or a nested dictionary of all subarrays
+    
+    """
+    pix = {'FULL': {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
+                    'yloc':1, 'y':2048, 'y1':4, 'y2':4,
+                    'tfrm':10.73676, 'tgrp':10.73676},
+           'SUBSTRIP96' : {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
+                           'yloc':1803, 'y':96, 'y1':0, 'y2':0,
+                           'tfrm':2.3, 'tgrp':2.3},
+           'SUBSTRIP256' : {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
+                            'yloc':1793, 'y':256, 'y1':0, 'y2':4,
+                            'tfrm':5.4, 'tgrp':5.4},
+           'SUB80' : {'xloc':None, 'x':80, 'x1':0, 'x2':0,
+                      'yloc':None, 'y':80, 'y1':4, 'y2':0},
+           'SUB64' : {'xloc':None, 'x':64, 'x1':0, 'x2':4,
+                      'yloc':None, 'y':64, 'y1':0, 'y2':4},
+           'SUB128' : {'xloc':None, 'x':128, 'x1':0, 'x2':4,
+                       'yloc':None, 'y':128, 'y1':0, 'y2':4},
+           'SUB256' : {'xloc':None, 'x':256, 'x1':0, 'x2':4,
+                       'yloc':None, 'y':256, 'y1':0, 'y2':4},
+           'SUBAMPCAL' : {'xloc':None, 'x':512, 'x1':4, 'x2':0,
+                          'yloc':None, 'y':1792, 'y1':4, 'y2':0},
+           'WFSS64R' : {'xloc':None, 'x':64, 'x1':0, 'x2':4,
+                        'yloc':1, 'y':2048, 'y1':4, 'y2':0},
+           'WFSS64C' : {'xloc':1, 'x':2048, 'x1':4, 'x2':0,
+                        'yloc':None, 'y':64, 'y1':0, 'y2':4},
+           'WFSS128R' : {'xloc':None, 'x':128, 'x1':0, 'x2':4,
+                         'yloc':1, 'y':2048, 'y1':4, 'y2':0},
+           'WFSS128C' : {'xloc':1, 'x':2048, 'x1':4, 'x2':0,
+                         'yloc':None, 'y':128, 'y1':0, 'y2':4},
+           'SUBTASOSS' : {'xloc':None, 'x':64, 'x1':0, 'x2':0,
+                          'yloc':None, 'y':64, 'y1':0, 'y2':0},
+           'SUBTAAMI' : {'xloc':None, 'x':64, 'x1':0, 'x2':0,
+                         'yloc':None, 'y':64, 'y1':0, 'y2':0}}
+    
+    try:
+        return pix[arr]
+    except:
+        return pix
 
 
 class TestTSO(TSO):
     """Generate a test object for quick access"""
-    def __init__(self, subarray='SUBSTRIP256', filt='CLEAR'):
+    def __init__(self, subarray='SUBSTRIP256', filter='CLEAR', **kwargs):
         """Get the test data and load the object"""
         file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
         star = np.genfromtxt(file, unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-        super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filt=filt)
+        super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filter=filter, **kwargs)
+        self.run_simulation()
+
+
+class BlackbodyTSO(TSO):
+    """Generate a test object with a blackbody spectrum"""
+    def __init__(self, teff=1800, subarray='SUBSTRIP256', filter='CLEAR', nints=2, ngrps=2, **kwargs):
+        """Get the test data and load the object
+
+        Parmeters
+        ---------
+        teff: int
+            The effective temperature of the test source
+        """
+        # Generate a blackbody at the given temperature
+        bb = BlackBody1D(temperature=teff*q.K)
+        wav = np.linspace(0.5, 2.9, 1000) * q.um
+        flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
+
+        super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
         self.run_simulation()
