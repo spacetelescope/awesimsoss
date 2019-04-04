@@ -39,17 +39,19 @@ class TestTSO(unittest.TestCase):
         self.assertEqual(tso256clear.ngrps, 2)
         self.assertEqual(tso256clear.nints, 2)
         self.assertEqual(tso256clear.nframes, 4)
+        self.assertEqual(tso256clear.dims, (2, 2, 256, 2048))
         self.assertEqual(tso256clear.subarray, 'SUBSTRIP256')
         self.assertEqual(tso256clear.filter, 'CLEAR')
 
         # Initialize the 96 subarray with two groups and two integrations
         # and the CLEAR filter
-        tso96clear = TSO(ngrps=2, nints=2, star=self.star)
+        tso96clear = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP96')
 
         self.assertEqual(tso96clear.ngrps, 2)
         self.assertEqual(tso96clear.nints, 2)
         self.assertEqual(tso96clear.nframes, 4)
-        self.assertEqual(tso96clear.subarray, 'SUBSTRIP256')
+        self.assertEqual(tso96clear.dims, (2, 2, 96, 2048))
+        self.assertEqual(tso96clear.subarray, 'SUBSTRIP96')
         self.assertEqual(tso96clear.filter, 'CLEAR')
 
         # Initialize the 256 subarray with two groups and two integrations
@@ -59,17 +61,19 @@ class TestTSO(unittest.TestCase):
         self.assertEqual(tso256f277w.ngrps, 2)
         self.assertEqual(tso256f277w.nints, 2)
         self.assertEqual(tso256f277w.nframes, 4)
+        self.assertEqual(tso256f277w.dims, (2, 2, 256, 2048))
         self.assertEqual(tso256f277w.subarray, 'SUBSTRIP256')
         self.assertEqual(tso256f277w.filter, 'F277W')
 
         # Initialize the 96 subarray with two groups and two integrations
         # and the F277W filter
-        tso96f277w = TSO(ngrps=2, nints=2, star=self.star, filter='F277W')
+        tso96f277w = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP96', filter='F277W')
 
         self.assertEqual(tso96f277w.ngrps, 2)
         self.assertEqual(tso96f277w.nints, 2)
         self.assertEqual(tso96f277w.nframes, 4)
-        self.assertEqual(tso96f277w.subarray, 'SUBSTRIP256')
+        self.assertEqual(tso96f277w.dims, (2, 2, 96, 2048))
+        self.assertEqual(tso96f277w.subarray, 'SUBSTRIP96')
         self.assertEqual(tso96f277w.filter, 'F277W')
 
     def test_run_no_planet(self):
