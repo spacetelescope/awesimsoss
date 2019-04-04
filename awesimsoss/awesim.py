@@ -108,7 +108,7 @@ class TSO(object):
         self._subarray = 'SUBSTRIP256'
         self._ngrps = 1
         self._nints = 1
-        self._nresets = 1
+        self._nresets = 0
         self.t0 = t0
 
         # Set static values
@@ -942,7 +942,7 @@ class TSO(object):
 
     def target_lookup(self):
         """Query Simbad for target RA and Dec"""
-        if self.target != 'New Target:'
+        if self.target != 'New Target':
             try:
                 rec = Simbad.query_object(self.target)
                 coords = SkyCoord(ra=rec[0]['RA'], dec=rec[0]['DEC'], unit=(q.hour, q.degree), frame='icrs')
