@@ -138,19 +138,7 @@ class TSO(object):
         # Meta data for the target
         self.target = target
         self.title = title or '{} Simulation'.format(self.target)
-        try:
-            rec = Simbad.query_object(self.target)
-            coords = SkyCoord(ra=rec[0]['RA'], dec=rec[0]['DEC'], unit=(q.hour, q.degree), frame='icrs')
-            self.ra = coords.ra.degree
-            self.dec = coords.dec.degree
-            if self.verbose:
-                print("Coordinates for '{}' found in Simbad!".format(self.target))
-        except TypeError:
-            self.ra = 1.23456
-            self.dec = 2.34567
-            if self.verbose:
-                print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
-                print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
+        self.target_lookup()
 
         # Set instance attributes for the target
         self.wave = mt.wave_solutions(subarray)
@@ -951,6 +939,23 @@ class TSO(object):
         # Reset the data and time arrays
         self._reset_data()
         self._reset_time()
+
+    def target_lookup(self):
+        """Query Simbad for target RA and Dec"""
+        if self.target != 'New Target:'
+            try:
+                rec = Simbad.query_object(self.target)
+                coords = SkyCoord(ra=rec[0]['RA'], dec=rec[0]['DEC'], unit=(q.hour, q.degree), frame='icrs')
+                self.ra = coords.ra.degree
+                self.dec = coords.dec.degree
+                if self.verbose:
+                    print("Coordinates for '{}' found in Simbad!".format(self.target))
+            except TypeError:
+                self.ra = 1.23456
+                self.dec = 2.34567
+                if self.verbose:
+                    print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
+                    print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
 
     def to_fits(self, outfile, all_data=False):
         """
