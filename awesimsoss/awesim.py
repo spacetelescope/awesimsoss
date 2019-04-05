@@ -141,8 +141,6 @@ class TSO(object):
         self.target_lookup()
 
         # Set instance attributes for the target
-        self.wave = mt.wave_solutions(subarray)
-        self.avg_wave = np.mean(self.wave, axis=1)
         self._ld_coeffs = np.zeros((3, 2048, 2))
         self.planet = None
         self.tmodel = None
@@ -165,12 +163,6 @@ class TSO(object):
             flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
             cube = mt.SOSS_psf_cube(filt=self.filter, order=order)*flux
             setattr(self, 'order{}_psfs'.format(order), cube)
-
-        # Get absolute calibration reference file
-        # calfile = resource_filename('awesimsoss', 'files/jwst_niriss_photom_0028.fits')
-        calfile = resource_filename('awesimsoss', 'files/niriss_ref_photom.fits')
-        caldata = fits.getdata(calfile)
-        self.photom = caldata[caldata['pupil'] == 'GR700XD']
 
         # Save the trace polynomial coefficients
         self.coeffs = mt.trace_polynomials(subarray=self.subarray)
@@ -294,6 +286,14 @@ class TSO(object):
 
         # Set it
         self._filter = filt
+
+        # Get absolute calibration reference file
+        calfile = resource_filename('awesimsoss', 'files/niriss_ref_photom.fits')
+        caldata = fits.getdata(calfile)
+        self.photom = caldata[(caldata['pupil'] == 'GR700XD') & (caldata['filter'] == filt)]
+
+        # Update the results
+        self._reset_data()
 
     @property
     def ld_coeffs(self):
@@ -835,7 +835,7 @@ class TSO(object):
 
             # Get relative spectral response for the order (from
             # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
-            throughput = self.photom[(self.photom['order'] == order) & (self.photom['filter'] == self.filter)]
+            throughput = self.photom[self.photom['order'] == order]
             ph_wave = throughput.wavelength[throughput.wavelength > 0][1:-2]
             ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
             response = np.interp(wave, ph_wave, ph_resp)
@@ -934,7 +934,11 @@ class TSO(object):
 
         # Set the subarray
         self._subarray = subarr
+
+        # Set the dependent quantities
         self.nrows = mt.SUBARRAY_Y[subarr]
+        self.wave = mt.wave_solutions(subarr)
+        self.avg_wave = np.mean(self.wave, axis=1)
 
         # Reset the data and time arrays
         self._reset_data()
