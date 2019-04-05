@@ -537,18 +537,23 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     Example 1
     ---------
     # No planet
-    from awesimsoss.sim2D import awesim
+    import numpy as np
+    from awesimsoss.make_trace import psf_lightcurve
     psf = np.ones((76, 76))
     time = np.linspace(-0.2, 0.2, 200)
-    lc = awesim.psf_lightcurve(0.97, psf, 1, None, None, time, None, plot=True)
+    lc = psf_lightcurve(0.97, psf, 1, None, None, time, None, plot=True)
 
     Example 2
     ---------
     # With a planet
+    import batman
+    import numpy as np
+    import astropy.units as q
+    from awesimsoss.make_trace import psf_lightcurve
     params = batman.TransitParams()
     params.t0 = 0.                                # time of inferior conjunction
     params.per = 5.7214742                        # orbital period (days)
-    params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+    params.a = 0.0558*q.AU.to(q.R_sun)*0.66      # semi-major axis (in units of stellar radii)
     params.inc = 89.8                             # orbital inclination (in degrees)
     params.ecc = 0.                               # eccentricity
     params.w = 90.                                # longitude of periastron (in degrees)
@@ -558,7 +563,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     params.limb_dark = 'quadratic'                # limb darkening profile to use
     params.u = [1, 1]                              # limb darkening coefficients
     tmodel = batman.TransitModel(params, time)
-    lc = awesim.psf_lightcurve(0.97, psf, 1, [0.1, 0.1], 0.05, time, tmodel, plot=True)
+    lc = psf_lightcurve(0.97, psf, 1, [0.1, 0.1], 0.05, time, tmodel, plot=True)
     """
     # Expand to shape of time axis
     flux = np.tile(psf, (len(time), 1, 1))
@@ -588,7 +593,7 @@ def wave_solutions(subarr=None, order=None, directory=None):
     is in place.
 
     Parameters
-     ==  ==  ==  ==  ==
+    ----------
     subarr: str
         The subarray to return, ['SUBSTRIP96', 'SUBSTRIP256', or 'full']
     order: int (optional)
@@ -597,7 +602,7 @@ def wave_solutions(subarr=None, order=None, directory=None):
         The directory containing the wavelength FITS files
 
     Returns
-     ==  ==  == =
+    -------
     np.ndarray
         An array of the wavelength solutions for orders 1, 2, and 3
     """
