@@ -338,7 +338,7 @@ def generate_all_SOSS_psf_cubes():
         # generate_SOSS_psfs(filt)
         SOSS_psf_cube(filt=filt, generate=True)
 
-def SOSS_psf_cube(filt='CLEAR', order=1, generate=False):
+def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False):
     """
     Generate/retrieve a data cube of shape (3, 2048, 76, 76)
 
@@ -348,6 +348,8 @@ def SOSS_psf_cube(filt='CLEAR', order=1, generate=False):
         The filter to use, ['CLEAR', 'F277W']
     order: int
         The trace order
+    subarray: str
+        The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
     generate: bool
         Generate a new cube
 

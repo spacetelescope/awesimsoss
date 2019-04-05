@@ -109,6 +109,7 @@ class TSO(object):
         self._ngrps = 1
         self._nints = 1
         self._nresets = 0
+        self._orders = [1, 2]
         self.t0 = t0
 
         # Set static values
@@ -127,12 +128,11 @@ class TSO(object):
         self.header = ''
         self.snr = snr
         self.model_grid = None
+        self.orders = orders
         self.subarray = subarray
 
-        # Set the data dimensions and create the empty exposure
+        # Reset data based on subarray and observation settings
         self._reset_data()
-
-        # Set the time axis
         self._reset_time()
 
         # Meta data for the target
@@ -145,27 +145,14 @@ class TSO(object):
         self.planet = None
         self.tmodel = None
 
-        # Set single order to list
-        if isinstance(orders, int):
-            orders = [orders]
-        if not all([o in [1, 2] for o in orders]):
-            raise TypeError('Order must be either an int, float, or list thereof; i.e. [1, 2]')
-        self.orders = list(set(orders))
-
-        # Check if it's F277W to speed up calculation
-        if self.filter == 'F277W':
-            self.orders = [1]
-
-        # Scale the psf for each detector column to the flux from
-        # the 1D spectrum
-        for order in self.orders:
-            # Get the 1D flux in
-            flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
-            cube = mt.SOSS_psf_cube(filt=self.filter, order=order)*flux
-            setattr(self, 'order{}_psfs'.format(order), cube)
-
         # Save the trace polynomial coefficients
         self.coeffs = mt.trace_polynomials(subarray=self.subarray)
+
+        # Scale the psf for each detector column to the flux from the 1D spectrum
+        for order in self.orders:
+            flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
+            cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux
+            setattr(self, 'order{}_psfs'.format(order), cube)
 
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -278,14 +265,20 @@ class TSO(object):
             The name of the filter to use,
             ['CLEAR', 'F277W']
         """
+        # Valid filters
         filts = ['CLEAR', 'F277W']
 
         # Check the value
-        if filt not in filts:
+        if not isinstance(filt, str) or filt.upper() not in filts:
             raise ValueError("'{}' not a supported filter. Try {}".format(filt, filts))
 
         # Set it
+        filt = filt.upper()
         self._filter = filt
+
+        # If F277W, set orders to 1 to speed up calculation
+        if filt == 'F277W':
+            self.orders = [1]
 
         # Get absolute calibration reference file
         calfile = resource_filename('awesimsoss', 'files/niriss_ref_photom.fits')
@@ -399,6 +392,36 @@ class TSO(object):
 
         # Update the time (data shape doesn't change)
         self._reset_time()
+
+    @property
+    def orders(self):
+        """Getter for the orders"""
+        return self._orders
+
+    @orders.setter
+    def orders(self, ords):
+        """Setter for the orders
+
+        Properties
+        ----------
+        ords: list
+            The orders to simulate, [1, 2, 3]
+        """
+        # Valid order lists
+        orderlist = [[1], [1, 2], [1, 2, 3]]
+
+        # Check the value
+        # Set single order to list
+        if isinstance(ords, int):
+            ords = [ords]
+        if not all([o in [1, 2, 3] for o in ords]):
+            raise ValueError("'{}' is not a valid list of orders. Try {}".format(ords, orderlist))
+
+        # Set it
+        self._orders = ords
+
+        # Update the results
+        self._reset_data()
 
     def plot(self, ptype='data', idx=0, scale='linear', order=None, noise=True,
              traces=False, saturation=0.8, draw=True):
@@ -1083,18 +1106,19 @@ def subarray(arr=''):
 
 class TestTSO(TSO):
     """Generate a test object for quick access"""
-    def __init__(self, subarray='SUBSTRIP256', filter='CLEAR', **kwargs):
+    def __init__(self, subarray='SUBSTRIP256', filter='CLEAR', run=True, **kwargs):
         """Get the test data and load the object"""
         file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
         star = np.genfromtxt(file, unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
         super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filter=filter, **kwargs)
-        self.run_simulation()
+        if run:
+            self.run_simulation()
 
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, teff=1800, subarray='SUBSTRIP256', filter='CLEAR', nints=2, ngrps=2, **kwargs):
+    def __init__(self, teff=1800, subarray='SUBSTRIP256', filter='CLEAR', nints=2, ngrps=2, run=True, **kwargs):
         """Get the test data and load the object
 
         Parmeters
@@ -1108,4 +1132,5 @@ class BlackbodyTSO(TSO):
         flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
 
         super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
-        self.run_simulation()
+        if run:
+            self.run_simulation()
