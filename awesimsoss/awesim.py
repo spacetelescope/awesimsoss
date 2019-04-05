@@ -115,11 +115,11 @@ class TSO(object):
         self.nframes = (self.nresets+self.ngrps)*self.nints
         self.obs_date = str(datetime.datetime.now())
         self.obs_time = str(datetime.datetime.now())
+        self.orders = orders
         self.filter = filter
         self.header = ''
         self.snr = snr
         self.model_grid = None
-        self.orders = orders
         self.subarray = subarray
 
         # Reset data based on subarray and observation settings
