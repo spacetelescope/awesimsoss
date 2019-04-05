@@ -10,20 +10,13 @@ import multiprocessing
 import time
 from functools import partial
 import warnings
-import copy
 
 import numpy as np
-import bokeh
 from astropy.io import fits
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
 from scipy.interpolate import interp2d, RectBivariateSpline
-
-try:
-    import batman
-except ImportError:
-    print("Could not import `batman` package. Functionality limited.")
 
 try:
     import webbpsf
@@ -33,6 +26,34 @@ except ImportError:
 from . import utils
 
 warnings.simplefilter('ignore')
+
+
+def get_angle(pf, p0=np.array([0, 0]), pi=None):
+    """Compute angle (in degrees) for pf-p0-pi corner
+
+    Parameters
+    ----------
+    pf: sequence
+        The coordinates of a point on the rotated vector
+    p0: sequence
+        The coordinates of the pivot
+    pi: sequence
+        The coordinates of the fixed vector
+
+    Returns
+    -------
+    float
+        The angle in degrees
+    """
+    if pi is None:
+        pi = p0 + np.array([0, 1])
+    v0 = np.array(pf) - np.array(p0)
+    v1 = np.array(pi) - np.array(p0)
+
+    angle = np.math.atan2(np.linalg.det([v0, v1]), np.dot(v0, v1))
+    angle = np.degrees(angle)
+
+    return angle
 
 
 def make_frame(psfs):
@@ -146,7 +167,7 @@ def calculate_psf_tilts():
             yy, xx = np.where(np.logical_and(wave_map >= dw0, wave_map < dw1))
 
             # Find the angle between the vertical and the tilted wavelength bin
-            if len(xx) >=1:
+            if len(xx) >= 1:
                 angle = get_angle([xx[-1], yy[-1]], [x, trace[x]])
             else:
                 angle = 0
@@ -182,8 +203,8 @@ def put_psf_on_subarray(psf, y, frame_height=256):
     # Create spline generator
     dim = psf.shape[0]
     mid = (dim - 1.0) / 2.0
-    l = np.arange(dim, dtype=np.float)
-    spline = RectBivariateSpline(l, l, psf.T, kx=3, ky=3, s=0)
+    arr = np.arange(dim, dtype=np.float)
+    spline = RectBivariateSpline(arr, arr, psf.T, kx=3, ky=3, s=0)
 
     # Create output frame, shifted as necessary
     yg, xg = np.indices((frame_height, dim), dtype=np.float64)
@@ -229,14 +250,13 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
         from exoctk.limb_darkening import limb_darkening_fit as lf
     except ImportError:
         return
-        
+
     # Get the model grid
     if not isinstance(model_grid, modelgrid.ModelGrid):
         model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700)
 
     # Load the model grid
-    model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, 
-                                wave_rng=(0.6, 2.8))
+    model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6, 2.8))
 
     # Get the grid point
     if isinstance(grid_point, (list, tuple, np.ndarray)):
@@ -251,20 +271,14 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
     bandpass = svo.Filter('NIRISS.GR700XD', n_bins=n_bins, verbose=False)
 
     # Calculate the LDCs
-    ldc_results = lf.ldc(None, None, None, model_grid, [ld_profile], 
-                         bandpass=bandpass, grid_point=grid_point.copy(), 
+    ldc_results = lf.ldc(None, None, None, model_grid, [ld_profile],
+                         bandpass=bandpass, grid_point=grid_point.copy(),
                          mu_min=0.08, verbose=False)
 
     # Interpolate the LDCs to the desired wavelengths
     coeff_table = ldc_results[ld_profile]['coeffs']
     coeff_cols = [c for c in coeff_table.colnames if c.startswith('c')]
     coeffs = [np.interp(wavelengths, coeff_table['wavelength'], coeff_table[c]) for c in coeff_cols]
-
-    # # Compare
-    # if plot:
-    #     plt.figure()
-    #     plt.scatter(coeff_table['c1'], coeff_table['c2'], c=coeff_table['wavelength'], marker='x')
-    #     plt.scatter(coeffs[0], coeffs[1], c=wavelengths, marker='o')
 
     return np.array(coeffs).T
 
@@ -288,8 +302,8 @@ def generate_SOSS_psfs(filt):
 
     # Get the min and max wavelengths
     wavelengths = utils.wave_solutions('SUBSTRIP256').flatten()
-    wave_min = np.max([ns.SHORT_WAVELENGTH_MIN*1E6, np.min(wavelengths[wavelengths>0])])
-    wave_max = np.min([ns.LONG_WAVELENGTH_MAX*1E6, np.max(wavelengths[wavelengths>0])])
+    wave_min = np.max([ns.SHORT_WAVELENGTH_MIN * 1E6, np.min(wavelengths[wavelengths > 0])])
+    wave_max = np.min([ns.LONG_WAVELENGTH_MAX * 1E6, np.max(wavelengths[wavelengths > 0])])
 
     # webbpsf.calc_datacube can only handle 100 but that's sufficient
     W = np.linspace(wave_min, wave_max, 100)*1E-6
@@ -360,8 +374,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
         # Run datacube
         for n, wavelength in enumerate(wavelengths):
 
-            # Evaluate the trace polynomial in each column to get the y-position
-            # of the trace center
+            # Evaluate the trace polynomial in each column to get the y-position of the trace center
             trace_centers = np.polyval(coeffs[n], trace_cols)
 
             # Don't calculate order2 for F277W or order 3 for either
@@ -381,18 +394,17 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
                 print('Finished in {} seconds.'.format(time.time()-start))
 
                 # Get the PSF tilt at each column
-                # angles = psf_tilts(order)
+                angles = psf_tilts(order)
 
                 # Rotate the psfs
-                # print('Rotating order {} SOSS psfs for {} filter...'.format(n+1, filt))
-                # start = time.time()
-                # pool = multiprocessing.Pool(8)
-                # func = partial(rotate, reshape=False)
-                # rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
-                # pool.close()
-                # pool.join()
-                # print('Finished in {} seconds.'.format(time.time()-start))
-                rotated_psfs = copy.copy(raw_psfs)
+                print('Rotating order {} SOSS psfs for {} filter...'.format(n+1, filt))
+                start = time.time()
+                pool = multiprocessing.Pool(8)
+                func = partial(rotate, reshape=False)
+                rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
+                pool.close()
+                pool.join()
+                print('Finished in {} seconds.'.format(time.time()-start))
 
                 # Scale psfs to 1
                 rotated_psfs = np.abs(rotated_psfs)
