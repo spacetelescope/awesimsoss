@@ -30,6 +30,8 @@ try:
 except ImportError:
     print("Could not import `webbpsf` package. Functionality limited.")
 
+from . import utils
+
 warnings.simplefilter('ignore')
 
 
@@ -56,32 +58,6 @@ def make_frame(psfs):
 
     return frame[:, 38:-38]
 
-def get_angle(pf, p0=np.array([0, 0]), pi=None):
-    """Compute angle (in degrees) for pf-p0-pi corner
-
-    Parameters
-    ----------
-    pf: sequence
-        The coordinates of a point on the rotated vector
-    p0: sequence
-        The coordinates of the pivot
-    pi: sequence
-        The coordinates of the fixed vector
-
-    Returns
-    -------
-    float
-        The angle in degrees
-    """
-    if pi is None:
-        pi = p0 + np.array([0, 1])
-    v0 = np.array(pf) - np.array(p0)
-    v1 = np.array(pi) - np.array(p0)
-
-    angle = np.math.atan2(np.linalg.det([v0, v1]), np.dot(v0, v1))
-    angle = np.degrees(angle)
-
-    return angle
 
 def psf_tilts(order):
     """
@@ -109,6 +85,7 @@ def psf_tilts(order):
 
     return np.load(psf_file)
 
+
 def calculate_psf_tilts():
     """
     Calculate the tilt of the psf at the center of each column
@@ -124,10 +101,10 @@ def calculate_psf_tilts():
         # Dimensions
         subarray = 'SUBSTRIP256'
         X = range(2048)
-        Y = range(SUBARRAY_Y.get(subarray))
+        Y = range(256)
 
         # Get the wave map
-        wave_map = wave_solutions(subarray, order).astype(float)
+        wave_map = utils.wave_solutions(subarray, order).astype(float)
 
         # Get the y-coordinate of the trace polynomial in this column
         # (center of the trace)
@@ -184,6 +161,7 @@ def calculate_psf_tilts():
         np.save(psf_file, np.array(angles))
         print('Angles saved to', psf_file)
 
+
 def put_psf_on_subarray(psf, y, frame_height=256):
     """Make a 2D SOSS trace from a sequence of psfs and trace center locations
 
@@ -219,6 +197,7 @@ def put_psf_on_subarray(psf, y, frame_height=256):
     frame[extrapol] = 0
 
     return frame
+
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
     """
@@ -289,6 +268,7 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
 
     return np.array(coeffs).T
 
+
 def generate_SOSS_psfs(filt):
     """
     Gnerate a cube of the psf at 100 wavelengths from the min to the max wavelength
@@ -307,7 +287,7 @@ def generate_SOSS_psfs(filt):
     ns.pupil_mask = 'GR700XD'
 
     # Get the min and max wavelengths
-    wavelengths = wave_solutions(256).flatten()
+    wavelengths = utils.wave_solutions('SUBSTRIP256').flatten()
     wave_min = np.max([ns.SHORT_WAVELENGTH_MIN*1E6, np.min(wavelengths[wavelengths>0])])
     wave_max = np.min([ns.LONG_WAVELENGTH_MAX*1E6, np.max(wavelengths[wavelengths>0])])
 
@@ -329,11 +309,13 @@ def generate_SOSS_psfs(filt):
     hdulist.writeto(file, overwrite=True)
     hdulist.close()
 
+
 def generate_all_SOSS_psf_cubes():
     """Convenience function to generate all the psf cubes"""
     for filt in ['CLEAR', 'F277W']:
         # generate_SOSS_psfs(filt)
         SOSS_psf_cube(filt=filt, generate=True)
+
 
 def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False):
     """
@@ -360,7 +342,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
         print('Coffee time! This takes about 5 minutes.')
 
         # Get the wavelengths
-        wavelengths = np.mean(wave_solutions(256), axis=1)[:2 if filt == 'CLEAR' else 1]
+        wavelengths = np.mean(utils.wave_solutions(subarray), axis=1)[:2 if filt == 'CLEAR' else 1]
         coeffs = trace_polynomials('SUBSTRIP256')
 
         # Get the file
@@ -459,6 +441,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
 
         return np.concatenate(full_data, axis=0)
 
+
 def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005):
     """
     Retrieve the SOSS psf for the given wavelength
@@ -504,6 +487,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005):
     psf[psf < cutoff] = 0
 
     return psf
+
 
 def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=False):
     """
@@ -584,49 +568,6 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     flux *= response
 
     return flux
-
-def wave_solutions(subarr=None, order=None, directory=None):
-    """
-    Get the wavelength maps for SOSS orders 1, 2, and 3
-    This will be obsolete once the apply_wcs step of the JWST pipeline
-    is in place.
-
-    Parameters
-    ----------
-    subarr: str
-        The subarray to return, ['SUBSTRIP96', 'SUBSTRIP256', or 'full']
-    order: int (optional)
-        The trace order, [1, 2, 3]
-    directory: str
-        The directory containing the wavelength FITS files
-
-    Returns
-    -------
-    np.ndarray
-        An array of the wavelength solutions for orders 1, 2, and 3
-    """
-    # Get the directory
-    if directory is None:
-        default = '/files/soss_wavelengths_fullframe.fits'
-        directory = resource_filename('awesimsoss', default)
-
-    # Trim to the correct subarray
-    if subarr == 'SUBSTRIP256' or subarr == 256:
-        idx = slice(0, 256)
-    elif subarr == 'SUBSTRIP96' or subarr == 96:
-        idx = slice(160, 256)
-    else:
-        idx = slice(0, 2048)
-
-    # Select the right order
-    if order in [1, 2]:
-        order = int(order)-1
-    else:
-        order = slice(0, 3)
-
-    wave = fits.getdata(directory).swapaxes(-2, -1)[order, idx, ::-1]
-
-    return wave
 
 
 def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate=False):

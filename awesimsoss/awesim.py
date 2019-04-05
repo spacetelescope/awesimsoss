@@ -987,7 +987,7 @@ class TSO(object):
         # Set the dependent quantities
         self._ncols = 2048
         self._nrows = self.subarray_specs.get('y')
-        self.wave = mt.wave_solutions(subarr)
+        self.wave = utils.wave_solutions(subarr)
         self.avg_wave = np.mean(self.wave, axis=1)
         self.coeffs = mt.trace_polynomials(subarray=subarr)
 

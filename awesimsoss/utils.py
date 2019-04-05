@@ -6,7 +6,9 @@ Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
 
 import itertools
+from pkg_resources import resource_filename
 
+from astropy.io import fits
 from bokeh.palettes import Category20
 
 
@@ -77,3 +79,48 @@ def subarray(arr):
                          'yloc':None, 'y':64, 'y1':0, 'y2':0}}
 
     return pix[arr]
+
+
+def wave_solutions(subarr=None, order=None, directory=None):
+    """
+    Get the wavelength maps for SOSS orders 1, 2, and 3
+    This will be obsolete once the apply_wcs step of the JWST pipeline
+    is in place.
+
+    Parameters
+    ----------
+    subarr: str
+        The subarray to return, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
+    order: int (optional)
+        The trace order, [1, 2, 3]
+    directory: str
+        The directory containing the wavelength FITS files
+
+    Returns
+    -------
+    np.ndarray
+        An array of the wavelength solutions for orders 1, 2, and 3
+    """
+    # Get the directory
+    if directory is None:
+        default = '/files/soss_wavelengths_fullframe.fits'
+        directory = resource_filename('awesimsoss', default)
+
+    # Trim to the correct subarray
+    if subarr == 'SUBSTRIP256':
+        idx = slice(0, 256)
+    elif subarr == 'SUBSTRIP96':
+        idx = slice(160, 256)
+    else:
+        idx = slice(0, 2048)
+
+    # Select the right order
+    if order in [1, 2]:
+        order = int(order)-1
+    else:
+        order = slice(0, 3)
+
+    # Get the data from file and trim
+    wave = fits.getdata(directory).swapaxes(-2, -1)[order, idx, ::-1]
+
+    return wave
