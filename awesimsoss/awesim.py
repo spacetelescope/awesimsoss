@@ -21,7 +21,6 @@ from bokeh.palettes import Category20
 import itertools
 import astropy.units as q
 import astropy.constants as ac
-import astropy.table as at
 from astropy.io import fits
 from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
@@ -105,20 +104,11 @@ class TSO(object):
         # Check the star units
         self._check_star(star)
 
-        # Initialize summary table
-        self.info = at.Table(info)
-
-        # Set initial values
-        # self._subarray = 'SUBSTRIP256'
-        # self._ngrps = 1
-        # self._nints = 1
-        # self._nresets = 0
-
         # Set static values
-        self.ncols = 2048
         self.gain = 1.61
 
         # Set instance attributes for the exposure
+        self.t0 = t0
         self.ngrps = ngrps
         self.nints = nints
         self.nresets = nresets
@@ -287,6 +277,14 @@ class TSO(object):
         self._reset_data()
 
     @property
+    def info(self):
+        """Summary table for the observation settings"""
+        # Pull out relevant attributes
+        track = ['_ncols', '_nrows', '_nints', '_ngrps', '_nresets', '_subarray', '_t0', '_orders']
+        settings = {key[1:]: val for key, val in self.__dict__.items() if key in track}
+        return settings
+
+    @property
     def ld_coeffs(self):
         """Get the limb darkening coefficients"""
         return self._ld_coeffs
@@ -316,6 +314,17 @@ class TSO(object):
 
         else:
             raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
+
+    @property
+    def ncols(self):
+        """Getter for the number of columns"""
+        return self._ncols
+
+    @ncols.setter
+    def ncols(self, err):
+        """Error when trying to change the number of columns
+        """
+        raise ValueError("The number of columns is fixed by setting the 'subarray' attribute.")
 
     @property
     def ngrps(self):
@@ -390,6 +399,17 @@ class TSO(object):
 
         # Update the time (data shape doesn't change)
         self._reset_time()
+
+    @property
+    def nrows(self):
+        """Getter for the number of rows"""
+        return self._nrows
+
+    @nrows.setter
+    def nrows(self, err):
+        """Error when trying to change the number of rows
+        """
+        raise ValueError("The number of rows is fixed by setting the 'subarray' attribute.")
 
     @property
     def orders(self):
@@ -963,7 +983,8 @@ class TSO(object):
         self._subarray = subarr
 
         # Set the dependent quantities
-        self.nrows = mt.SUBARRAY_Y[subarr]
+        self._ncols = 2048
+        self._nrows = mt.SUBARRAY_Y[subarr]
         self.wave = mt.wave_solutions(subarr)
         self.avg_wave = np.mean(self.wave, axis=1)
         self.coeffs = mt.trace_polynomials(subarray=subarr)
