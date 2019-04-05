@@ -28,85 +28,6 @@ from . import utils
 warnings.simplefilter('ignore')
 
 
-def get_angle(pf, p0=np.array([0, 0]), pi=None):
-    """Compute angle (in degrees) for pf-p0-pi corner
-
-    Parameters
-    ----------
-    pf: sequence
-        The coordinates of a point on the rotated vector
-    p0: sequence
-        The coordinates of the pivot
-    pi: sequence
-        The coordinates of the fixed vector
-
-    Returns
-    -------
-    float
-        The angle in degrees
-    """
-    if pi is None:
-        pi = p0 + np.array([0, 1])
-    v0 = np.array(pf) - np.array(p0)
-    v1 = np.array(pi) - np.array(p0)
-
-    angle = np.math.atan2(np.linalg.det([v0, v1]), np.dot(v0, v1))
-    angle = np.degrees(angle)
-
-    return angle
-
-
-def make_frame(psfs):
-    """
-    Generate a frame from an array of psfs
-
-    Parameters
-    ----------
-    psfs: sequence
-        An array of psfs of shape (2048, 76, 76)
-
-    Returns
-    -------
-    np.ndarray
-        An array of the SOSS psf at 2048 wavelengths for each order
-    """
-    # Empty frame
-    frame = np.zeros((256, 2124))
-
-    # Add each psf
-    for n, psf in enumerate(psfs):
-        frame[:, n:n+76] += psf
-
-    return frame[:, 38:-38]
-
-
-def psf_tilts(order):
-    """
-    Get the psf tilts for the given order
-
-    Parameters
-    ----------
-    order: int
-        The order to use, [1, 2]
-
-    Returns
-    -------
-    np.ndarray
-        The angle from the vertical of the psf in each of the 2048 columns
-    """
-    if order not in [1, 2]:
-        raise ValueError('Only orders 1 and 2 are supported.')
-
-    # Get the file
-    path = 'files/SOSS_PSF_tilt_order{}.npy'.format(order)
-    psf_file = resource_filename('awesimsoss', path)
-
-    if not os.path.exists(psf_file):
-        calculate_psf_tilts()
-
-    return np.load(psf_file)
-
-
 def calculate_psf_tilts():
     """
     Calculate the tilt of the psf at the center of each column
@@ -183,41 +104,11 @@ def calculate_psf_tilts():
         print('Angles saved to', psf_file)
 
 
-def put_psf_on_subarray(psf, y, frame_height=256):
-    """Make a 2D SOSS trace from a sequence of psfs and trace center locations
-
-    Parameters
-    ----------
-    psf: sequence
-        The 2D psf
-    y: float
-        The grid y value to place the center of the psf
-    grid: sequence
-        The [x, y] grid ranges
-
-    Returns
-    -------
-    np.ndarray
-        The 2D frame with the interpolated psf
-    """
-    # Create spline generator
-    dim = psf.shape[0]
-    mid = (dim - 1.0) / 2.0
-    arr = np.arange(dim, dtype=np.float)
-    spline = RectBivariateSpline(arr, arr, psf.T, kx=3, ky=3, s=0)
-
-    # Create output frame, shifted as necessary
-    yg, xg = np.indices((frame_height, dim), dtype=np.float64)
-    yg += mid-y
-
-    # Resample onto the subarray
-    frame = spline.ev(xg, yg)
-
-    # Fill resampled points with zeros
-    extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) | ((yg < -0.5) | (yg >= dim - 0.5)))
-    frame[extrapol] = 0
-
-    return frame
+def generate_all_SOSS_psf_cubes():
+    """Convenience function to generate all the psf cubes"""
+    for filt in ['CLEAR', 'F277W']:
+        # generate_SOSS_psfs(filt)
+        SOSS_psf_cube(filt=filt, generate=True)
 
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
@@ -324,11 +215,248 @@ def generate_SOSS_psfs(filt):
     hdulist.close()
 
 
-def generate_all_SOSS_psf_cubes():
-    """Convenience function to generate all the psf cubes"""
-    for filt in ['CLEAR', 'F277W']:
-        # generate_SOSS_psfs(filt)
-        SOSS_psf_cube(filt=filt, generate=True)
+def get_angle(pf, p0=np.array([0, 0]), pi=None):
+    """Compute angle (in degrees) for pf-p0-pi corner
+
+    Parameters
+    ----------
+    pf: sequence
+        The coordinates of a point on the rotated vector
+    p0: sequence
+        The coordinates of the pivot
+    pi: sequence
+        The coordinates of the fixed vector
+
+    Returns
+    -------
+    float
+        The angle in degrees
+    """
+    if pi is None:
+        pi = p0 + np.array([0, 1])
+    v0 = np.array(pf) - np.array(p0)
+    v1 = np.array(pi) - np.array(p0)
+
+    angle = np.math.atan2(np.linalg.det([v0, v1]), np.dot(v0, v1))
+    angle = np.degrees(angle)
+
+    return angle
+
+
+def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005):
+    """
+    Retrieve the SOSS psf for the given wavelength
+
+    Parameters
+    ----------
+    wavelength: float
+        The wavelength to retrieve [um]
+    filt: str
+        The filter to use, ['CLEAR', 'F277W']
+    psfs: numpy.interp1d object (optional)
+        The interpolator
+
+    Returns
+    -------
+    np.ndarray
+        The 2D psf for the input wavelength
+    """
+    if psfs is None:
+
+        # Get the file
+        file = resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
+
+        # Load the SOSS psf cube
+        cube = fits.getdata(file).swapaxes(-1, -2)
+        wave = fits.getdata(file, ext=1)
+
+        # Initilize interpolator
+        psfs = interp1d(wave, cube, axis=0, kind=3)
+
+    # Check the wavelength
+    if wavelength < psfs.x[0]:
+        wavelength = psfs.x[0]
+
+    if wavelength > psfs.x[-1]:
+        wavelength = psfs.x[-1]
+
+    # Interpolate and scale psf
+    psf = psfs(wavelength)
+    psf *= 1./np.nansum(psf)
+
+    # Remove background
+    psf[psf < cutoff] = 0
+
+    return psf
+
+
+def make_frame(psfs):
+    """
+    Generate a frame from an array of psfs
+
+    Parameters
+    ----------
+    psfs: sequence
+        An array of psfs of shape (2048, 76, 76)
+
+    Returns
+    -------
+    np.ndarray
+        An array of the SOSS psf at 2048 wavelengths for each order
+    """
+    # Empty frame
+    frame = np.zeros((256, 2124))
+
+    # Add each psf
+    for n, psf in enumerate(psfs):
+        frame[:, n:n+76] += psf
+
+    return frame[:, 38:-38]
+
+
+def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=False):
+    """
+    Generate a lightcurve for a given wavelength
+
+    Parameters
+    ----------
+    wavelength: float
+        The wavelength value in microns
+    psf: sequencs
+        The flux-scaled psf for the given wavelength
+    response: float
+        The spectral response of the detector at the given wavelength
+    ld_coeffs: sequence
+        The limb darkening coefficients to use
+    rp: float
+        The planet radius
+    time: sequence
+        The time axis for the TSO
+    tmodel: batman.transitmodel.TransitModel
+        The transit model of the planet
+    plot: bool
+        Plot the lightcurve
+
+    Returns
+    -------
+    sequence
+        A 1D array of the lightcurve with the same length as *t*
+
+    Example 1
+    ---------
+    # No planet
+    import numpy as np
+    from awesimsoss.make_trace import psf_lightcurve
+    psf = np.ones((76, 76))
+    time = np.linspace(-0.2, 0.2, 200)
+    lc = psf_lightcurve(0.97, psf, 1, None, None, time, None, plot=True)
+
+    Example 2
+    ---------
+    # With a planet
+    import batman
+    import numpy as np
+    import astropy.units as q
+    from awesimsoss.make_trace import psf_lightcurve
+    params = batman.TransitParams()
+    params.t0 = 0.                                # time of inferior conjunction
+    params.per = 5.7214742                        # orbital period (days)
+    params.a = 0.0558*q.AU.to(q.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+    params.inc = 89.8                             # orbital inclination (in degrees)
+    params.ecc = 0.                               # eccentricity
+    params.w = 90.                                # longitude of periastron (in degrees)
+    params.teff = 3500                            # effective temperature of the host star
+    params.logg = 5                               # log surface gravity of the host star
+    params.feh = 0                                # metallicity of the host star
+    params.limb_dark = 'quadratic'                # limb darkening profile to use
+    params.u = [1, 1]                              # limb darkening coefficients
+    tmodel = batman.TransitModel(params, time)
+    lc = psf_lightcurve(0.97, psf, 1, [0.1, 0.1], 0.05, time, tmodel, plot=True)
+    """
+    # Expand to shape of time axis
+    flux = np.tile(psf, (len(time), 1, 1))
+
+    # If there is a transiting planet...
+    if ld_coeffs is not None and rp is not None and str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
+
+        # Set the wavelength dependent orbital parameters
+        tmodel.u = ld_coeffs
+        tmodel.rp = rp
+
+        # Generate the light curve for this pixel
+        lightcurve = tmodel.light_curve(tmodel)
+
+        # Scale the flux with the lightcurve
+        flux *= lightcurve[:, None, None]
+
+    # Apply the filter response to convert to [ADU/s]
+    flux *= response
+
+    return flux
+
+
+def psf_tilts(order):
+    """
+    Get the psf tilts for the given order
+
+    Parameters
+    ----------
+    order: int
+        The order to use, [1, 2]
+
+    Returns
+    -------
+    np.ndarray
+        The angle from the vertical of the psf in each of the 2048 columns
+    """
+    if order not in [1, 2]:
+        raise ValueError('Only orders 1 and 2 are supported.')
+
+    # Get the file
+    path = 'files/SOSS_PSF_tilt_order{}.npy'.format(order)
+    psf_file = resource_filename('awesimsoss', path)
+
+    if not os.path.exists(psf_file):
+        calculate_psf_tilts()
+
+    return np.load(psf_file)
+
+
+def put_psf_on_subarray(psf, y, frame_height=256):
+    """Make a 2D SOSS trace from a sequence of psfs and trace center locations
+
+    Parameters
+    ----------
+    psf: sequence
+        The 2D psf
+    y: float
+        The grid y value to place the center of the psf
+    grid: sequence
+        The [x, y] grid ranges
+
+    Returns
+    -------
+    np.ndarray
+        The 2D frame with the interpolated psf
+    """
+    # Create spline generator
+    dim = psf.shape[0]
+    mid = (dim - 1.0) / 2.0
+    arr = np.arange(dim, dtype=np.float)
+    spline = RectBivariateSpline(arr, arr, psf.T, kx=3, ky=3, s=0)
+
+    # Create output frame, shifted as necessary
+    yg, xg = np.indices((frame_height, dim), dtype=np.float64)
+    yg += mid-y
+
+    # Resample onto the subarray
+    frame = spline.ev(xg, yg)
+
+    # Fill resampled points with zeros
+    extrapol = (((xg < -0.5) | (xg >= dim - 0.5)) | ((yg < -0.5) | (yg >= dim - 0.5)))
+    frame[extrapol] = 0
+
+    return frame
 
 
 def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False):
@@ -452,134 +580,6 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
             full_data.append(np.load(file))
 
         return np.concatenate(full_data, axis=0)
-
-
-def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005):
-    """
-    Retrieve the SOSS psf for the given wavelength
-
-    Parameters
-    ----------
-    wavelength: float
-        The wavelength to retrieve [um]
-    filt: str
-        The filter to use, ['CLEAR', 'F277W']
-    psfs: numpy.interp1d object (optional)
-        The interpolator
-
-    Returns
-    -------
-    np.ndarray
-        The 2D psf for the input wavelength
-    """
-    if psfs is None:
-
-        # Get the file
-        file = resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
-
-        # Load the SOSS psf cube
-        cube = fits.getdata(file).swapaxes(-1, -2)
-        wave = fits.getdata(file, ext=1)
-
-        # Initilize interpolator
-        psfs = interp1d(wave, cube, axis=0, kind=3)
-
-    # Check the wavelength
-    if wavelength < psfs.x[0]:
-        wavelength = psfs.x[0]
-
-    if wavelength > psfs.x[-1]:
-        wavelength = psfs.x[-1]
-
-    # Interpolate and scale psf
-    psf = psfs(wavelength)
-    psf *= 1./np.nansum(psf)
-
-    # Remove background
-    psf[psf < cutoff] = 0
-
-    return psf
-
-
-def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=False):
-    """
-    Generate a lightcurve for a given wavelength
-
-    Parameters
-    ----------
-    wavelength: float
-        The wavelength value in microns
-    psf: sequencs
-        The flux-scaled psf for the given wavelength
-    response: float
-        The spectral response of the detector at the given wavelength
-    ld_coeffs: sequence
-        The limb darkening coefficients to use
-    rp: float
-        The planet radius
-    time: sequence
-        The time axis for the TSO
-    tmodel: batman.transitmodel.TransitModel
-        The transit model of the planet
-    plot: bool
-        Plot the lightcurve
-
-    Returns
-    -------
-    sequence
-        A 1D array of the lightcurve with the same length as *t*
-
-    Example 1
-    ---------
-    # No planet
-    import numpy as np
-    from awesimsoss.make_trace import psf_lightcurve
-    psf = np.ones((76, 76))
-    time = np.linspace(-0.2, 0.2, 200)
-    lc = psf_lightcurve(0.97, psf, 1, None, None, time, None, plot=True)
-
-    Example 2
-    ---------
-    # With a planet
-    import batman
-    import numpy as np
-    import astropy.units as q
-    from awesimsoss.make_trace import psf_lightcurve
-    params = batman.TransitParams()
-    params.t0 = 0.                                # time of inferior conjunction
-    params.per = 5.7214742                        # orbital period (days)
-    params.a = 0.0558*q.AU.to(q.R_sun)*0.66      # semi-major axis (in units of stellar radii)
-    params.inc = 89.8                             # orbital inclination (in degrees)
-    params.ecc = 0.                               # eccentricity
-    params.w = 90.                                # longitude of periastron (in degrees)
-    params.teff = 3500                            # effective temperature of the host star
-    params.logg = 5                               # log surface gravity of the host star
-    params.feh = 0                                # metallicity of the host star
-    params.limb_dark = 'quadratic'                # limb darkening profile to use
-    params.u = [1, 1]                              # limb darkening coefficients
-    tmodel = batman.TransitModel(params, time)
-    lc = psf_lightcurve(0.97, psf, 1, [0.1, 0.1], 0.05, time, tmodel, plot=True)
-    """
-    # Expand to shape of time axis
-    flux = np.tile(psf, (len(time), 1, 1))
-
-    # If there is a transiting planet...
-    if ld_coeffs is not None and rp is not None and str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
-
-        # Set the wavelength dependent orbital parameters
-        tmodel.u = ld_coeffs
-        tmodel.rp = rp
-
-        # Generate the light curve for this pixel
-        lightcurve = tmodel.light_curve(tmodel)
-
-        # Scale the flux with the lightcurve
-        flux *= lightcurve[:, None, None]
-
-    # Apply the filter response to convert to [ADU/s]
-    flux *= response
-
-    return flux
 
 
 def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate=False):
