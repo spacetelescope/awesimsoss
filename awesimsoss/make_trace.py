@@ -32,9 +32,6 @@ except ImportError:
 
 warnings.simplefilter('ignore')
 
-FRAME_TIMES = {'SUBSTRIP96':2.213, 'SUBSTRIP256':5.491, 'FULL':10.737}
-SUBARRAY_Y = {'SUBSTRIP96':96, 'SUBSTRIP256':256, 'FULL':2048}
-
 
 def make_frame(psfs):
     """
@@ -631,47 +628,6 @@ def wave_solutions(subarr=None, order=None, directory=None):
 
     return wave
 
-def get_frame_times(subarray, ngrps, nints, t0, nresets=1):
-    """
-    Calculate a time axis for the exposure in the given SOSS subarray
-
-    Parameters
-    ----------
-    subarray: str
-        The subarray name, i.e. 'SUBSTRIP256', 'SUBSTRIP96', or 'FULL'
-    ngrps: int
-        The number of groups per integration
-    nints: int
-        The number of integrations for the exposure
-    t0: float
-        The start time of the exposure
-    nresets: int
-        The number of reset frames per integration
-
-    Returns
-    -------
-    sequence
-        The time of each frame
-    """
-    # Check the subarray
-    if subarray not in ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']:
-        subarray = 'SUBSTRIP256'
-        print("I do not understand subarray '{}'. Using 'SUBSTRIP256' instead.".format(subarray))
-
-    # Get the appropriate frame time
-    ft = FRAME_TIMES[subarray]
-
-    # Generate the time axis, removing reset frames
-    time_axis = []
-    t = t0
-    for _ in range(nints):
-        times = t+np.arange(nresets+ngrps)*ft
-        t = times[-1]+ft
-        time_axis.append(times[nresets:])
-
-    time_axis = np.concatenate(time_axis)
-
-    return time_axis
 
 def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate=False):
     """

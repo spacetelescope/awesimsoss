@@ -17,8 +17,6 @@ import numpy as np
 from bokeh.plotting import figure, show
 from bokeh.models import LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
-from bokeh.palettes import Category20
-import itertools
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
@@ -36,26 +34,13 @@ try:
 except ImportError:
     print("Could not import `batman` package. Functionality limited.")
 
-try:
-    from exoctk import modelgrid as mg
-except ImportError:
-    print("Could not import `exoctk` package. Functionality limited.")
-
-try:
-    from tqdm import tqdmmg
-except ImportError:
-    print("Could not import `tqdm` package. Functionality limited.")
-    tqdm = lambda iterable, total=None: iterable
-
 from . import generate_darks as gd
 from . import make_trace as mt
+from . import utils
 
 
 warnings.simplefilter('ignore')
 
-def color_gen():
-    yield from itertools.cycle(Category20[20])
-COLORS = color_gen()
 
 class TSO(object):
     """
@@ -77,14 +62,22 @@ class TSO(object):
             The wavelength and flux of the star
         snr: float
             The signal-to-noise
+        filter: str
+            The name of the filter to use, ['CLEAR', 'F277W']
         subarray: str
-            The subarray name, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
+            The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
+        orders: int, list
+            The orders to simulate, [1], [1, 2], [1, 2, 3]
         t0: float
             The start time of the exposure [days]
+        nresets: int
+            The number of resets before each integration
         target: str (optional)
             The name of the target
-        title: str
+        title: str (optionl)
             A title for the simulation
+        verbose: bool
+            Print status updates throughout calculation
 
         Example
         -------
@@ -503,7 +496,7 @@ class TSO(object):
                       dh=frame.shape[0], color_mapper=color_mapper)
             color_bar = ColorBar(color_mapper=color_mapper, ticker=LogTicker(),
                                  orientation="horizontal", label_standoff=12,
-                                 border_line_color=None, location=(0,0))
+                                 border_line_color=None, location=(0, 0))
 
         else:
             color_mapper = LinearColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
@@ -511,7 +504,7 @@ class TSO(object):
                       dh=frame.shape[0], palette='Viridis256')
             color_bar = ColorBar(color_mapper=color_mapper,
                                  orientation="horizontal", label_standoff=12,
-                                 border_line_color=None, location=(0,0))
+                                 border_line_color=None, location=(0, 0))
 
         # Add color bar
         if ptype != 'saturation':
@@ -573,7 +566,7 @@ class TSO(object):
         fig.yaxis.axis_label = 'Count Rate [ADU/s]'
         fig.legend.click_policy = 'mute'
         for c in col:
-            color = next(COLORS)
+            color = next(utils.COLORS)
             fig.line(np.arange(flux[c].size), flux[c], color=color, legend='Column {}'.format(c))
             vline = Span(location=c, dimension='height', line_color=color, line_width=3)
             dfig.add_layout(vline)
@@ -627,9 +620,9 @@ class TSO(object):
         # Make the figure
         lc = figure()
 
-        for kcol, col in tqdm(enumerate(column), total=len(column)):
+        for kcol, col in enumerate(column):
 
-            color = next(COLORS)
+            color = next(utils.COLORS)
 
             # If it is an index
             if isinstance(col, int):
@@ -742,10 +735,18 @@ class TSO(object):
         if all([i in self.info for i in ['subarray', 'nints', 'ngrps', 't0', 'nresets']]):
 
             # Get frame time based on the subarray
-            self.frame_time = mt.FRAME_TIMES[self.subarray]
+            self.frame_time = self.subarray_specs.get('tfrm')
+            self.group_time = self.subarray_specs.get('tgrp')
 
-            # Generate a time axis for the frames
-            self.time = mt.get_frame_times(self.subarray, self.ngrps, self.nints, self.t0, self.nresets)
+            # Generate the time axis, removing reset frames
+            time_axis = []
+            t = self.t0
+            for _ in range(self.nints):
+                times = t+np.arange(self.nresets+self.ngrps)*self.frame_time
+                t = times[-1]+self.frame_time
+                time_axis.append(times[self.nresets:])
+
+            self.time = np.concatenate(time_axis)
 
     def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
                        ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
@@ -981,10 +982,11 @@ class TSO(object):
 
         # Set the subarray
         self._subarray = subarr
+        self.subarray_specs = utils.subarray(subarr)
 
         # Set the dependent quantities
         self._ncols = 2048
-        self._nrows = mt.SUBARRAY_Y[subarr]
+        self._nrows = self.subarray_specs.get('y')
         self.wave = mt.wave_solutions(subarr)
         self.avg_wave = np.mean(self.wave, axis=1)
         self.coeffs = mt.trace_polynomials(subarray=subarr)
@@ -1049,7 +1051,7 @@ class TSO(object):
             # Make a RampModel
             data = self.tso
             mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
-            pix = subarray(self.subarray)
+            pix = utils.subarray(self.subarray)
 
             # Set meta data values for header keywords
             mod.meta.telescope = 'JWST'
@@ -1063,8 +1065,8 @@ class TSO(object):
             mod.meta.exposure.nframes = self.nframes
             mod.meta.exposure.readpatt = 'NISRAPID'
             mod.meta.exposure.groupgap = 0
-            mod.meta.exposure.frame_time = mt.FRAME_TIMES[self.subarray]
-            mod.meta.exposure.group_time = mt.FRAME_TIMES[self.subarray]
+            mod.meta.exposure.frame_time = self.frame_time
+            mod.meta.exposure.group_time = self.group_time
             mod.meta.exposure.duration = self.time[-1]-self.time[0]
             mod.meta.subarray.name = self.subarray
             mod.meta.subarray.xsize = data.shape[3]
@@ -1087,101 +1089,65 @@ class TSO(object):
             print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
 
 
-def subarray(arr=''):
-    """
-    Get the pixel information for each NIRISS subarray.     
-    
-    The returned dictionary defines the extent ('x' and 'y'),
-    the starting pixel ('xloc' and 'yloc'), and the number 
-    of reference pixels at each subarray edge ('x1', 'x2',
-    'y1', 'y2) as defined by SSB/DMS coordinates shown below:
-        ___________________________________
-       |               y2                  |
-       |                                   |
-       |                                   |
-       | x1                             x2 |
-       |                                   |
-       |               y1                  |
-       |___________________________________|
-    (1,1)
-    
-    Parameters
-    ----------
-    arr: str
-        The FITS header SUBARRAY value
-    
-    Returns
-    -------
-    dict
-        The dictionary of the specified subarray
-        or a nested dictionary of all subarrays
-    
-    """
-    pix = {'FULL': {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
-                    'yloc':1, 'y':2048, 'y1':4, 'y2':4,
-                    'tfrm':10.73676, 'tgrp':10.73676},
-           'SUBSTRIP96' : {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
-                           'yloc':1803, 'y':96, 'y1':0, 'y2':0,
-                           'tfrm':2.3, 'tgrp':2.3},
-           'SUBSTRIP256' : {'xloc':1, 'x':2048, 'x1':4, 'x2':4,
-                            'yloc':1793, 'y':256, 'y1':0, 'y2':4,
-                            'tfrm':5.4, 'tgrp':5.4},
-           'SUB80' : {'xloc':None, 'x':80, 'x1':0, 'x2':0,
-                      'yloc':None, 'y':80, 'y1':4, 'y2':0},
-           'SUB64' : {'xloc':None, 'x':64, 'x1':0, 'x2':4,
-                      'yloc':None, 'y':64, 'y1':0, 'y2':4},
-           'SUB128' : {'xloc':None, 'x':128, 'x1':0, 'x2':4,
-                       'yloc':None, 'y':128, 'y1':0, 'y2':4},
-           'SUB256' : {'xloc':None, 'x':256, 'x1':0, 'x2':4,
-                       'yloc':None, 'y':256, 'y1':0, 'y2':4},
-           'SUBAMPCAL' : {'xloc':None, 'x':512, 'x1':4, 'x2':0,
-                          'yloc':None, 'y':1792, 'y1':4, 'y2':0},
-           'WFSS64R' : {'xloc':None, 'x':64, 'x1':0, 'x2':4,
-                        'yloc':1, 'y':2048, 'y1':4, 'y2':0},
-           'WFSS64C' : {'xloc':1, 'x':2048, 'x1':4, 'x2':0,
-                        'yloc':None, 'y':64, 'y1':0, 'y2':4},
-           'WFSS128R' : {'xloc':None, 'x':128, 'x1':0, 'x2':4,
-                         'yloc':1, 'y':2048, 'y1':4, 'y2':0},
-           'WFSS128C' : {'xloc':1, 'x':2048, 'x1':4, 'x2':0,
-                         'yloc':None, 'y':128, 'y1':0, 'y2':4},
-           'SUBTASOSS' : {'xloc':None, 'x':64, 'x1':0, 'x2':0,
-                          'yloc':None, 'y':64, 'y1':0, 'y2':0},
-           'SUBTAAMI' : {'xloc':None, 'x':64, 'x1':0, 'x2':0,
-                         'yloc':None, 'y':64, 'y1':0, 'y2':0}}
-    
-    try:
-        return pix[arr]
-    except:
-        return pix
-
-
 class TestTSO(TSO):
     """Generate a test object for quick access"""
-    def __init__(self, subarray='SUBSTRIP256', filter='CLEAR', run=True, **kwargs):
-        """Get the test data and load the object"""
+    def __init__(self, ngrps=2, nints=2, filter='CLEAR', subarray='SUBSTRIP256', run=True, **kwargs):
+        """Get the test data and load the object
+
+        Parameters
+        ----------
+        ngrps: int
+            The number of groups per integration
+        nints: int
+            The number of integrations for the exposure
+        filter: str
+            The name of the filter to use, ['CLEAR', 'F277W']
+        subarray: str
+            The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
+        run: bool
+            Run the simulation after initialization
+        """
+        # Get stored data
         file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
         star = np.genfromtxt(file, unpack=True)
         star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-        super().__init__(ngrps=2, nints=2, star=star1D, subarray=subarray, filter=filter, **kwargs)
+
+        # Initialize base class
+        super().__init__(ngrps=ngrps, nints=nints, star=star1D, subarray=subarray, filter=filter, **kwargs)
+
+        # Run the simulation
         if run:
             self.run_simulation()
 
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, teff=1800, subarray='SUBSTRIP256', filter='CLEAR', nints=2, ngrps=2, run=True, **kwargs):
+    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, **kwargs):
         """Get the test data and load the object
 
         Parmeters
         ---------
+        ngrps: int
+            The number of groups per integration
+        nints: int
+            The number of integrations for the exposure
         teff: int
             The effective temperature of the test source
+        filter: str
+            The name of the filter to use, ['CLEAR', 'F277W']
+        subarray: str
+            The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
+        run: bool
+            Run the simulation after initialization
         """
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
         wav = np.linspace(0.5, 2.9, 1000) * q.um
         flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
 
+        # Initialize base class
         super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
+
+        # Run the simulation
         if run:
             self.run_simulation()
