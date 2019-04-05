@@ -21,6 +21,7 @@ from bokeh.palettes import Category20
 import itertools
 import astropy.units as q
 import astropy.constants as ac
+import astropy.table as at
 from astropy.io import fits
 from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
@@ -104,16 +105,16 @@ class TSO(object):
         # Check the star units
         self._check_star(star)
 
+        # Initialize summary table
+        self.info = at.Table(info)
+
         # Set initial values
-        self._subarray = 'SUBSTRIP256'
-        self._ngrps = 1
-        self._nints = 1
-        self._nresets = 0
-        self._orders = [1, 2]
-        self.t0 = t0
+        # self._subarray = 'SUBSTRIP256'
+        # self._ngrps = 1
+        # self._nints = 1
+        # self._nresets = 0
 
         # Set static values
-        self.nrows = 256
         self.ncols = 2048
         self.gain = 1.61
 
@@ -122,8 +123,8 @@ class TSO(object):
         self.nints = nints
         self.nresets = nresets
         self.nframes = (self.nresets+self.ngrps)*self.nints
-        self.obs_date = str(datetime.datetime.now()) 
-        self.obs_time = str(datetime.datetime.now()) 
+        self.obs_date = str(datetime.datetime.now())
+        self.obs_time = str(datetime.datetime.now())
         self.filter = filter
         self.header = ''
         self.snr = snr
@@ -144,9 +145,6 @@ class TSO(object):
         self._ld_coeffs = np.zeros((3, 2048, 2))
         self.planet = None
         self.tmodel = None
-
-        # Save the trace polynomial coefficients
-        self.coeffs = mt.trace_polynomials(subarray=self.subarray)
 
         # Scale the psf for each detector column to the flux from the 1D spectrum
         for order in self.orders:
@@ -705,23 +703,29 @@ class TSO(object):
 
     def _reset_data(self):
         """Reset the results to all zeros"""
-        # Update the dimensions
-        self.dims = (self.nints, self.ngrps, self.nrows, self.ncols)
-        self.dims3 = (self.nints*self.ngrps, self.nrows, self.ncols)
+        # Chack that all the appropriate values have been initialized
+        if all([i in self.info for i in ['nints', 'ngrps', 'nrows', 'ncols']]):
 
-        # Reset the results
-        self.tso = None
-        self.tso_ideal = None
-        self.tso_order1_ideal = None
-        self.tso_order2_ideal = None
+            # Update the dimensions
+            self.dims = (self.nints, self.ngrps, self.nrows, self.ncols)
+            self.dims3 = (self.nints*self.ngrps, self.nrows, self.ncols)
+
+            # Reset the results
+            self.tso = None
+            self.tso_ideal = None
+            self.tso_order1_ideal = None
+            self.tso_order2_ideal = None
 
     def _reset_time(self):
         """Reset the time axis based on the observation settings"""
-        # Get frame time based on the subarray
-        self.frame_time = mt.FRAME_TIMES[self.subarray]
+        # Chack that all the appropriate values have been initialized
+        if all([i in self.info for i in ['subarray', 'nints', 'ngrps', 't0', 'nresets']]):
 
-        # Generate a time axis for the frames
-        self.time = mt.get_frame_times(self.subarray, self.ngrps, self.nints, self.t0, self.nresets)
+            # Get frame time based on the subarray
+            self.frame_time = mt.FRAME_TIMES[self.subarray]
+
+            # Generate a time axis for the frames
+            self.time = mt.get_frame_times(self.subarray, self.ngrps, self.nints, self.t0, self.nresets)
 
     def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
                        ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
@@ -962,6 +966,32 @@ class TSO(object):
         self.nrows = mt.SUBARRAY_Y[subarr]
         self.wave = mt.wave_solutions(subarr)
         self.avg_wave = np.mean(self.wave, axis=1)
+        self.coeffs = mt.trace_polynomials(subarray=subarr)
+
+        # Reset the data and time arrays
+        self._reset_data()
+        self._reset_time()
+
+    @property
+    def t0(self):
+        """Getter for transit midpoint"""
+        return self._t0
+
+    @t0.setter
+    def t0(self, tmid):
+        """Setter for transit midpoint
+
+        Properties
+        ----------
+        tmid: str
+            The transit midpoint
+        """
+        # Check the value
+        if not isinstance(tmid, (float, int)):
+            raise ValueError("'{}' not a supported transit midpoint. Try a float or integer value.".format(tmid))
+
+        # Set the subarray
+        self._t0 = tmid
 
         # Reset the data and time arrays
         self._reset_data()
