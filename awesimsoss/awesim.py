@@ -551,7 +551,7 @@ class TSO(object):
                 tso = self.tso_ideal
 
         # Transpose data
-        flux = tso[idx].T
+        flux = tso.reshape(self.dims3)[idx].T
 
         # Turn one column into a list
         if isinstance(col, int):
@@ -567,7 +567,7 @@ class TSO(object):
         fig.legend.click_policy = 'mute'
         for c in col:
             color = next(utils.COLORS)
-            fig.line(np.arange(flux[c].size), flux[c], color=color, legend='Column {}'.format(c))
+            fig.line(np.arange(flux[c, :].size), flux[c, :], color=color, legend='Column {}'.format(c))
             vline = Span(location=c, dimension='height', line_color=color, line_width=3)
             dfig.add_layout(vline)
 
@@ -607,7 +607,7 @@ class TSO(object):
 
         # Get the scaled flux in each column for the last group in
         # each integration
-        flux_cols = np.nansum(self.tso_ideal[self.ngrps-1::self.ngrps], axis=1)
+        flux_cols = np.nansum(self.tso_ideal.reshape(self.dims3)[self.ngrps-1::self.ngrps], axis=1)
         flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
 
         # Make it into an array
@@ -687,7 +687,7 @@ class TSO(object):
 
         # Get extracted spectrum (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
-        flux_out = np.sum(tso[frame].data, axis=0)
+        flux_out = np.sum(tso.reshape(self.dims3)[frame].data, axis=0)
         response = 1./self.photom_order1
 
         # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
