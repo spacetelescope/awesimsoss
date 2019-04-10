@@ -104,10 +104,17 @@ def calculate_psf_tilts():
         print('Angles saved to', psf_file)
 
 
-def generate_all_SOSS_psf_cubes():
-    """Convenience function to generate all the psf cubes"""
+def nuke_psfs():
+    """Generate all the psf cubes from scratch"""
+    # Calculate the psf tilts
+    calculate_psf_tilts()
+
     for filt in ['CLEAR', 'F277W']:
-        # generate_SOSS_psfs(filt)
+
+        # Calculate the raw psfs from WebbPSF
+        generate_SOSS_psfs(filt)
+
+        # Generate the rotated and interpolated psfs ready for trace assembly
         SOSS_psf_cube(filt=filt, generate=True)
 
 
@@ -461,7 +468,10 @@ def put_psf_on_subarray(psf, y, frame_height=256):
 
 def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False):
     """
-    Generate/retrieve a data cube of shape (3, 2048, 76, 76)
+    Generate/retrieve a data cube of shape (3, 2048, 76, 76) which is a
+    76x76 pixel psf for 2048 wavelengths for each trace order. The PSFs
+    are scaled to unity and rotated to reproduce the trace tilt at each
+    wavelength then placed on the desired subarray.
 
     Parameters
     ----------
@@ -485,7 +495,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
 
         # Get the wavelengths
         wavelengths = np.mean(utils.wave_solutions(subarray), axis=1)[:2 if filt == 'CLEAR' else 1]
-        coeffs = trace_polynomials('SUBSTRIP256')
+        coeffs = trace_polynomials(subarray)
 
         # Get the file
         psf_path = 'files/SOSS_{}_PSF.fits'.format(filt)
@@ -608,12 +618,6 @@ def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate
         file = resource_filename('awesimsoss', 'files/soss_wavelength_trace_table1.txt')
         x1, y1, w1, x2, y2, w2 = np.genfromtxt(file, unpack=True)
 
-        # File says to do this but doesn't seem necessary on trace simulation
-        # # Subarray 96
-        # if subarray == 'SUBSTRIP96':
-        #     y1 -= 10
-        #     y2 -= 10
-
         # Fit the polynomails
         fit1 = np.polyfit(x1, y1, poly_order)
         fit2 = np.polyfit(x2, y2, poly_order)
@@ -627,11 +631,6 @@ def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate
             order = int(order)-1
         else:
             order = slice(0, 3)
-
-        # if subarray == 'SUBSTRIP96':
-        #     coeffs = [[1.71164994e-11, -4.72119272e-08, 5.10276801e-05, -5.91535309e-02, 7.30680347e+01], [2.35792131e-13, 2.42999478e-08, 1.03641247e-05, -3.63088657e-02, 8.96766537e+01]]
-        # else:
-        #     coeffs = [[1.71164994e-11, -4.72119272e-08, 5.10276801e-05, -5.91535309e-02, 8.30680347e+01], [2.35792131e-13, 2.42999478e-08, 1.03641247e-05, -3.63088657e-02, 9.96766537e+01]]
 
         coeffs = [[1.71164994e-11, -4.72119272e-08, 5.10276801e-05, -5.91535309e-02, 8.30680347e+01], [2.35792131e-13, 2.42999478e-08, 1.03641247e-05, -3.63088657e-02, 9.96766537e+01]]
 
