@@ -104,18 +104,21 @@ def calculate_psf_tilts():
         print('Angles saved to', psf_file)
 
 
-def nuke_psfs():
+def nuke_psfs(tilts=True, raw=True, final=True):
     """Generate all the psf cubes from scratch"""
     # Calculate the psf tilts
-    calculate_psf_tilts()
+    if tilts:
+        calculate_psf_tilts()
 
     for filt in ['CLEAR', 'F277W']:
 
         # Calculate the raw psfs from WebbPSF
-        generate_SOSS_psfs(filt)
+        if raw:
+            generate_SOSS_psfs(filt)
 
         # Generate the rotated and interpolated psfs ready for trace assembly
-        SOSS_psf_cube(filt=filt, generate=True)
+        if final:
+            SOSS_psf_cube(filt=filt, generate=True)
 
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
