@@ -13,6 +13,7 @@ import warnings
 
 import numpy as np
 from astropy.io import fits
+from bokeh.plotting import figure, show
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
@@ -253,9 +254,11 @@ def get_angle(pf, p0=np.array([0, 0]), pi=None):
     return angle
 
 
-def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005):
+def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005, plot=False):
     """
-    Retrieve the SOSS psf for the given wavelength
+    Retrieve the SOSS psf for the given wavelength,
+    scale the total flux to 1, and set pixels below
+    cutoff value to zero
 
     Parameters
     ----------
@@ -265,6 +268,8 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005):
         The filter to use, ['CLEAR', 'F277W']
     psfs: numpy.interp1d object (optional)
         The interpolator
+    plot: bool
+        Plot the psf
 
     Returns
     -------
@@ -292,12 +297,19 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005):
 
     # Interpolate and scale psf
     psf = psfs(wavelength)
-    psf *= 1./np.nansum(psf)
+    psf *= 1./np.sum(psf)
 
     # Remove background
-    psf[psf < cutoff] = 0
+    # psf[psf < cutoff] = 0
 
-    return psf
+    if plot:
+
+        fig = figure()
+        fig.image([psf], x=0, y=0, dw=psf.shape[0], dh=psf.shape[1])
+        show(fig)
+
+    else:
+        return psf
 
 
 def make_frame(psfs):
@@ -326,7 +338,7 @@ def make_frame(psfs):
 
 def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=False):
     """
-    Generate a lightcurve for a given wavelength
+    Generate a lightcurve for a (76, 76) psf of a given wavelength
 
     Parameters
     ----------

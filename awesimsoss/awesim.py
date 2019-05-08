@@ -129,11 +129,12 @@ class TSO(object):
         self.planet = None
         self.tmodel = None
 
-        # Scale the psf for each detector column to the flux from the 1D spectrum
-        for order in self.orders:
-            flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, np.newaxis, np.newaxis]
-            cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux
-            setattr(self, 'order{}_psfs'.format(order), cube)
+        # Generate the psfs
+        self._reset_psfs()
+
+        # Generate the response function
+        self._reset_response()
+
 
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -269,11 +270,14 @@ class TSO(object):
         # Update the results
         self._reset_data()
 
+        # Reset relative response function
+        self._reset_response()
+
     @property
     def info(self):
         """Summary table for the observation settings"""
         # Pull out relevant attributes
-        track = ['_ncols', '_nrows', '_nints', '_ngrps', '_nresets', '_subarray', '_t0', '_orders']
+        track = ['_ncols', '_nrows', '_nints', '_ngrps', '_nresets', '_subarray', '_filter', '_t0', '_orders']
         settings = {key[1:]: val for key, val in self.__dict__.items() if key in track}
         return settings
 
@@ -716,7 +720,7 @@ class TSO(object):
 
     def _reset_data(self):
         """Reset the results to all zeros"""
-        # Chack that all the appropriate values have been initialized
+        # Check that all the appropriate values have been initialized
         if all([i in self.info for i in ['nints', 'ngrps', 'nrows', 'ncols']]):
 
             # Update the dimensions
@@ -731,7 +735,7 @@ class TSO(object):
 
     def _reset_time(self):
         """Reset the time axis based on the observation settings"""
-        # Chack that all the appropriate values have been initialized
+        # Check that all the appropriate values have been initialized
         if all([i in self.info for i in ['subarray', 'nints', 'ngrps', 't0', 'nresets']]):
 
             # Get frame time based on the subarray
@@ -747,6 +751,43 @@ class TSO(object):
                 time_axis.append(times[self.nresets:])
 
             self.time = np.concatenate(time_axis)
+
+
+    def _reset_response(self):
+        """Generate the relative response function for each order"""
+        # Check that all the appropriate values have been initialized
+        if all([i in self.info for i in ['filter', 'subarray']]):
+
+            for order in self.orders:
+
+                # Get the wavelength map
+                wave = self.avg_wave[order-1]
+
+                # Get relative spectral response for the order (from
+                # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
+                throughput = self.photom[self.photom['order'] == order]
+                ph_wave = throughput.wavelength[throughput.wavelength > 0][1:-2]
+                ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
+                response = np.interp(wave, ph_wave, ph_resp)
+
+                # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
+                # that we can convert the flux at each wavelegth into [ADU/s]
+                response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
+                setattr(self, 'photom_order{}'.format(order), response)
+
+
+    def _reset_psfs(self):
+        """Scale the psf for each detector column to the flux from the 1D spectrum"""
+        # Check that all the appropriate values have been initialized
+        if all([i in self.info for i in ['filter', 'subarray']]):
+
+            for order in self.orders:
+
+                flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, None, None]
+                cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux
+                setattr(self, 'order{}_flux'.format(order), flux)
+                setattr(self, 'order{}_psfs'.format(order), cube)
+
 
     def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
                        ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
@@ -866,8 +907,9 @@ class TSO(object):
             # Get the wavelength map
             wave = self.avg_wave[order-1]
 
-            # Get the psf cube
+            # Get the psf cube and filter response function
             cube = getattr(self, 'order{}_psfs'.format(order))
+            response = getattr(self, 'photom_order{}'.format(order))
 
             # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
@@ -880,18 +922,6 @@ class TSO(object):
             else:
                 tdepth = np.ones_like(wave)
             self.rp = np.sqrt(tdepth)
-
-            # Get relative spectral response for the order (from
-            # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
-            throughput = self.photom[self.photom['order'] == order]
-            ph_wave = throughput.wavelength[throughput.wavelength > 0][1:-2]
-            ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
-            response = np.interp(wave, ph_wave, ph_resp)
-
-            # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
-            # that we can convert the flux at each wavelegth into [ADU/s]
-            response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
-            setattr(self, 'photom_order{}'.format(order), response)
 
             # Run multiprocessing to generate lightcurves
             if verbose:
@@ -994,6 +1024,10 @@ class TSO(object):
         # Reset the data and time arrays
         self._reset_data()
         self._reset_time()
+
+        # Reset the relative response function and the psfs
+        self._reset_response()
+        self._reset_psfs()
 
     @property
     def t0(self):
