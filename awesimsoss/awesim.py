@@ -193,10 +193,17 @@ class TSO(object):
         counts: int
             The number of counts or the reference pixels
         """
-        # Left, right, and top
+        # Left, right (all subarrays)
         self.tso[:, :, :4] = counts
         self.tso[:, :, -4:] = counts
-        self.tso[:, -4:, :] = counts
+
+        # Top (excluding SUBSTRIP96)
+        if self.subarray != 'SUBSTRIP96':
+            self.tso[:, -4:, :] = counts
+
+        # Bottom (Only FULL frame)
+        if self.subarray == 'FULL':
+            self.tso[:, :4, :] = counts
 
     def _check_star(self, star):
         """Make sure the input star has units
