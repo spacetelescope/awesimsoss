@@ -122,7 +122,6 @@ class TSO(object):
         # Meta data for the target
         self.target = target
         self.title = title or '{} Simulation'.format(self.target)
-        self.target_lookup()
 
         # Set instance attributes for the target
         self._ld_coeffs = np.zeros((3, 2048, 2))
@@ -134,7 +133,6 @@ class TSO(object):
 
         # Generate the response function
         self._reset_response()
-
 
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -752,7 +750,6 @@ class TSO(object):
 
             self.time = np.concatenate(time_axis)
 
-
     def _reset_response(self):
         """Generate the relative response function for each order"""
         # Check that all the appropriate values have been initialized
@@ -775,7 +772,6 @@ class TSO(object):
                 response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
                 setattr(self, 'order{}_response'.format(order), response)
 
-
     def _reset_psfs(self):
         """Scale the psf for each detector column to the flux from the 1D spectrum"""
         # Check that all the appropriate values have been initialized
@@ -787,7 +783,6 @@ class TSO(object):
                 cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux[:, None, None]
                 setattr(self, 'order{}_flux'.format(order), flux)
                 setattr(self, 'order{}_psfs'.format(order), cube)
-
 
     def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
                        ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
@@ -1054,9 +1049,32 @@ class TSO(object):
         self._reset_data()
         self._reset_time()
 
-    def target_lookup(self):
-        """Query Simbad for target RA and Dec"""
+    @property
+    def target(self):
+        """Getter for target name"""
+        return self._target
+
+    @target.setter
+    def target(self, name):
+        """Setter for target name and coordinates
+
+        Properties
+        ----------
+        tmid: str
+            The transit midpoint
+        """
+        # Check the name
+        if not isinstance(name, str):
+            raise TypeError("Target name must be a string.")
+
+        # Set the subarray
+        self._target = name
+        self.ra = 1.23456
+        self.dec = 2.34567
+
+        # Query Simbad for target RA and Dec
         if self.target != 'New Target':
+
             try:
                 rec = Simbad.query_object(self.target)
                 coords = SkyCoord(ra=rec[0]['RA'], dec=rec[0]['DEC'], unit=(q.hour, q.degree), frame='icrs')
@@ -1065,11 +1083,10 @@ class TSO(object):
                 if self.verbose:
                     print("Coordinates for '{}' found in Simbad!".format(self.target))
             except TypeError:
-                self.ra = 1.23456
-                self.dec = 2.34567
                 if self.verbose:
                     print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
                     print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
+
 
     def to_fits(self, outfile, all_data=False):
         """

@@ -111,6 +111,18 @@ class TestTSO(unittest.TestCase):
         except:
             pass
 
+    def test_lookup(self):
+        """Test that coordinates are looked up if given a name"""
+        # Make the TSO object
+        no_targ = TSO(ngrps=2, nints=2, star=self.star)
+        targ = TSO(ngrps=2, nints=2, star=self.star, target='trappist-1')
+
+        # Check target name
+        self.assertNotEqual(targ.target, no_targ.target)
+
+        # Check coordinates
+        self.assertNotEqual(targ.ra, no_targ.ra)
+        self.assertNotEqual(targ.dec, no_targ.dec)
 
 def test_TestTSO():
     """A test of the test instance!"""
