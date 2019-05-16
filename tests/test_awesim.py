@@ -32,9 +32,20 @@ class TestTSO(unittest.TestCase):
 
     def test_init(self):
         """Test that the TSO class is generated properly"""
+        # Initialize the FULL frame with two groups and two integrations
+        # and the CLEAR filter
+        tso2048clear = TSO(ngrps=2, nints=2, star=self.star, subarray='FULL')
+
+        self.assertEqual(tso2048clear.ngrps, 2)
+        self.assertEqual(tso2048clear.nints, 2)
+        self.assertEqual(tso2048clear.nframes, 4)
+        self.assertEqual(tso2048clear.dims, (2, 2, 2048, 2048))
+        self.assertEqual(tso2048clear.subarray, 'FULL')
+        self.assertEqual(tso2048clear.filter, 'CLEAR')
+
         # Initialize the 256 subarray with two groups and two integrations
         # and the CLEAR filter
-        tso256clear = TSO(ngrps=2, nints=2, star=self.star)
+        tso256clear = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP256')
 
         self.assertEqual(tso256clear.ngrps, 2)
         self.assertEqual(tso256clear.nints, 2)
@@ -54,9 +65,20 @@ class TestTSO(unittest.TestCase):
         self.assertEqual(tso96clear.subarray, 'SUBSTRIP96')
         self.assertEqual(tso96clear.filter, 'CLEAR')
 
+        # Initialize the FULL frame with two groups and two integrations
+        # and the F277W filter
+        tso2048f277w = TSO(ngrps=2, nints=2, star=self.star, subarray='FULL', filter='F277W')
+
+        self.assertEqual(tso2048f277w.ngrps, 2)
+        self.assertEqual(tso2048f277w.nints, 2)
+        self.assertEqual(tso2048f277w.nframes, 4)
+        self.assertEqual(tso2048f277w.dims, (2, 2, 2048, 2048))
+        self.assertEqual(tso2048f277w.subarray, 'FULL')
+        self.assertEqual(tso2048f277w.filter, 'F277W')
+
         # Initialize the 256 subarray with two groups and two integrations
         # and the F277W filter
-        tso256f277w = TSO(ngrps=2, nints=2, star=self.star, filter='F277W')
+        tso256f277w = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP256', filter='F277W')
 
         self.assertEqual(tso256f277w.ngrps, 2)
         self.assertEqual(tso256f277w.nints, 2)
