@@ -692,7 +692,7 @@ class TSO(object):
         # Get extracted spectrum (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
         flux_out = np.sum(tso.reshape(self.dims3)[frame].data, axis=0)
-        response = 1./self.photom_order1
+        response = 1./self.order1_response
 
         # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
         # that we can convert the flux at each wavelegth into [ADU/s]
@@ -744,7 +744,7 @@ class TSO(object):
 
             # Generate the time axis, removing reset frames
             time_axis = []
-            t = self.t0
+            t = self.t0+self.frame_time
             for _ in range(self.nints):
                 times = t+np.arange(self.nresets+self.ngrps)*self.frame_time
                 t = times[-1]+self.frame_time
@@ -773,7 +773,7 @@ class TSO(object):
                 # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
                 # that we can convert the flux at each wavelegth into [ADU/s]
                 response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
-                setattr(self, 'photom_order{}'.format(order), response)
+                setattr(self, 'order{}_response'.format(order), response)
 
 
     def _reset_psfs(self):
@@ -783,8 +783,8 @@ class TSO(object):
 
             for order in self.orders:
 
-                flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)[:, None, None]
-                cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux
+                flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)
+                cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux[:, None, None]
                 setattr(self, 'order{}_flux'.format(order), flux)
                 setattr(self, 'order{}_psfs'.format(order), cube)
 
@@ -908,8 +908,8 @@ class TSO(object):
             wave = self.avg_wave[order-1]
 
             # Get the psf cube and filter response function
-            cube = getattr(self, 'order{}_psfs'.format(order))
-            response = getattr(self, 'photom_order{}'.format(order))
+            psfs = getattr(self, 'order{}_psfs'.format(order))
+            response = getattr(self, 'order{}_response'.format(order))
 
             # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
@@ -931,17 +931,17 @@ class TSO(object):
             # Generate the lightcurves at each wavelength
             pool = ThreadPool(n_jobs)
             func = partial(mt.psf_lightcurve, time=self.time, tmodel=self.tmodel)
-            data = list(zip(wave, cube, response, ld_coeffs, self.rp))
-            psfs = np.asarray(pool.starmap(func, data))
+            data = list(zip(wave, psfs, response, ld_coeffs, self.rp))
+            lightcurves = np.asarray(pool.starmap(func, data), dtype=np.float64)
             pool.close()
             pool.join()
 
-            # Reshape into frames
-            psfs = psfs.swapaxes(0, 1)
+            # Reshape to make frames
+            lightcurves = lightcurves.swapaxes(0, 1)
 
             # Multiply by the frame time to convert to [ADU]
             ft = np.tile(self.time[:self.ngrps], self.nints)
-            psfs *= ft[:, None, None, None]
+            lightcurves *= ft[:, None, None, None]
 
             # Generate TSO frames
             if verbose:
@@ -951,7 +951,7 @@ class TSO(object):
 
             # Make the 2048*N lightcurves into N frames
             pool = ThreadPool(n_jobs)
-            psfs = np.asarray(pool.map(mt.make_frame, psfs))
+            frames = np.asarray(pool.map(mt.make_frame, lightcurves))
             pool.close()
             pool.join()
 
@@ -960,7 +960,7 @@ class TSO(object):
                 print('Order {} traces finished:'.format(order), time.time()-start)
 
             # Add it to the individual order
-            setattr(self, 'tso_order{}_ideal'.format(order), np.array(psfs))
+            setattr(self, 'tso_order{}_ideal'.format(order), np.array(frames))
 
         # Add to the master TSO
         self.tso_ideal = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
