@@ -998,6 +998,7 @@ class TSO(object):
 
         # Add to the master TSO
         self.tso_ideal = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
+        self.tso = self.tso_ideal.copy()
 
         # Trim SUBSTRIP256 array if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
@@ -1013,7 +1014,6 @@ class TSO(object):
 
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
-        self.tso = self.tso_ideal.copy()
         self.add_noise()
 
         # Reshape into (nints, ngrps, y, x)
