@@ -166,7 +166,7 @@ class TSO(object):
             slc = slice(160, 256)
 
             # Trim SUBSTRIP256 photon yield
-            photon_yield = photon_yield[:, :self.nrows, :]
+            photon_yield = photon_yield[:, :96, :]
 
         # Updates if SUBSTRIP256
         elif self.subarray == 'SUBSTRIP256':
