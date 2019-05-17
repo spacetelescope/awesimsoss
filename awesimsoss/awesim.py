@@ -151,13 +151,45 @@ class TSO(object):
         # Get the separated orders
         orders = np.asarray([self.tso_order1_ideal, self.tso_order2_ideal])
 
-        # Load all the reference files
+        # Load the reference files
         photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photon_yield_dms.fits'))
-        pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
-        zodi = fits.getdata(resource_filename('awesimsoss', 'files/soss_zodiacal_background_scaled.fits'))
-        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/substrip256_forward_coefficients_dms.fits'))
         pedestal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256pedestaldms.fits'))
+        pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
+        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/substrip256_forward_coefficients_dms.fits'))
+        zodi = fits.getdata(resource_filename('awesimsoss', 'files/soss_zodiacal_background_scaled.fits'))
         darksignal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256signaldms.fits'))*self.gain
+
+        # Updates if SUBSTRIP96
+        if self.subarray == 'SUBSTRIP96':
+
+            # Make slice from FULL frame
+            slc = slice(160, 256)
+
+            # Trim SUBSTRIP256 photon yield
+            photon_yield = photon_yield[:, :self.nrows, :]
+
+        # Updates if SUBSTRIP256
+        elif self.subarray == 'SUBSTRIP256':
+
+            # Make slice from FULL frame
+            slc = slice(0, 256)
+
+        # Updates if FULL
+        else:
+
+            # Make slice from FULL frame
+            slc = slice(0, 2048)
+
+            # Pad SUBSTRIP256 photon yield with ones since there is no wavelength information in those pixels
+            full_py = np.ones(self.dims)
+            full_py[:, :256, :] = photon_yield
+            photon_yield = full_py
+
+        # Trim FULL frame reference files
+        pedestal = pedestal[slc, :]
+        nonlinearity = nonlinearity[:, slc, :]
+        zodi = zodi[slc, :]
+        darksignal = darksignal[slc, :]
 
         # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
@@ -183,7 +215,7 @@ class TSO(object):
             # Update the TSO with one containing noise
             self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
 
-        print('Noise model finished:', time.time()-start)
+        print('Noise model finished:', round(time.time()-start, 3), 's')
 
     def add_refpix(self, counts=0):
         """Add reference pixels to detector edges
@@ -194,16 +226,16 @@ class TSO(object):
             The number of counts or the reference pixels
         """
         # Left, right (all subarrays)
-        self.tso[:, :, :4] = counts
-        self.tso[:, :, -4:] = counts
+        self.tso[:, :, :, :4] = counts
+        self.tso[:, :, :, -4:] = counts
 
         # Top (excluding SUBSTRIP96)
         if self.subarray != 'SUBSTRIP96':
-            self.tso[:, -4:, :] = counts
+            self.tso[:, :, -4:, :] = counts
 
         # Bottom (Only FULL frame)
         if self.subarray == 'FULL':
-            self.tso[:, :4, :] = counts
+            self.tso[:, :, :4, :] = counts
 
     def _check_star(self, star):
         """Make sure the input star has units
@@ -490,7 +522,7 @@ class TSO(object):
             pass
 
         # Make the figure
-        height = 180 if self.subarray == 'SUBSTRIP96' else 225
+        height = 180 if self.subarray == 'SUBSTRIP96' else 800 if self.subarray == 'FULL' else 225
         fig = figure(x_range=(0, frame.shape[1]), y_range=(0, frame.shape[0]),
                      tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")],
                      width=int(frame.shape[1]/2), height=height,
@@ -947,7 +979,7 @@ class TSO(object):
 
             # Generate TSO frames
             if verbose:
-                print('Lightcurves finished:', time.time()-start)
+                print('Lightcurves finished:', round(time.time()-start, 3), 's')
                 print('Constructing order {} traces...'.format(order))
                 start = time.time()
 
@@ -959,7 +991,7 @@ class TSO(object):
 
             if verbose:
                 # print('Total flux after warp:', np.nansum(all_frames[0]))
-                print('Order {} traces finished:'.format(order), time.time()-start)
+                print('Order {} traces finished:'.format(order), round(time.time()-start, 3), 's')
 
             # Add it to the individual order
             setattr(self, 'tso_order{}_ideal'.format(order), np.array(frames))
@@ -967,20 +999,22 @@ class TSO(object):
         # Add to the master TSO
         self.tso_ideal = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
 
+        # Trim SUBSTRIP256 array if SUBSTRIP96
+        if self.subarray == 'SUBSTRIP96':
+            for arr in ['tso', 'tso_ideal', 'tso_order1_ideal', 'tso_order2_ideal']:
+                setattr(self, arr, getattr(self, arr)[:, :self.nrows, :])
+
+        # Expand SUBSTRIP256 array if FULL frame
+        if self.subarray == 'FULL':
+            for arr in ['tso', 'tso_ideal', 'tso_order1_ideal', 'tso_order2_ideal']:
+                full = np.zeros(self.dims3)
+                full[:, :256, :] = getattr(self, arr)
+                setattr(self, arr, full)
+
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
         self.tso = self.tso_ideal.copy()
         self.add_noise()
-
-        # Make fake reference pixels
-        self.add_refpix()
-        #
-        # # Trim if SUBSTRIP96
-        # if self.subarray == 'SUBSTRIP96':
-        #     self.tso = self.tso[:, :self.nrows, :]
-        #     self.tso_ideal = self.tso_ideal[:, :self.nrows, :]
-        #     self.tso_order1_ideal = self.tso_order1_ideal[:, :self.nrows, :]
-        #     self.tso_order2_ideal = self.tso_order2_ideal[:, :self.nrows, :]
 
         # Reshape into (nints, ngrps, y, x)
         self.tso = self.tso.reshape(self.dims)
@@ -988,8 +1022,11 @@ class TSO(object):
         self.tso_order1_ideal = self.tso_order1_ideal.reshape(self.dims)
         self.tso_order2_ideal = self.tso_order2_ideal.reshape(self.dims)
 
+        # Simulate reference pixels
+        self.add_refpix()
+
         if verbose:
-            print('\nTotal time:', time.time()-begin)
+            print('\nTotal time:', round(time.time()-begin, 3), 's')
 
     @property
     def subarray(self):
