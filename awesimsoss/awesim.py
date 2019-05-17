@@ -45,13 +45,13 @@ warnings.simplefilter('ignore')
 def run_required(func):
     """A wrapper to check that the simulation has been run before a method can be executed"""
     @wraps(func)
-    def _run_required(*args):
+    def _run_required(*args, **kwargs):
         """Check that the 'tso' attribute is not None"""
         if args[0].tso is None:
             print("No simulation found! Please run the 'simulate' method first.")
 
         else:
-            return func(*args)
+            return func(*args, **kwargs)
 
     return _run_required
 
@@ -148,6 +148,7 @@ class TSO(object):
         # Generate the response function
         self._reset_response()
 
+    @run_required
     def add_noise(self, zodi_scale=1., offset=500):
         """
         Generate ramp and background noise
@@ -163,7 +164,7 @@ class TSO(object):
         start = time.time()
 
         # Get the separated orders
-        orders = np.asarray([self.tso_order1_ideal, self.tso_order2_ideal])
+        orders = np.asarray([getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders])
 
         # Load the reference files
         photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photon_yield_dms.fits'))
@@ -231,6 +232,7 @@ class TSO(object):
 
         print('Noise model finished:', round(time.time()-start, 3), 's')
 
+    @run_required
     def add_refpix(self, counts=0):
         """Add reference pixels to detector edges
 
@@ -645,7 +647,7 @@ class TSO(object):
         show(ramp)
 
     @run_required
-    def plot_lightcurve(self, column=None, time_unit='s', resolution_mult=20):
+    def plot_lightcurve(self, column, time_unit='s', resolution_mult=20):
         """
         Plot a lightcurve for each column index given
 
@@ -672,9 +674,6 @@ class TSO(object):
         # Make it into an array
         if isinstance(column, (int, float)):
             column = [column]
-
-        if column is None:
-            column = list(range(self.tso.shape[-1]))
 
         # Make the figure
         lc = figure()
@@ -784,10 +783,8 @@ class TSO(object):
             self.dims3 = (self.nints*self.ngrps, self.nrows, self.ncols)
 
             # Reset the results
-            self.tso = None
-            self.tso_ideal = None
-            self.tso_order1_ideal = None
-            self.tso_order2_ideal = None
+            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+                setattr(self, arr, None)
 
     def _reset_time(self):
         """Reset the time axis based on the observation settings"""
@@ -1021,12 +1018,12 @@ class TSO(object):
 
         # Trim SUBSTRIP256 array if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
-            for arr in ['tso', 'tso_ideal', 'tso_order1_ideal', 'tso_order2_ideal']:
+            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
                 setattr(self, arr, getattr(self, arr)[:, :self.nrows, :])
 
         # Expand SUBSTRIP256 array if FULL frame
         if self.subarray == 'FULL':
-            for arr in ['tso', 'tso_ideal', 'tso_order1_ideal', 'tso_order2_ideal']:
+            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
                 full = np.zeros(self.dims3)
                 full[:, :256, :] = getattr(self, arr)
                 setattr(self, arr, full)
@@ -1036,10 +1033,9 @@ class TSO(object):
         self.add_noise()
 
         # Reshape into (nints, ngrps, y, x)
-        self.tso = self.tso.reshape(self.dims)
-        self.tso_ideal = self.tso_ideal.reshape(self.dims)
-        self.tso_order1_ideal = self.tso_order1_ideal.reshape(self.dims)
-        self.tso_order2_ideal = self.tso_order2_ideal.reshape(self.dims)
+        for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+            data = getattr(self, arr).reshape(self.dims)
+            setattr(self, arr, data)
 
         # Simulate reference pixels
         self.add_refpix()
@@ -1205,7 +1201,7 @@ class TSO(object):
 
 class TestTSO(TSO):
     """Generate a test object for quick access"""
-    def __init__(self, ngrps=2, nints=2, filter='CLEAR', subarray='SUBSTRIP256', run=True, **kwargs):
+    def __init__(self, ngrps=2, nints=2, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, **kwargs):
         """Get the test data and load the object
 
         Parameters
@@ -1220,6 +1216,8 @@ class TestTSO(TSO):
             The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         run: bool
             Run the simulation after initialization
+        add_planet: bool
+            Add a transiting exoplanet
         """
         # Get stored data
         file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
@@ -1231,12 +1229,31 @@ class TestTSO(TSO):
 
         # Run the simulation
         if run:
-            self.simulate()
+            if add_planet:
+
+                planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
+                params = batman.TransitParams()
+                params.t0 = 0.                                # time of inferior conjunction
+                params.per = 0.001 #5.7214742                        # orbital period (days)
+                params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+                params.inc = 89.8                             # orbital inclination (in degrees)
+                params.ecc = 0.                               # eccentricity
+                params.w = 90.                                # longitude of periastron (in degrees)
+                params.limb_dark = 'quadratic'                # limb darkening profile to use
+                params.u = [0.1, 0.1]                          # limb darkening coefficients
+                tmodel = batman.TransitModel(params, self.time)
+                tmodel.teff = 3500                            # effective temperature of the host star
+                tmodel.logg = 5                               # log surface gravity of the host star
+                tmodel.feh = 0                                # metallicity of the host star
+                self.simulate(planet=planet1D, tmodel=tmodel)
+
+            else:
+                self.simulate()
 
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, **kwargs):
+    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, **kwargs):
         """Get the test data and load the object
 
         Parmeters
@@ -1253,6 +1270,8 @@ class BlackbodyTSO(TSO):
             The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         run: bool
             Run the simulation after initialization
+        add_planet: bool
+            Add a transiting exoplanet
         """
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
@@ -1264,4 +1283,23 @@ class BlackbodyTSO(TSO):
 
         # Run the simulation
         if run:
-            self.simulate()
+            if add_planet:
+
+                planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
+                params = batman.TransitParams()
+                params.t0 = 0.                                # time of inferior conjunction
+                params.per = 5.7214742                        # orbital period (days)
+                params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+                params.inc = 89.8                             # orbital inclination (in degrees)
+                params.ecc = 0.                               # eccentricity
+                params.w = 90.                                # longitude of periastron (in degrees)
+                params.limb_dark = 'quadratic'                # limb darkening profile to use
+                params.u = [0.1, 0.1]                          # limb darkening coefficients
+                tmodel = batman.TransitModel(params, self.time)
+                tmodel.teff = 3500                            # effective temperature of the host star
+                tmodel.logg = 5                               # log surface gravity of the host star
+                tmodel.feh = 0                                # metallicity of the host star
+                self.simulate(planet=planet1D, tmodel=tmodel)
+
+            else:
+                self.simulate()

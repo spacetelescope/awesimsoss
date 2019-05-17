@@ -49,36 +49,36 @@ seen through SOSS, my code might look like:
 
    # Imports
    import numpy as np
-   from awesimsoss import awesim
+   from awesimsoss import TSO
    import astropy.units as q
-   import astropy.constants as ac
-   import batman
    from pkg_resources import resource_filename
    star = np.genfromtxt(resource_filename('awesimsoss','files/scaled_spectrum.txt'), unpack=True)
    star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
 
    # Initialize simulation
-   tso = awesim.TSO(ngrps=3, nints=5, star=star1D)
+   tso = TSO(ngrps=3, nints=5, star=star1D)
                
    # Run it and make a plot
-   tso.run_simulation()
-   tso.plot_frame()
+   tso.simulate()
+   tso.plot()
 
 .. figure:: awesimsoss/img/2D_star.png
    :alt: The output trace
 
-The 96 subarray is also supported:
+The SUBSTRIP256 subarray is the default but the SUBSTRIP96 subarray and
+FULL frame configurations are also supported:
 
 .. code:: python
 
-   tso = awesim.TSO(ngrps=3, nints=5, star=star1D, subarray='SUBSTRIP96')
+   tso96 = TSO(ngrps=3, nints=5, star=star1D, subarray='SUBSTRIP96')
+   tso2048 = TSO(ngrps=3, nints=5, star=star1D, subarray='FULL')
 
 The default filter is CLEAR but you can also simulate observations with
 the F277W filter like so:
 
 .. code:: python
 
-   tso = awesim.TSO(ngrps=3, nints=5, star=star1D, filt='F277W')
+   tso = TSO(ngrps=3, nints=5, star=star1D, filt='F277W')
 
 Simulated Planetary Transits
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -102,10 +102,12 @@ And here are some parameters for our planetary system:
 .. code:: python
 
    # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
+   import batman
+   tso = TSO(ngrps=3, nints=5, star=star1D, run=False)
    params = batman.TransitParams()
    params.t0 = 0. # time of inferior conjunction
    params.per = 5.7214742 # orbital period (days)
-   params.a = 0.0558\* q.AU.to(ac.R_sun)\* 0.66 # semi-major axis (in units of stellar radii)
+   params.a = 0.0558\* q.AU.to(q.R_sun)\* 0.66 # semi-major axis (in units of stellar radii)
    params.rp = 0.1 # radius ratio for Jupiter orbiting the Sun
    params.inc = 89.8 # orbital inclination (in degrees)
    params.ecc = 0. # eccentricity
@@ -121,7 +123,7 @@ Now the code to generate a simulated planetary transit around our star might loo
 
 .. code:: python
 
-   tso.run_simulation(planet=planet1D, tmodel=tmodel, time_unit='seconds')
+   tso.simulate(planet=planet1D, tmodel=tmodel, time_unit='seconds')
    tso.plot_lightcurve(column=42)
 
 We can write this to a FITS file directly ingestible by the JWST pipeline with:
