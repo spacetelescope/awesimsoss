@@ -7,7 +7,7 @@ Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 import time
 import warnings
 import datetime
-from functools import partial
+from functools import partial, wraps
 from pkg_resources import resource_filename
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
@@ -40,6 +40,20 @@ from . import utils
 
 
 warnings.simplefilter('ignore')
+
+
+def run_required(func):
+    """A wrapper to check that the simulation has been run before a method can be executed"""
+    @wraps(func)
+    def _run_required(*args):
+        """Check that the 'tso' attribute is not None"""
+        if args[0].tso is None:
+            print("No simulation found! Please run the 'simulate' method first.")
+
+        else:
+            return func(*args)
+
+    return _run_required
 
 
 class TSO(object):
@@ -475,6 +489,7 @@ class TSO(object):
         # Update the results
         self._reset_data()
 
+    @run_required
     def plot(self, ptype='data', idx=0, scale='linear', order=None, noise=True,
              traces=False, saturation=0.8, draw=True):
         """
@@ -568,6 +583,7 @@ class TSO(object):
         else:
             return fig
 
+    @run_required
     def plot_slice(self, col, idx=0, order=None, noise=False, **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
@@ -614,6 +630,7 @@ class TSO(object):
 
         show(column(fig, dfig))
 
+    @run_required
     def plot_ramp(self):
         """
         Plot the total flux on each frame to display the ramp
@@ -627,6 +644,7 @@ class TSO(object):
 
         show(ramp)
 
+    @run_required
     def plot_lightcurve(self, column=None, time_unit='s', resolution_mult=20):
         """
         Plot a lightcurve for each column index given
@@ -705,6 +723,7 @@ class TSO(object):
         lc.yaxis.axis_label = 'Transit Depth'
         show(lc)
 
+    @run_required
     def plot_spectrum(self, frame=0, order=None, noise=False, scale='log'):
         """
         Parameters
@@ -823,8 +842,8 @@ class TSO(object):
                 setattr(self, 'order{}_flux'.format(order), flux)
                 setattr(self, 'order{}_psfs'.format(order), cube)
 
-    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
-                       ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
+    def simulate(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days',
+                 ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
         """
         Generate the simulated 4D ramp data given the initialized TSO object
 
@@ -855,7 +874,7 @@ class TSO(object):
         Example
         -------
         # Run simulation of star only
-        tso.run_simulation()
+        tso.simulate()
 
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
         import batman
@@ -874,7 +893,7 @@ class TSO(object):
         tmodel.teff = 3500                            # effective temperature of the host star
         tmodel.logg = 5                               # log surface gravity of the host star
         tmodel.feh = 0                                # metallicity of the host star
-        tso.run_simulation(planet=planet1D, tmodel=tmodel)
+        tso.simulate(planet=planet1D, tmodel=tmodel)
         """
         if verbose:
             begin = time.time()
@@ -1131,7 +1150,7 @@ class TSO(object):
                     print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
                     print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
 
-
+    @run_required
     def to_fits(self, outfile, all_data=False):
         """
         Save the data to a JWST pipeline ingestible FITS file
@@ -1212,7 +1231,7 @@ class TestTSO(TSO):
 
         # Run the simulation
         if run:
-            self.run_simulation()
+            self.simulate()
 
 
 class BlackbodyTSO(TSO):
@@ -1245,4 +1264,4 @@ class BlackbodyTSO(TSO):
 
         # Run the simulation
         if run:
-            self.run_simulation()
+            self.simulate()
