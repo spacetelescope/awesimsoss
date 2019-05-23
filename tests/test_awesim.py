@@ -142,8 +142,8 @@ class TestTSO(unittest.TestCase):
     def test_lookup(self):
         """Test that coordinates are looked up if given a name"""
         # Make the TSO object
-        no_targ = TSO(ngrps=2, nints=2, star=self.star)
         targ = TSO(ngrps=2, nints=2, star=self.star, target='trappist-1')
+        no_targ = TSO(ngrps=2, nints=2, star=self.star)
 
         # Check target name
         self.assertNotEqual(targ.target, no_targ.target)
@@ -152,7 +152,7 @@ class TestTSO(unittest.TestCase):
         self.assertNotEqual(targ.ra, no_targ.ra)
         self.assertNotEqual(targ.dec, no_targ.dec)
 
-    def test_bad_star(self):
+    def test_star(self):
         """Test that errors are thrown for bas star input"""
         # Test that non wavelength units fail
         bad_wave_star = copy(self.star)
@@ -160,7 +160,7 @@ class TestTSO(unittest.TestCase):
         kwargs = {'nints':2, 'ngrps':2, 'star':bad_wave_star}
         self.assertRaises(ValueError, TSO, **kwargs)
 
-        # Test that non wavelength units fail
+        # Test that non flux density units fail
         bad_flux_star = copy(self.star)
         bad_flux_star[1] *= q.um
         kwargs = {'nints':2, 'ngrps':2, 'star':bad_flux_star}
@@ -201,6 +201,7 @@ class TestTSO(unittest.TestCase):
         self.assertRaises(TypeError, setattr, tso, 'nresets', 'three')
 
         # Bad orders
+        tso.orders = 1
         self.assertRaises(ValueError, setattr, tso, 'orders', 'three')
 
         # Bad subarray
@@ -228,7 +229,10 @@ class TestTSO(unittest.TestCase):
         self.assertRaises(ValueError, tso.plot, **kwargs)
 
         # Standard plot with traces
-        plt = tso.plot(draw=False, traces=True)
+        plt = tso.plot(traces=True)
+
+        # Standard plot with one order
+        plt = tso.plot(order=1, draw=False)
 
         # No noise plot
         plt = tso.plot(noise=False, draw=False)
@@ -243,7 +247,13 @@ class TestTSO(unittest.TestCase):
         tso.simulate()
 
         # Standard plot with traces
-        plt = tso.plot_slice(500, draw=False, traces=True)
+        plt = tso.plot_slice(500, traces=True)
+
+        # Standard plot with one order
+        plt = tso.plot_slice(500, order=1, draw=False)
+
+        # No noise plot
+        plt = tso.plot_slice(500, noise=False, draw=False)
 
         # Log plot
         plt = tso.plot_slice(500, scale='log', draw=False)
@@ -257,8 +267,9 @@ class TestTSO(unittest.TestCase):
         tso = TSO(ngrps=2, nints=2, star=self.star)
         tso.simulate()
 
-        # Standard plot with traces
+        # Standard plot
         plt = tso.plot_ramp(draw=False)
+        tso.plot_ramp()
 
     def test_plot_lightcurve(self):
         """Test plot_lightcurve method"""
@@ -270,11 +281,14 @@ class TestTSO(unittest.TestCase):
         kwargs = {'column':500, 'time_unit':'foo', 'draw':False}
         self.assertRaises(ValueError, tso.plot_lightcurve, **kwargs)
 
-        # Standard plot with traces
-        plt = tso.plot_lightcurve(500, draw=False)
+        # Standard plot
+        plt = tso.plot_lightcurve(500)
 
         # Wavelength
         plt = tso.plot_lightcurve(1.6, draw=False)
+
+        # Neither
+        plt = tso.plot_lightcurve('foo', draw=False)
 
         # List of lightcurves
         plt = tso.plot_lightcurve([500, 1000], draw=False)
@@ -286,10 +300,16 @@ class TestTSO(unittest.TestCase):
         tso.simulate()
 
         # Standard plot
-        plt = tso.plot_spectrum(draw=False)
+        plt = tso.plot_spectrum()
+
+        # Standard plot with one order
+        plt = tso.plot_spectrum(order=1, draw=False)
 
         # Log plot
         plt = tso.plot_spectrum(scale='log', draw=False)
+
+        # No noise plot
+        plt = tso.plot_spectrum(noise=True, draw=False)
 
         # Specific order
         plt = tso.plot_spectrum(order=1, draw=False)
@@ -303,9 +323,10 @@ class TestTSO(unittest.TestCase):
 
 
 def test_TestTSO():
-    """A test of the test instance!"""
-    x = TestTSO()
+    """A test of the TestTSO class"""
+    tso = TestTSO()
+
 
 def test_BlackbodyTSO():
     """A test of the BlackbodyTSO class"""
-    x = BlackbodyTSO(teff=2000)
+    tso = BlackbodyTSO(teff=2000)
