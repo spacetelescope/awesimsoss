@@ -13,7 +13,7 @@ awesimsoss
         :target: https://awesimsoss.readthedocs.io/en/latest/?badge=latest
         :alt: Documentation Status
 
-.. image:: https://coveralls.io/repos/github/spacetelescope/awesimsoss/badge.png?branch=master
+.. image:: https://coveralls.io/repos/github/spacetelescope/awesimsoss/badge.svg?branch=master
         :target: https://coveralls.io/github/spacetelescope/awesimsoss?branch=master
 
 .. image:: https://pyup.io/repos/github/hover2pi/awesimsoss/shield.svg
