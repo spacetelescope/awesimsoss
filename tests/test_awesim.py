@@ -325,10 +325,8 @@ class TestTSO(unittest.TestCase):
 def test_TestTSO():
     """A test of the TestTSO class"""
     tso = TestTSO()
-    # tso = TestTSO(add_planet=True) # Fails pytest for some reason!
 
 
 def test_BlackbodyTSO():
     """A test of the BlackbodyTSO class"""
     tso = BlackbodyTSO(teff=2000)
-    tso = BlackbodyTSO(teff=2000, add_planet=True)
