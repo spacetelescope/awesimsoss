@@ -174,31 +174,8 @@ class TSO(object):
         zodi = fits.getdata(resource_filename('awesimsoss', 'files/background_detectorfield_normalized.fits'))
         darksignal = fits.getdata(resource_filename('awesimsoss', 'files/signaldms.fits'))*self.gain
 
-        # Updates if SUBSTRIP96
-        if self.subarray == 'SUBSTRIP96':
-
-            # Make slice from FULL frame
-            slc = slice(160, 256)
-
-            # Trim SUBSTRIP256 photon yield
-            # photon_yield = photon_yield[:, :96, :]
-
-        # Updates if SUBSTRIP256
-        elif self.subarray == 'SUBSTRIP256':
-
-            # Make slice from FULL frame
-            slc = slice(0, 256)
-
-        # Updates if FULL
-        else:
-
-            # Make slice from FULL frame
-            slc = slice(0, 2048)
-
-            # Pad SUBSTRIP256 photon yield with ones since there is no wavelength information in those pixels
-            # full_py = np.ones(self.dims)
-            # full_py[:, :256, :] = photon_yield
-            # photon_yield = full_py
+        # Slice of FULL frame reference files
+        slc = slice(160, 256) if self.subarray == 'SUBSTRIP96' else slice(0, 256) if self.subarray == 'SUBSTRIP256' else slice(0, 2048)
 
         # Trim FULL frame reference files
         pedestal = pedestal[slc, :]
@@ -273,7 +250,7 @@ class TSO(object):
 
         # Check star has units
         if not all([isinstance(i, q.quantity.Quantity) for i in star]):
-            types = ', '.join([type(i) for i in star])
+            types = ', '.join([str(type(i)) for i in star])
             raise ValueError('[{}]: Spectrum must be in astropy units'.format(types))
 
         # Check the units
@@ -364,7 +341,7 @@ class TSO(object):
             self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
 
         else:
-            raise ValueError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
+            raise TypeError('Please set ld_coeffs with a 3D array or batman.transitmodel.TransitModel.')
 
     @property
     def ncols(self):
@@ -375,7 +352,7 @@ class TSO(object):
     def ncols(self, err):
         """Error when trying to change the number of columns
         """
-        raise ValueError("The number of columns is fixed by setting the 'subarray' attribute.")
+        raise TypeError("The number of columns is fixed by setting the 'subarray' attribute.")
 
     @property
     def ngrps(self):
@@ -460,7 +437,7 @@ class TSO(object):
     def nrows(self, err):
         """Error when trying to change the number of rows
         """
-        raise ValueError("The number of rows is fixed by setting the 'subarray' attribute.")
+        raise TypeError("The number of rows is fixed by setting the 'subarray' attribute.")
 
     @property
     def orders(self):
@@ -514,6 +491,8 @@ class TSO(object):
             Plot the traces used to generate the frame
         saturation: float
             The fraction of full well defined as saturation
+        draw: bool
+            Render the figure instead of returning it
         """
         # Check plot type
         ptypes = ['data', 'snr', 'saturation']
@@ -536,9 +515,6 @@ class TSO(object):
         sat = dat > saturation * fullWell
         sat = sat.astype(int)
 
-        # Make column data
-        source = dict(data=[dat], snr=[snr], saturation=[sat])
-
         # Make the figure
         height = 180 if self.subarray == 'SUBSTRIP96' else 800 if self.subarray == 'FULL' else 225
         tooltips = [("(x,y)", "($x{int}, $y{int})"), ("ADU/s", "@data"), ("SNR", "@snr"), ('Saturation', '@saturation')]
@@ -549,7 +525,8 @@ class TSO(object):
 
         # Plot the frame
         if scale == 'log':
-            frame[frame < 1.] = 1.
+            dat[dat < 1.] = 1.
+            source = dict(data=[dat], snr=[snr], saturation=[sat])
             color_mapper = LogColorMapper(palette="Viridis256", low=dat.min(), high=dat.max())
             fig.image(source=source, image=ptype, x=0, y=0, dw=dat.shape[1],
                       dh=dat.shape[0], color_mapper=color_mapper)
@@ -558,6 +535,7 @@ class TSO(object):
                                  border_line_color=None, location=(0, 0))
 
         else:
+            source = dict(data=[dat], snr=[snr], saturation=[sat])
             color_mapper = LinearColorMapper(palette="Viridis256", low=dat.min(), high=dat.max())
             fig.image(source=source, image=ptype, x=0, y=0, dw=dat.shape[1],
                       dh=dat.shape[0], palette='Viridis256')
@@ -587,7 +565,7 @@ class TSO(object):
             return fig
 
     @run_required
-    def plot_slice(self, col, idx=0, order=None, noise=False, **kwargs):
+    def plot_slice(self, col, idx=0, order=None, noise=False, draw=True, **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
 
@@ -601,6 +579,8 @@ class TSO(object):
             The order to isolate
         noise: bool
             Plot with the noise model
+        draw: bool
+            Render the figure instead of returning it
         """
         if order in [1, 2]:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
@@ -631,24 +611,35 @@ class TSO(object):
             vline = Span(location=c, dimension='height', line_color=color, line_width=3)
             dfig.add_layout(vline)
 
-        show(column(fig, dfig))
+        if draw:
+            show(column(fig, dfig))
+        else:
+            return column(fig, dfig)
 
     @run_required
-    def plot_ramp(self):
+    def plot_ramp(self, draw=True):
         """
         Plot the total flux on each frame to display the ramp
+
+        Parameters
+        ----------
+        draw: bool
+            Render the figure instead of returning it
         """
-        ramp = figure()
+        fig = figure()
         x = range(self.dims3[0])
         y = np.sum(self.tso.reshape(self.dims3), axis=(-1, -2))
-        ramp.circle(x, y, size=12)
-        ramp.xaxis.axis_label = 'Group'
-        ramp.yaxis.axis_label = 'Count Rate [ADU/s]'
+        fig.circle(x, y, size=12)
+        fig.xaxis.axis_label = 'Group'
+        fig.yaxis.axis_label = 'Count Rate [ADU/s]'
 
-        show(ramp)
+        if draw:
+            show(fig)
+        else:
+            return fig
 
     @run_required
-    def plot_lightcurve(self, column, time_unit='s', resolution_mult=20):
+    def plot_lightcurve(self, column, time_unit='s', resolution_mult=20, draw=True):
         """
         Plot a lightcurve for each column index given
 
@@ -662,6 +653,8 @@ class TSO(object):
             ['s', 'min', 'h', 'd' (default)]
         resolution_mult: int
             The number of theoretical points to plot for each data point
+        draw: bool
+            Render the figure instead of returning it
         """
         # Check time_units
         if time_unit not in ['s', 'min', 'h', 'd']:
@@ -721,10 +714,14 @@ class TSO(object):
 
         lc.xaxis.axis_label = 'Time [{}]'.format(time_unit)
         lc.yaxis.axis_label = 'Transit Depth'
-        show(lc)
+
+        if draw:
+            show(lc)
+        else:
+            return lc
 
     @run_required
-    def plot_spectrum(self, frame=0, order=None, noise=False, scale='log'):
+    def plot_spectrum(self, frame=0, order=None, noise=False, scale='log', draw=True):
         """
         Parameters
         ----------
@@ -736,6 +733,8 @@ class TSO(object):
             Plot with the noise model
         scale: str
             Plot scale, ['linear', 'log']
+        draw: bool
+            Render the figure instead of returning it
         """
         if order in [1, 2]:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
@@ -772,7 +771,10 @@ class TSO(object):
         res.xaxis.axis_label = 'Wavelength [{}]'.format(self.star[0].unit)
         res.yaxis.axis_label = 'Residuals'
 
-        show(column(spec, res))
+        if draw:
+            show(column(spec, res))
+        else:
+            return column(spec, res)
 
     def _reset_data(self):
         """Reset the results to all zeros"""
