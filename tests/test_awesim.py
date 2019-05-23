@@ -32,9 +32,20 @@ class TestTSO(unittest.TestCase):
 
     def test_init(self):
         """Test that the TSO class is generated properly"""
+        # Initialize the FULL frame with two groups and two integrations
+        # and the CLEAR filter
+        tso2048clear = TSO(ngrps=2, nints=2, star=self.star, subarray='FULL')
+
+        self.assertEqual(tso2048clear.ngrps, 2)
+        self.assertEqual(tso2048clear.nints, 2)
+        self.assertEqual(tso2048clear.nframes, 4)
+        self.assertEqual(tso2048clear.dims, (2, 2, 2048, 2048))
+        self.assertEqual(tso2048clear.subarray, 'FULL')
+        self.assertEqual(tso2048clear.filter, 'CLEAR')
+
         # Initialize the 256 subarray with two groups and two integrations
         # and the CLEAR filter
-        tso256clear = TSO(ngrps=2, nints=2, star=self.star)
+        tso256clear = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP256')
 
         self.assertEqual(tso256clear.ngrps, 2)
         self.assertEqual(tso256clear.nints, 2)
@@ -54,9 +65,20 @@ class TestTSO(unittest.TestCase):
         self.assertEqual(tso96clear.subarray, 'SUBSTRIP96')
         self.assertEqual(tso96clear.filter, 'CLEAR')
 
+        # Initialize the FULL frame with two groups and two integrations
+        # and the F277W filter
+        tso2048f277w = TSO(ngrps=2, nints=2, star=self.star, subarray='FULL', filter='F277W')
+
+        self.assertEqual(tso2048f277w.ngrps, 2)
+        self.assertEqual(tso2048f277w.nints, 2)
+        self.assertEqual(tso2048f277w.nframes, 4)
+        self.assertEqual(tso2048f277w.dims, (2, 2, 2048, 2048))
+        self.assertEqual(tso2048f277w.subarray, 'FULL')
+        self.assertEqual(tso2048f277w.filter, 'F277W')
+
         # Initialize the 256 subarray with two groups and two integrations
         # and the F277W filter
-        tso256f277w = TSO(ngrps=2, nints=2, star=self.star, filter='F277W')
+        tso256f277w = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP256', filter='F277W')
 
         self.assertEqual(tso256f277w.ngrps, 2)
         self.assertEqual(tso256f277w.nints, 2)
@@ -77,15 +99,15 @@ class TestTSO(unittest.TestCase):
         self.assertEqual(tso96f277w.filter, 'F277W')
 
     def test_run_no_planet(self):
-        """A test of run_simulation() with no planet"""
+        """A test of simulate() with no planet"""
         # Make the TSO object
         tso256 = TSO(ngrps=2, nints=2, star=self.star)
 
         # Run the CLEAR simulation
-        tso256.run_simulation()
+        tso256.simulate()
 
     def test_run_with_planet(self):
-        """A test of run_simulation() with a planet"""
+        """A test of simulate() with a planet"""
         # Make the TSO object
         tso256clear = TSO(ngrps=2, nints=2, star=self.star)
 
@@ -106,11 +128,23 @@ class TestTSO(unittest.TestCase):
             tmodel.feh = 0
 
             # Run the simulation
-            tso256clear.run_simulation(planet=self.planet, tmodel=tmodel)
+            tso256clear.simulate(planet=self.planet, tmodel=tmodel)
 
         except:
             pass
 
+    def test_lookup(self):
+        """Test that coordinates are looked up if given a name"""
+        # Make the TSO object
+        no_targ = TSO(ngrps=2, nints=2, star=self.star)
+        targ = TSO(ngrps=2, nints=2, star=self.star, target='trappist-1')
+
+        # Check target name
+        self.assertNotEqual(targ.target, no_targ.target)
+
+        # Check coordinates
+        self.assertNotEqual(targ.ra, no_targ.ra)
+        self.assertNotEqual(targ.dec, no_targ.dec)
 
 def test_TestTSO():
     """A test of the test instance!"""

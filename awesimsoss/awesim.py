@@ -7,7 +7,7 @@ Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 import time
 import warnings
 import datetime
-from functools import partial
+from functools import partial, wraps
 from pkg_resources import resource_filename
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
@@ -15,7 +15,7 @@ from multiprocessing import cpu_count
 from astroquery.simbad import Simbad
 import numpy as np
 from bokeh.plotting import figure, show
-from bokeh.models import LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
+from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
 import astropy.units as q
 import astropy.constants as ac
@@ -40,6 +40,20 @@ from . import utils
 
 
 warnings.simplefilter('ignore')
+
+
+def run_required(func):
+    """A wrapper to check that the simulation has been run before a method can be executed"""
+    @wraps(func)
+    def _run_required(*args, **kwargs):
+        """Check that the 'tso' attribute is not None"""
+        if args[0].tso is None:
+            print("No simulation found! Please run the 'simulate' method first.")
+
+        else:
+            return func(*args, **kwargs)
+
+    return _run_required
 
 
 class TSO(object):
@@ -122,7 +136,6 @@ class TSO(object):
         # Meta data for the target
         self.target = target
         self.title = title or '{} Simulation'.format(self.target)
-        self.target_lookup()
 
         # Set instance attributes for the target
         self._ld_coeffs = np.zeros((3, 2048, 2))
@@ -135,7 +148,7 @@ class TSO(object):
         # Generate the response function
         self._reset_response()
 
-
+    @run_required
     def add_noise(self, zodi_scale=1., offset=500):
         """
         Generate ramp and background noise
@@ -151,15 +164,48 @@ class TSO(object):
         start = time.time()
 
         # Get the separated orders
-        orders = np.asarray([self.tso_order1_ideal, self.tso_order2_ideal])
+        orders = np.asarray([getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders])
 
-        # Load all the reference files
-        photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photon_yield_dms.fits'))
+        # Load the reference files
         pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
-        zodi = fits.getdata(resource_filename('awesimsoss', 'files/soss_zodiacal_background_scaled.fits'))
-        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/substrip256_forward_coefficients_dms.fits'))
-        pedestal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256pedestaldms.fits'))
-        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256signaldms.fits'))*self.gain
+        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/forward_coefficients_dms.fits'))
+        pedestal = fits.getdata(resource_filename('awesimsoss', 'files/pedestaldms.fits'))
+        photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photonyieldfullframe.fits'))
+        zodi = fits.getdata(resource_filename('awesimsoss', 'files/background_detectorfield_normalized.fits'))
+        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/signaldms.fits'))*self.gain
+
+        # Updates if SUBSTRIP96
+        if self.subarray == 'SUBSTRIP96':
+
+            # Make slice from FULL frame
+            slc = slice(160, 256)
+
+            # Trim SUBSTRIP256 photon yield
+            # photon_yield = photon_yield[:, :96, :]
+
+        # Updates if SUBSTRIP256
+        elif self.subarray == 'SUBSTRIP256':
+
+            # Make slice from FULL frame
+            slc = slice(0, 256)
+
+        # Updates if FULL
+        else:
+
+            # Make slice from FULL frame
+            slc = slice(0, 2048)
+
+            # Pad SUBSTRIP256 photon yield with ones since there is no wavelength information in those pixels
+            # full_py = np.ones(self.dims)
+            # full_py[:, :256, :] = photon_yield
+            # photon_yield = full_py
+
+        # Trim FULL frame reference files
+        pedestal = pedestal[slc, :]
+        nonlinearity = nonlinearity[:, slc, :]
+        zodi = zodi[slc, :]
+        darksignal = darksignal[slc, :]
+        photon_yield = photon_yield[:, slc, :]
 
         # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
@@ -185,8 +231,9 @@ class TSO(object):
             # Update the TSO with one containing noise
             self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
 
-        print('Noise model finished:', time.time()-start)
+        print('Noise model finished:', round(time.time()-start, 3), 's')
 
+    @run_required
     def add_refpix(self, counts=0):
         """Add reference pixels to detector edges
 
@@ -195,10 +242,17 @@ class TSO(object):
         counts: int
             The number of counts or the reference pixels
         """
-        # Left, right, and top
-        self.tso[:, :, :4] = counts
-        self.tso[:, :, -4:] = counts
-        self.tso[:, -4:, :] = counts
+        # Left, right (all subarrays)
+        self.tso[:, :, :, :4] = counts
+        self.tso[:, :, :, -4:] = counts
+
+        # Top (excluding SUBSTRIP96)
+        if self.subarray != 'SUBSTRIP96':
+            self.tso[:, :, -4:, :] = counts
+
+        # Bottom (Only FULL frame)
+        if self.subarray == 'FULL':
+            self.tso[:, :, :4, :] = counts
 
     def _check_star(self, star):
         """Make sure the input star has units
@@ -438,6 +492,7 @@ class TSO(object):
         # Update the results
         self._reset_data()
 
+    @run_required
     def plot(self, ptype='data', idx=0, scale='linear', order=None, noise=True,
              traces=False, saturation=0.8, draw=True):
         """
@@ -460,6 +515,11 @@ class TSO(object):
         saturation: float
             The fraction of full well defined as saturation
         """
+        # Check plot type
+        ptypes = ['data', 'snr', 'saturation']
+        if ptype.lower() not in ptypes:
+            raise ValueError("'ptype' must be {}".format(ptypes))
+
         if order in [1, 2]:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
@@ -468,44 +528,39 @@ class TSO(object):
             else:
                 tso = self.tso_ideal
 
-        # Get data for plotting
+        # Get data, snr, and saturation for plotting
         vmax = int(np.nanmax(tso[tso < np.inf]))
-        frame = np.array(tso.reshape(self.dims3)[idx].data)
+        dat = np.array(tso.reshape(self.dims3)[idx].data)
+        snr = np.sqrt(dat.data)
+        fullWell = 65536.0
+        sat = dat > saturation * fullWell
+        sat = sat.astype(int)
 
-        # Modify the data
-        if ptype == 'snr':
-            frame = np.sqrt(frame.data)
-
-        elif ptype == 'saturation':
-            fullWell = 65536.0
-            frame = frame > saturation * fullWell
-            frame = frame.astype(int)
-
-        else:
-            pass
+        # Make column data
+        source = dict(data=[dat], snr=[snr], saturation=[sat])
 
         # Make the figure
-        height = 180 if self.subarray == 'SUBSTRIP96' else 225
-        fig = figure(x_range=(0, frame.shape[1]), y_range=(0, frame.shape[0]),
-                     tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")],
-                     width=int(frame.shape[1]/2), height=height,
+        height = 180 if self.subarray == 'SUBSTRIP96' else 800 if self.subarray == 'FULL' else 225
+        tooltips = [("(x,y)", "($x{int}, $y{int})"), ("ADU/s", "@data"), ("SNR", "@snr"), ('Saturation', '@saturation')]
+        fig = figure(x_range=(0, dat.shape[1]), y_range=(0, dat.shape[0]),
+                     tooltips=tooltips, width=int(dat.shape[1]/2), height=height,
                      title='{}: Frame {}'.format(self.target, idx),
                      toolbar_location='above', toolbar_sticky=True)
 
         # Plot the frame
         if scale == 'log':
             frame[frame < 1.] = 1.
-            color_mapper = LogColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
-            fig.image(image=[frame], x=0, y=0, dw=frame.shape[1],
-                      dh=frame.shape[0], color_mapper=color_mapper)
+            color_mapper = LogColorMapper(palette="Viridis256", low=dat.min(), high=dat.max())
+            fig.image(source=source, image=ptype, x=0, y=0, dw=dat.shape[1],
+                      dh=dat.shape[0], color_mapper=color_mapper)
             color_bar = ColorBar(color_mapper=color_mapper, ticker=LogTicker(),
                                  orientation="horizontal", label_standoff=12,
                                  border_line_color=None, location=(0, 0))
 
         else:
-            color_mapper = LinearColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
-            fig.image(image=[frame], x=0, y=0, dw=frame.shape[1],
-                      dh=frame.shape[0], palette='Viridis256')
+            color_mapper = LinearColorMapper(palette="Viridis256", low=dat.min(), high=dat.max())
+            fig.image(source=source, image=ptype, x=0, y=0, dw=dat.shape[1],
+                      dh=dat.shape[0], palette='Viridis256')
             color_bar = ColorBar(color_mapper=color_mapper,
                                  orientation="horizontal", label_standoff=12,
                                  border_line_color=None, location=(0, 0))
@@ -531,6 +586,7 @@ class TSO(object):
         else:
             return fig
 
+    @run_required
     def plot_slice(self, col, idx=0, order=None, noise=False, **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
@@ -577,6 +633,7 @@ class TSO(object):
 
         show(column(fig, dfig))
 
+    @run_required
     def plot_ramp(self):
         """
         Plot the total flux on each frame to display the ramp
@@ -590,7 +647,8 @@ class TSO(object):
 
         show(ramp)
 
-    def plot_lightcurve(self, column=None, time_unit='s', resolution_mult=20):
+    @run_required
+    def plot_lightcurve(self, column, time_unit='s', resolution_mult=20):
         """
         Plot a lightcurve for each column index given
 
@@ -617,9 +675,6 @@ class TSO(object):
         # Make it into an array
         if isinstance(column, (int, float)):
             column = [column]
-
-        if column is None:
-            column = list(range(self.tso.shape[-1]))
 
         # Make the figure
         lc = figure()
@@ -668,6 +723,7 @@ class TSO(object):
         lc.yaxis.axis_label = 'Transit Depth'
         show(lc)
 
+    @run_required
     def plot_spectrum(self, frame=0, order=None, noise=False, scale='log'):
         """
         Parameters
@@ -728,10 +784,8 @@ class TSO(object):
             self.dims3 = (self.nints*self.ngrps, self.nrows, self.ncols)
 
             # Reset the results
-            self.tso = None
-            self.tso_ideal = None
-            self.tso_order1_ideal = None
-            self.tso_order2_ideal = None
+            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+                setattr(self, arr, None)
 
     def _reset_time(self):
         """Reset the time axis based on the observation settings"""
@@ -751,7 +805,6 @@ class TSO(object):
                 time_axis.append(times[self.nresets:])
 
             self.time = np.concatenate(time_axis)
-
 
     def _reset_response(self):
         """Generate the relative response function for each order"""
@@ -775,7 +828,6 @@ class TSO(object):
                 response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
                 setattr(self, 'order{}_response'.format(order), response)
 
-
     def _reset_psfs(self):
         """Scale the psf for each detector column to the flux from the 1D spectrum"""
         # Check that all the appropriate values have been initialized
@@ -788,9 +840,8 @@ class TSO(object):
                 setattr(self, 'order{}_flux'.format(order), flux)
                 setattr(self, 'order{}_psfs'.format(order), cube)
 
-
-    def run_simulation(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', 
-                       ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
+    def simulate(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days',
+                 ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
         """
         Generate the simulated 4D ramp data given the initialized TSO object
 
@@ -821,7 +872,7 @@ class TSO(object):
         Example
         -------
         # Run simulation of star only
-        tso.run_simulation()
+        tso.simulate()
 
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
         import batman
@@ -840,7 +891,7 @@ class TSO(object):
         tmodel.teff = 3500                            # effective temperature of the host star
         tmodel.logg = 5                               # log surface gravity of the host star
         tmodel.feh = 0                                # metallicity of the host star
-        tso.run_simulation(planet=planet1D, tmodel=tmodel)
+        tso.simulate(planet=planet1D, tmodel=tmodel)
         """
         if verbose:
             begin = time.time()
@@ -945,7 +996,7 @@ class TSO(object):
 
             # Generate TSO frames
             if verbose:
-                print('Lightcurves finished:', time.time()-start)
+                print('Lightcurves finished:', round(time.time()-start, 3), 's')
                 print('Constructing order {} traces...'.format(order))
                 start = time.time()
 
@@ -957,37 +1008,41 @@ class TSO(object):
 
             if verbose:
                 # print('Total flux after warp:', np.nansum(all_frames[0]))
-                print('Order {} traces finished:'.format(order), time.time()-start)
+                print('Order {} traces finished:'.format(order), round(time.time()-start, 3), 's')
 
             # Add it to the individual order
             setattr(self, 'tso_order{}_ideal'.format(order), np.array(frames))
 
         # Add to the master TSO
         self.tso_ideal = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
+        self.tso = self.tso_ideal.copy()
+
+        # Trim SUBSTRIP256 array if SUBSTRIP96
+        if self.subarray == 'SUBSTRIP96':
+            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+                setattr(self, arr, getattr(self, arr)[:, :self.nrows, :])
+
+        # Expand SUBSTRIP256 array if FULL frame
+        if self.subarray == 'FULL':
+            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+                full = np.zeros(self.dims3)
+                full[:, :256, :] = getattr(self, arr)
+                setattr(self, arr, full)
 
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
-        self.tso = self.tso_ideal.copy()
         self.add_noise()
 
-        # Make fake reference pixels
-        self.add_refpix()
-        #
-        # # Trim if SUBSTRIP96
-        # if self.subarray == 'SUBSTRIP96':
-        #     self.tso = self.tso[:, :self.nrows, :]
-        #     self.tso_ideal = self.tso_ideal[:, :self.nrows, :]
-        #     self.tso_order1_ideal = self.tso_order1_ideal[:, :self.nrows, :]
-        #     self.tso_order2_ideal = self.tso_order2_ideal[:, :self.nrows, :]
-
         # Reshape into (nints, ngrps, y, x)
-        self.tso = self.tso.reshape(self.dims)
-        self.tso_ideal = self.tso_ideal.reshape(self.dims)
-        self.tso_order1_ideal = self.tso_order1_ideal.reshape(self.dims)
-        self.tso_order2_ideal = self.tso_order2_ideal.reshape(self.dims)
+        for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+            data = getattr(self, arr).reshape(self.dims)
+            setattr(self, arr, data)
+
+        # Simulate reference pixels
+        self.add_refpix()
 
         if verbose:
-            print('\nTotal time:', time.time()-begin)
+            print('\nTotal time:', round(time.time()-begin, 3), 's')
 
     @property
     def subarray(self):
@@ -1054,9 +1109,32 @@ class TSO(object):
         self._reset_data()
         self._reset_time()
 
-    def target_lookup(self):
-        """Query Simbad for target RA and Dec"""
+    @property
+    def target(self):
+        """Getter for target name"""
+        return self._target
+
+    @target.setter
+    def target(self, name):
+        """Setter for target name and coordinates
+
+        Properties
+        ----------
+        tmid: str
+            The transit midpoint
+        """
+        # Check the name
+        if not isinstance(name, str):
+            raise TypeError("Target name must be a string.")
+
+        # Set the subarray
+        self._target = name
+        self.ra = 1.23456
+        self.dec = 2.34567
+
+        # Query Simbad for target RA and Dec
         if self.target != 'New Target':
+
             try:
                 rec = Simbad.query_object(self.target)
                 coords = SkyCoord(ra=rec[0]['RA'], dec=rec[0]['DEC'], unit=(q.hour, q.degree), frame='icrs')
@@ -1065,12 +1143,11 @@ class TSO(object):
                 if self.verbose:
                     print("Coordinates for '{}' found in Simbad!".format(self.target))
             except TypeError:
-                self.ra = 1.23456
-                self.dec = 2.34567
                 if self.verbose:
                     print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
                     print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
 
+    @run_required
     def to_fits(self, outfile, all_data=False):
         """
         Save the data to a JWST pipeline ingestible FITS file
@@ -1125,7 +1202,7 @@ class TSO(object):
 
 class TestTSO(TSO):
     """Generate a test object for quick access"""
-    def __init__(self, ngrps=2, nints=2, filter='CLEAR', subarray='SUBSTRIP256', run=True, **kwargs):
+    def __init__(self, ngrps=2, nints=2, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, **kwargs):
         """Get the test data and load the object
 
         Parameters
@@ -1140,6 +1217,8 @@ class TestTSO(TSO):
             The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         run: bool
             Run the simulation after initialization
+        add_planet: bool
+            Add a transiting exoplanet
         """
         # Get stored data
         file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
@@ -1151,12 +1230,31 @@ class TestTSO(TSO):
 
         # Run the simulation
         if run:
-            self.run_simulation()
+            if add_planet:
+
+                planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
+                params = batman.TransitParams()
+                params.t0 = 0.                                # time of inferior conjunction
+                params.per = 0.01 #5.7214742                        # orbital period (days)
+                params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+                params.inc = 89.8                             # orbital inclination (in degrees)
+                params.ecc = 0.                               # eccentricity
+                params.w = 90.                                # longitude of periastron (in degrees)
+                params.limb_dark = 'quadratic'                # limb darkening profile to use
+                params.u = [0.1, 0.1]                          # limb darkening coefficients
+                tmodel = batman.TransitModel(params, self.time)
+                tmodel.teff = 3500                            # effective temperature of the host star
+                tmodel.logg = 5                               # log surface gravity of the host star
+                tmodel.feh = 0                                # metallicity of the host star
+                self.simulate(planet=planet1D, tmodel=tmodel)
+
+            else:
+                self.simulate()
 
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, **kwargs):
+    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, **kwargs):
         """Get the test data and load the object
 
         Parmeters
@@ -1173,6 +1271,8 @@ class BlackbodyTSO(TSO):
             The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         run: bool
             Run the simulation after initialization
+        add_planet: bool
+            Add a transiting exoplanet
         """
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
@@ -1184,4 +1284,23 @@ class BlackbodyTSO(TSO):
 
         # Run the simulation
         if run:
-            self.run_simulation()
+            if add_planet:
+
+                planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
+                params = batman.TransitParams()
+                params.t0 = 0.                                # time of inferior conjunction
+                params.per = 5.7214742                        # orbital period (days)
+                params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+                params.inc = 89.8                             # orbital inclination (in degrees)
+                params.ecc = 0.                               # eccentricity
+                params.w = 90.                                # longitude of periastron (in degrees)
+                params.limb_dark = 'quadratic'                # limb darkening profile to use
+                params.u = [0.1, 0.1]                          # limb darkening coefficients
+                tmodel = batman.TransitModel(params, self.time)
+                tmodel.teff = 3500                            # effective temperature of the host star
+                tmodel.logg = 5                               # log surface gravity of the host star
+                tmodel.feh = 0                                # metallicity of the host star
+                self.simulate(planet=planet1D, tmodel=tmodel)
+
+            else:
+                self.simulate()

@@ -126,7 +126,7 @@ def make_exposure(nints, ngrps, darksignal, gain, pca0_file, noise_seed=None,
 def make_photon_yield(photon_yield, orders):
     """
     Generates a map of the photon yield for each order.
-    The shape of both arrays should be [order,nrows,ncols]
+    The shape of both arrays should be [order, nrows, ncols]
 
     Parameters
     ----------
@@ -142,13 +142,13 @@ def make_photon_yield(photon_yield, orders):
     """
     # Get the shape and create empty arrays
     dims = orders.shape
-    sum1 = np.zeros((dims[1],dims[2]),dtype=np.float32)
-    sum2 = np.zeros((dims[1],dims[2]),dtype=np.float32)
+    sum1 = np.zeros((dims[1], dims[2]), dtype=np.float32)
+    sum2 = np.zeros((dims[1], dims[2]), dtype=np.float32)
 
     # Add the photon yield for each order
     for n in range(dims[0]):
-        sum1 = sum1+photon_yield[n,:,:]*orders[n,:,:]
-        sum2 = sum2+orders[n,:,:]
+        sum1 = sum1+photon_yield[n, :, :]*orders[n, :, :]
+        sum2 = sum2+orders[n, :, :]
 
     # Take the ratio of the photon yield to the signal
     pyimage = sum1/sum2
