@@ -99,15 +99,15 @@ class TestTSO(unittest.TestCase):
         self.assertEqual(tso96f277w.filter, 'F277W')
 
     def test_run_no_planet(self):
-        """A test of run_simulation() with no planet"""
+        """A test of simulate() with no planet"""
         # Make the TSO object
         tso256 = TSO(ngrps=2, nints=2, star=self.star)
 
         # Run the CLEAR simulation
-        tso256.run_simulation()
+        tso256.simulate()
 
     def test_run_with_planet(self):
-        """A test of run_simulation() with a planet"""
+        """A test of simulate() with a planet"""
         # Make the TSO object
         tso256clear = TSO(ngrps=2, nints=2, star=self.star)
 
@@ -128,7 +128,7 @@ class TestTSO(unittest.TestCase):
             tmodel.feh = 0
 
             # Run the simulation
-            tso256clear.run_simulation(planet=self.planet, tmodel=tmodel)
+            tso256clear.simulate(planet=self.planet, tmodel=tmodel)
 
         except:
             pass
