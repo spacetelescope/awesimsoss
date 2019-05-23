@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Tests for `awesim` module."""
 
-import copy
+from copy import copy
 import unittest
 from pkg_resources import resource_filename
 
@@ -101,15 +101,17 @@ class TestTSO(unittest.TestCase):
     def test_run_no_planet(self):
         """A test of simulate() with no planet"""
         # Make the TSO object
-        tso256 = TSO(ngrps=2, nints=2, star=self.star)
-
-        # Run the CLEAR simulation
-        tso256.simulate()
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+        tso.simulate()
+        tso.subarray = 'SUBSTRIP96'
+        tso.simulate()
+        tso.subarray = 'FULL'
+        tso.simulate()
 
     def test_run_with_planet(self):
         """A test of simulate() with a planet"""
         # Make the TSO object
-        tso256clear = TSO(ngrps=2, nints=2, star=self.star)
+        tso = TSO(ngrps=2, nints=2, star=self.star)
 
         # Make the parameters
         try:
@@ -122,13 +124,17 @@ class TestTSO(unittest.TestCase):
             params.w = 90.
             params.limb_dark = 'quadratic'
             params.u = [0.1, 0.1]
-            tmodel = batman.TransitModel(params, tso256clear.time)
+            tmodel = batman.TransitModel(params, tso.time)
             tmodel.teff = 3500
             tmodel.logg = 5
             tmodel.feh = 0
 
             # Run the simulation
-            tso256clear.simulate(planet=self.planet, tmodel=tmodel)
+            tso.simulate(planet=self.planet, tmodel=tmodel)
+            tso.subarray = 'SUBSTRIP96'
+            tso.simulate(planet=self.planet, tmodel=tmodel)
+            tso.subarray = 'FULL'
+            tso.simulate(planet=self.planet, tmodel=tmodel)
 
         except:
             pass
@@ -145,6 +151,156 @@ class TestTSO(unittest.TestCase):
         # Check coordinates
         self.assertNotEqual(targ.ra, no_targ.ra)
         self.assertNotEqual(targ.dec, no_targ.dec)
+
+    def test_bad_star(self):
+        """Test that errors are thrown for bas star input"""
+        # Test that non wavelength units fail
+        bad_wave_star = copy(self.star)
+        bad_wave_star[0] *= q.Jy
+        kwargs = {'nints':2, 'ngrps':2, 'star':bad_wave_star}
+        self.assertRaises(ValueError, TSO, **kwargs)
+
+        # Test that non wavelength units fail
+        bad_flux_star = copy(self.star)
+        bad_flux_star[1] *= q.um
+        kwargs = {'nints':2, 'ngrps':2, 'star':bad_flux_star}
+        self.assertRaises(ValueError, TSO, **kwargs)
+
+        # Test that no units fail
+        bad_unit_star = copy(self.star)
+        bad_unit_star[0] = bad_unit_star[0].value
+        kwargs = {'nints':2, 'ngrps':2, 'star':bad_unit_star}
+        self.assertRaises(ValueError, TSO, **kwargs)
+
+        # Test that spectrum shape
+        bad_size_star = [self.star[0]]
+        kwargs = {'nints':2, 'ngrps':2, 'star':bad_size_star}
+        self.assertRaises(ValueError, TSO, **kwargs)
+
+    def test_bad_attrs(self):
+        """Test that invalid attributes throw an error"""
+        # Make the TSO object
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+
+        # Bad fiilter
+        self.assertRaises(ValueError, setattr, tso, 'filter', 'foo')
+
+        # Bad ncols
+        self.assertRaises(TypeError, setattr, tso, 'ncols', 3)
+
+        # Bad nrows
+        self.assertRaises(TypeError, setattr, tso, 'nrows', 3)
+
+        # Bad nints
+        self.assertRaises(TypeError, setattr, tso, 'nints', 'three')
+
+        # Bad ngrps
+        self.assertRaises(TypeError, setattr, tso, 'ngrps', 'three')
+
+        # Bad nresets
+        self.assertRaises(TypeError, setattr, tso, 'nresets', 'three')
+
+        # Bad orders
+        self.assertRaises(ValueError, setattr, tso, 'orders', 'three')
+
+        # Bad subarray
+        self.assertRaises(ValueError, setattr, tso, 'subarray', 'three')
+
+        # Bad t0
+        self.assertRaises(ValueError, setattr, tso, 't0', 'three')
+
+        # Bad target
+        self.assertRaises(TypeError, setattr, tso, 'target', 3)
+
+    def test_plot(self):
+        """Test plot method"""
+        # Make the TSO object
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+
+        # Test plot with no data
+        plt = tso.plot(draw=False)
+
+        # Run simulation
+        tso.simulate()
+
+        # Test bad ptype
+        kwargs = {'ptype':'foo', 'draw':False}
+        self.assertRaises(ValueError, tso.plot, **kwargs)
+
+        # Standard plot with traces
+        plt = tso.plot(draw=False, traces=True)
+
+        # No noise plot
+        plt = tso.plot(noise=False, draw=False)
+
+        # Log plot
+        plt = tso.plot(scale='log', draw=False)
+
+    def test_plot_slice(self):
+        """Test plot_slice method"""
+        # Make the TSO object
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+        tso.simulate()
+
+        # Standard plot with traces
+        plt = tso.plot_slice(500, draw=False, traces=True)
+
+        # Log plot
+        plt = tso.plot_slice(500, scale='log', draw=False)
+
+        # List of slices
+        plt = tso.plot_slice([500, 1000], draw=False)
+
+    def test_plot_ramp(self):
+        """Test plot_ramp method"""
+        # Make the TSO object
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+        tso.simulate()
+
+        # Standard plot with traces
+        plt = tso.plot_ramp(draw=False)
+
+    def test_plot_lightcurve(self):
+        """Test plot_lightcurve method"""
+        # Make the TSO object
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+        tso.simulate()
+
+        # Test bad units
+        kwargs = {'column':500, 'time_unit':'foo', 'draw':False}
+        self.assertRaises(ValueError, tso.plot_lightcurve, **kwargs)
+
+        # Standard plot with traces
+        plt = tso.plot_lightcurve(500, draw=False)
+
+        # Wavelength
+        plt = tso.plot_lightcurve(1.6, draw=False)
+
+        # List of lightcurves
+        plt = tso.plot_lightcurve([500, 1000], draw=False)
+
+    def test_plot_spectrum(self):
+        """Test plot_spectrum method"""
+        # Make the TSO object
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+        tso.simulate()
+
+        # Standard plot
+        plt = tso.plot_spectrum(draw=False)
+
+        # Log plot
+        plt = tso.plot_spectrum(scale='log', draw=False)
+
+        # Specific order
+        plt = tso.plot_spectrum(order=1, draw=False)
+
+    def test_to_fits(self):
+        """Test the to_fits method"""
+        # Make the TSO object and save
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+        tso.simulate()
+        tso.to_fits('.')
+
 
 def test_TestTSO():
     """A test of the test instance!"""
