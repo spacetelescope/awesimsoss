@@ -15,7 +15,7 @@ from multiprocessing import cpu_count
 from astroquery.simbad import Simbad
 import numpy as np
 from bokeh.plotting import figure, show
-from bokeh.models import LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
+from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
 import astropy.units as q
 import astropy.constants as ac
@@ -167,12 +167,12 @@ class TSO(object):
         orders = np.asarray([getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders])
 
         # Load the reference files
-        photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photon_yield_dms.fits'))
-        pedestal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256pedestaldms.fits'))
         pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
-        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/substrip256_forward_coefficients_dms.fits'))
-        zodi = fits.getdata(resource_filename('awesimsoss', 'files/soss_zodiacal_background_scaled.fits'))
-        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/substrip256signaldms.fits'))*self.gain
+        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/forward_coefficients_dms.fits'))
+        pedestal = fits.getdata(resource_filename('awesimsoss', 'files/pedestaldms.fits'))
+        photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photonyieldfullframe.fits'))
+        zodi = fits.getdata(resource_filename('awesimsoss', 'files/background_detectorfield_normalized.fits'))
+        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/signaldms.fits'))*self.gain
 
         # Updates if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
@@ -181,7 +181,7 @@ class TSO(object):
             slc = slice(160, 256)
 
             # Trim SUBSTRIP256 photon yield
-            photon_yield = photon_yield[:, :96, :]
+            # photon_yield = photon_yield[:, :96, :]
 
         # Updates if SUBSTRIP256
         elif self.subarray == 'SUBSTRIP256':
@@ -196,15 +196,16 @@ class TSO(object):
             slc = slice(0, 2048)
 
             # Pad SUBSTRIP256 photon yield with ones since there is no wavelength information in those pixels
-            full_py = np.ones(self.dims)
-            full_py[:, :256, :] = photon_yield
-            photon_yield = full_py
+            # full_py = np.ones(self.dims)
+            # full_py[:, :256, :] = photon_yield
+            # photon_yield = full_py
 
         # Trim FULL frame reference files
         pedestal = pedestal[slc, :]
         nonlinearity = nonlinearity[:, slc, :]
         zodi = zodi[slc, :]
         darksignal = darksignal[slc, :]
+        photon_yield = photon_yield[:, slc, :]
 
         # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
@@ -514,6 +515,11 @@ class TSO(object):
         saturation: float
             The fraction of full well defined as saturation
         """
+        # Check plot type
+        ptypes = ['data', 'snr', 'saturation']
+        if ptype.lower() not in ptypes:
+            raise ValueError("'ptype' must be {}".format(ptypes))
+
         if order in [1, 2]:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
@@ -522,44 +528,39 @@ class TSO(object):
             else:
                 tso = self.tso_ideal
 
-        # Get data for plotting
+        # Get data, snr, and saturation for plotting
         vmax = int(np.nanmax(tso[tso < np.inf]))
-        frame = np.array(tso.reshape(self.dims3)[idx].data)
+        dat = np.array(tso.reshape(self.dims3)[idx].data)
+        snr = np.sqrt(dat.data)
+        fullWell = 65536.0
+        sat = dat > saturation * fullWell
+        sat = sat.astype(int)
 
-        # Modify the data
-        if ptype == 'snr':
-            frame = np.sqrt(frame.data)
-
-        elif ptype == 'saturation':
-            fullWell = 65536.0
-            frame = frame > saturation * fullWell
-            frame = frame.astype(int)
-
-        else:
-            pass
+        # Make column data
+        source = dict(data=[dat], snr=[snr], saturation=[sat])
 
         # Make the figure
         height = 180 if self.subarray == 'SUBSTRIP96' else 800 if self.subarray == 'FULL' else 225
-        fig = figure(x_range=(0, frame.shape[1]), y_range=(0, frame.shape[0]),
-                     tooltips=[("x", "$x"), ("y", "$y"), ("value", "@image")],
-                     width=int(frame.shape[1]/2), height=height,
+        tooltips = [("(x,y)", "($x{int}, $y{int})"), ("ADU/s", "@data"), ("SNR", "@snr"), ('Saturation', '@saturation')]
+        fig = figure(x_range=(0, dat.shape[1]), y_range=(0, dat.shape[0]),
+                     tooltips=tooltips, width=int(dat.shape[1]/2), height=height,
                      title='{}: Frame {}'.format(self.target, idx),
                      toolbar_location='above', toolbar_sticky=True)
 
         # Plot the frame
         if scale == 'log':
             frame[frame < 1.] = 1.
-            color_mapper = LogColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
-            fig.image(image=[frame], x=0, y=0, dw=frame.shape[1],
-                      dh=frame.shape[0], color_mapper=color_mapper)
+            color_mapper = LogColorMapper(palette="Viridis256", low=dat.min(), high=dat.max())
+            fig.image(source=source, image=ptype, x=0, y=0, dw=dat.shape[1],
+                      dh=dat.shape[0], color_mapper=color_mapper)
             color_bar = ColorBar(color_mapper=color_mapper, ticker=LogTicker(),
                                  orientation="horizontal", label_standoff=12,
                                  border_line_color=None, location=(0, 0))
 
         else:
-            color_mapper = LinearColorMapper(palette="Viridis256", low=frame.min(), high=frame.max())
-            fig.image(image=[frame], x=0, y=0, dw=frame.shape[1],
-                      dh=frame.shape[0], palette='Viridis256')
+            color_mapper = LinearColorMapper(palette="Viridis256", low=dat.min(), high=dat.max())
+            fig.image(source=source, image=ptype, x=0, y=0, dw=dat.shape[1],
+                      dh=dat.shape[0], palette='Viridis256')
             color_bar = ColorBar(color_mapper=color_mapper,
                                  orientation="horizontal", label_standoff=12,
                                  border_line_color=None, location=(0, 0))
@@ -1234,7 +1235,7 @@ class TestTSO(TSO):
                 planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
                 params = batman.TransitParams()
                 params.t0 = 0.                                # time of inferior conjunction
-                params.per = 0.001 #5.7214742                        # orbital period (days)
+                params.per = 0.01 #5.7214742                        # orbital period (days)
                 params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
                 params.inc = 89.8                             # orbital inclination (in degrees)
                 params.ecc = 0.                               # eccentricity
