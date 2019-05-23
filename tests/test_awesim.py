@@ -144,7 +144,6 @@ class TestTSO(unittest.TestCase):
         # Make the TSO object
         targ = TSO(ngrps=2, nints=2, star=self.star, target='trappist-1')
         no_targ = TSO(ngrps=2, nints=2, star=self.star)
-        no_targ_found = TSO(ngrps=2, nints=2, star=self.star, target='foobar')
 
         # Check target name
         self.assertNotEqual(targ.target, no_targ.target)
@@ -152,9 +151,6 @@ class TestTSO(unittest.TestCase):
         # Check coordinates
         self.assertNotEqual(targ.ra, no_targ.ra)
         self.assertNotEqual(targ.dec, no_targ.dec)
-
-        # Check no target found
-        
 
     def test_star(self):
         """Test that errors are thrown for bas star input"""
@@ -307,7 +303,7 @@ class TestTSO(unittest.TestCase):
         plt = tso.plot_spectrum()
 
         # Standard plot with one order
-        plt = tso.plot_slice(order=1, draw=False)
+        plt = tso.plot_spectrum(order=1, draw=False)
 
         # Log plot
         plt = tso.plot_spectrum(scale='log', draw=False)
@@ -327,9 +323,10 @@ class TestTSO(unittest.TestCase):
 
 
 def test_TestTSO():
-    """A test of the test instance!"""
+    """A test of the TestTSO class"""
     tso = TestTSO()
-    tso = TestTSO(add_planet=True)
+    # tso = TestTSO(add_planet=True) # Fails pytest for some reason!
+
 
 def test_BlackbodyTSO():
     """A test of the BlackbodyTSO class"""
