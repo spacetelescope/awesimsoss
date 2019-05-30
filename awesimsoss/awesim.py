@@ -154,7 +154,7 @@ class TSO(object):
         Generate ramp and background noise
 
         Parameters
-        ----------
+        ----------zre w
         zodi_scale: float
             The scale factor of the zodiacal background
         offset: int
@@ -175,7 +175,7 @@ class TSO(object):
         darksignal = fits.getdata(resource_filename('awesimsoss', 'files/signaldms.fits'))*self.gain
 
         # Slice of FULL frame reference files
-        slc = slice(160, 256) if self.subarray == 'SUBSTRIP96' else slice(0, 256) if self.subarray == 'SUBSTRIP256' else slice(0, 2048)
+        slc = slice(1792, 1888) if self.subarray == 'SUBSTRIP96' else slice(1792, 2048) if self.subarray == 'SUBSTRIP256' else slice(0, 2048)
 
         # Trim FULL frame reference files
         pedestal = pedestal[slc, :]
@@ -1028,7 +1028,7 @@ class TSO(object):
         if self.subarray == 'FULL':
             for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
                 full = np.zeros(self.dims3)
-                full[:, :256, :] = getattr(self, arr)
+                full[:, -256:, :] = getattr(self, arr)
                 setattr(self, arr, full)
 
         # Make ramps and add noise to the observations using Kevin Volk's
