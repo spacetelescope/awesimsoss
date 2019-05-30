@@ -154,7 +154,7 @@ class TSO(object):
         Generate ramp and background noise
 
         Parameters
-        ----------zre w
+        ----------
         zodi_scale: float
             The scale factor of the zodiacal background
         offset: int
