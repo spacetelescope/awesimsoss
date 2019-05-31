@@ -37,7 +37,8 @@ setup(
     },
     install_requires=requirements,
     license="MIT license",
-    long_description=readme + '\n\n' + history,
+    # long_description=readme + '\n\n' + history,
+    long_description="The Advanced Webb Exposure SIMulator for SOSS (awesimsoss) produces simulated time-series observations for the Single Object Slitless Spectroscopy (SOSS) mode of the NIRISS instrument onboard the James Webb Space Telescope."
     include_package_data=True,
     keywords='awesimsoss',
     name='awesimsoss',
