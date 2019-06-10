@@ -109,7 +109,7 @@ class TSO(object):
         self.verbose = verbose
 
         # Check the star units
-        self._check_star(star)
+        self._validate_star(star)
 
         # Set static values
         self.gain = 1.61
@@ -230,38 +230,6 @@ class TSO(object):
         # Bottom (Only FULL frame)
         if self.subarray == 'FULL':
             self.tso[:, :, :4, :] = counts
-
-    def _check_star(self, star):
-        """Make sure the input star has units
-
-        Parameters
-        ----------
-        star: sequence
-            The [W, F] or [W, F, E] of the star to simulate
-
-        Returns
-        -------
-        bool
-            True or False
-        """
-        # Check star is a sequence of length 2 or 3
-        if not isinstance(star, (list, tuple)) or not len(star) in [2, 3]:
-            raise ValueError(type(star), ': Star input must be a sequence of [W, F] or [W, F, E]')
-
-        # Check star has units
-        if not all([isinstance(i, q.quantity.Quantity) for i in star]):
-            types = ', '.join([str(type(i)) for i in star])
-            raise ValueError('[{}]: Spectrum must be in astropy units'.format(types))
-
-        # Check the units
-        if not star[0].unit.is_equivalent(q.um):
-            raise ValueError(star[0].unit, ': Wavelength must be in units of distance')
-
-        if not all([i.unit.is_equivalent(q.erg/q.s/q.cm**2/q.AA) for i in star[1:]]):
-            raise ValueError(star[1].unit, ': Flux density must be in units of F_lambda')
-
-        # Good to go
-        self.star = star
 
     @property
     def filter(self):
@@ -1200,6 +1168,38 @@ class TSO(object):
 
         except:
             print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
+
+    def _validate_star(self, star):
+        """Make sure the input star has units
+
+        Parameters
+        ----------
+        star: sequence
+            The [W, F] or [W, F, E] of the star to simulate
+
+        Returns
+        -------
+        bool
+            True or False
+        """
+        # Check star is a sequence of length 2 or 3
+        if not isinstance(star, (list, tuple)) or not len(star) in [2, 3]:
+            raise ValueError(type(star), ': Star input must be a sequence of [W, F] or [W, F, E]')
+
+        # Check star has units
+        if not all([isinstance(i, q.quantity.Quantity) for i in star]):
+            types = ', '.join([str(type(i)) for i in star])
+            raise ValueError('[{}]: Spectrum must be in astropy units'.format(types))
+
+        # Check the units
+        if not star[0].unit.is_equivalent(q.um):
+            raise ValueError(star[0].unit, ': Wavelength must be in units of distance')
+
+        if not all([i.unit.is_equivalent(q.erg/q.s/q.cm**2/q.AA) for i in star[1:]]):
+            raise ValueError(star[1].unit, ': Flux density must be in units of F_lambda')
+
+        # Good to go
+        self.star = star
 
 
 class TestTSO(TSO):
