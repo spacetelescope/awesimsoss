@@ -14,21 +14,16 @@ try:
 except ImportError:
     print("Could not import `batman` package. Functionality limited.")
 
-from awesimsoss import TSO, BlackbodyTSO, TestTSO
+from awesimsoss import TSO, BlackbodyTSO, TestTSO, STAR_DATA, PLANET_DATA
 
 
 class TestTSO(unittest.TestCase):
     """Tests for the TSO class"""
     def setUp(self):
         """Setup for the tests"""
-        # Make star data
-        star_file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
-        star = np.genfromtxt(star_file, unpack=True)
-        self.star = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-
-        # Make planet data
-        planet_file = resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat')
-        self.planet = np.genfromtxt(planet_file, unpack=True)
+        # Get data
+        self.star = STAR_DATA
+        self.planet = PLANET_DATA
 
     def test_init(self):
         """Test that the TSO class is generated properly"""
