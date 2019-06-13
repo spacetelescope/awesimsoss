@@ -309,12 +309,11 @@ class TestTSO(unittest.TestCase):
         # Specific order
         plt = tso.plot_spectrum(order=1, draw=False)
 
-    def test_to_fits(self):
-        """Test the to_fits method"""
-        # Make the TSO object and save
-        tso = TSO(ngrps=2, nints=2, star=self.star)
-        tso.simulate()
-        tso.to_fits('.')
+    # def test_to_fits(self):
+    #     """Test the to_fits method"""
+    #     # Make the TSO object and save
+    #     tso = TestTSO()
+    #     tso.to_fits('.')
 
 
 def test_TestTSO():
