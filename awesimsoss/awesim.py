@@ -97,7 +97,7 @@ class TSO(object):
         -------
         # Imports
         import numpy as np
-        from awesimsoss import TSO
+        from awesimsoss import TSO, STAR_DATA
         import astropy.units as q
         from pkg_resources import resource_filename
         star = np.genfromtxt(resource_filename('awesimsoss', 'files/scaled_spectrum.txt'), unpack=True)

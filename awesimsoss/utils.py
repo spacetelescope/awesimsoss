@@ -9,7 +9,9 @@ import itertools
 from pkg_resources import resource_filename
 
 from astropy.io import fits
+import astropy.units as q
 from bokeh.palettes import Category20
+import numpy as np
 
 
 def color_gen():
@@ -17,6 +19,28 @@ def color_gen():
 
 
 COLORS = color_gen()
+STAR_DATA = star_data()
+PLANET_DATA = planet_data()
+
+
+def planet_data():
+    """
+    Dummy data for time series simulations
+    """
+    planet_file = resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat')
+    planet1D = np.genfromtxt(planet_file, unpack=True)
+
+    return planet1D
+
+
+def star_data():
+    """
+    Dummy data for time series simulations
+    """
+    star = np.genfromtxt(resource_filename('awesimsoss', 'files/scaled_spectrum.txt'), unpack=True)
+    star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+
+    return star1D
 
 
 def subarray(subarr):
