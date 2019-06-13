@@ -1222,19 +1222,13 @@ class TestTSO(TSO):
         add_planet: bool
             Add a transiting exoplanet
         """
-        # Get stored data
-        file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
-        star = np.genfromtxt(file, unpack=True)
-        star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-
         # Initialize base class
-        super().__init__(ngrps=ngrps, nints=nints, star=star1D, subarray=subarray, filter=filter, **kwargs)
+        super().__init__(ngrps=ngrps, nints=nints, star=utils.STAR_DATA, subarray=subarray, filter=filter, **kwargs)
 
         # Run the simulation
         if run:
             if add_planet:
 
-                planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
                 params = batman.TransitParams()
                 params.t0 = 0.                                # time of inferior conjunction
                 params.per = 0.01 #5.7214742                        # orbital period (days)
@@ -1248,7 +1242,7 @@ class TestTSO(TSO):
                 tmodel.teff = 3500                            # effective temperature of the host star
                 tmodel.logg = 5                               # log surface gravity of the host star
                 tmodel.feh = 0                                # metallicity of the host star
-                self.simulate(planet=planet1D, tmodel=tmodel)
+                self.simulate(planet=utils.PLANET_DATA, tmodel=tmodel)
 
             else:
                 self.simulate()
@@ -1288,7 +1282,6 @@ class BlackbodyTSO(TSO):
         if run:
             if add_planet:
 
-                planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
                 params = batman.TransitParams()
                 params.t0 = 0.                                # time of inferior conjunction
                 params.per = 5.7214742                        # orbital period (days)
@@ -1302,7 +1295,7 @@ class BlackbodyTSO(TSO):
                 tmodel.teff = 3500                            # effective temperature of the host star
                 tmodel.logg = 5                               # log surface gravity of the host star
                 tmodel.feh = 0                                # metallicity of the host star
-                self.simulate(planet=planet1D, tmodel=tmodel)
+                self.simulate(planet=utils.PLANET_DATA, tmodel=tmodel)
 
             else:
                 self.simulate()
