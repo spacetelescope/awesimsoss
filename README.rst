@@ -46,7 +46,7 @@ The best way to install `awesimsoss` is
 
    git clone https://github.com/spacetelescope/awesimsoss.git
    cd awesimsoss
-   conda env create --name awesimsoss -f awesimsoss/environment.yml
+   conda env create --name awesimsoss -f environment.yml
    conda activate awesimsoss
    python setup.py develop
 
