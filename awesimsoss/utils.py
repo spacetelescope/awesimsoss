@@ -18,11 +18,6 @@ def color_gen():
     yield from itertools.cycle(Category20[20])
 
 
-COLORS = color_gen()
-STAR_DATA = star_data()
-PLANET_DATA = planet_data()
-
-
 def planet_data():
     """
     Dummy data for time series simulations
@@ -41,6 +36,11 @@ def star_data():
     star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
 
     return star1D
+
+
+COLORS = color_gen()
+STAR_DATA = star_data()
+PLANET_DATA = planet_data()
 
 
 def subarray(subarr):
