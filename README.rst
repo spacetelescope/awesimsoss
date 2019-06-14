@@ -37,6 +37,20 @@ Additional resources:
 - `Jupyter notebook <https://github.com/spacetelescope/awesimsoss/blob/master/notebooks/awesimsoss_demo.ipynb>`_
 - `Build history <https://travis-ci.com/hover2pi/awesimsoss>`_
 
+Installation
+~~~~~~~~~~~~
+
+The best way to install `awesimsoss` is
+
+.. code:: python
+
+   git clone https://github.com/spacetelescope/awesimsoss.git
+   cd awesimsoss
+   conda env create --name awesimsoss -f environment.yml
+   conda activate awesimsoss
+   python setup.py develop
+
+
 Simulating SOSS Observations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -48,37 +62,32 @@ seen through SOSS, my code might look like:
 .. code:: python
 
    # Imports
-   import numpy as np
-   from awesimsoss import TSO
-   import astropy.units as q
-   from pkg_resources import resource_filename
-   star = np.genfromtxt(resource_filename('awesimsoss','files/scaled_spectrum.txt'), unpack=True)
-   star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+   from awesimsoss import TSO, STAR_DATA
 
    # Initialize simulation
-   tso = TSO(ngrps=3, nints=5, star=star1D)
+   tso256_clear = TSO(ngrps=3, nints=5, star=STAR_DATA)
                
    # Run it and make a plot
-   tso.simulate()
-   tso.plot()
+   tso256_clear.simulate()
+   tso256_clear.plot()
 
 .. figure:: awesimsoss/img/2D_star.png
    :alt: The output trace
 
-The SUBSTRIP256 subarray is the default but the SUBSTRIP96 subarray and
-FULL frame configurations are also supported:
+The `SUBSTRIP256` subarray is the default but the `SUBSTRIP96` subarray and
+`FULL` frame configurations are also supported:
 
 .. code:: python
 
-   tso96 = TSO(ngrps=3, nints=5, star=star1D, subarray='SUBSTRIP96')
-   tso2048 = TSO(ngrps=3, nints=5, star=star1D, subarray='FULL')
+   tso96_clear = TSO(ngrps=3, nints=5, star=star1D, subarray='SUBSTRIP96')
+   tso2048_clear = TSO(ngrps=3, nints=5, star=star1D, subarray='FULL')
 
-The default filter is CLEAR but you can also simulate observations with
-the F277W filter like so:
+The default filter is `CLEAR` but you can also simulate observations with
+the `F277W` filter like so:
 
 .. code:: python
 
-   tso = TSO(ngrps=3, nints=5, star=star1D, filt='F277W')
+   tso256_f277w = TSO(ngrps=3, nints=5, star=star1D, filter='F277W')
 
 Simulated Planetary Transits
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -87,12 +96,11 @@ The example above was for an isolated star though. To include a
 planetary transit we must additionally provide a transmission spectrum
 and the orbital parameters of the planet.
 
-Here is a sample transmission spectrum generated with PANDEXO:
+Here is a sample transmission spectrum generated with `PandExo <https://github.com/natashabatalha/PandExo>`_:
 
 .. code:: python
 
-   planet_file = resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat')
-   planet1D = np.genfromtxt(planet_file, unpack=True)
+   from awesimsoss import PLANET_DATA
 
 .. figure:: awesimsoss/img/1D_planet.png
    :alt: The input transmission spectrum
@@ -103,7 +111,7 @@ And here are some parameters for our planetary system:
 
    # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
    import batman
-   tso = TSO(ngrps=3, nints=5, star=star1D, run=False)
+   tso_transit = TSO(ngrps=3, nints=5, star=STAR_DATA, run=False)
    params = batman.TransitParams()
    params.t0 = 0. # time of inferior conjunction
    params.per = 5.7214742 # orbital period (days)
@@ -114,7 +122,8 @@ And here are some parameters for our planetary system:
    params.w = 90. # longitude of periastron (in degrees) p
    params.limb_dark = 'quadratic' # limb darkening profile to use
    params.u = [0.1,0.1] # limb darkening coefficients
-   tmodel = batman.TransitModel(params, tso.time)
+
+   tmodel = batman.TransitModel(params, tso_transit.time)
    tmodel.teff = 3500 # effective temperature of the host star
    tmodel.logg = 5 # log surface gravity of the host star
    tmodel.feh = 0 # metallicity of the host star
@@ -123,11 +132,11 @@ Now the code to generate a simulated planetary transit around our star might loo
 
 .. code:: python
 
-   tso.simulate(planet=planet1D, tmodel=tmodel, time_unit='seconds')
-   tso.plot_lightcurve(column=42)
+   tso_transit.simulate(planet=PLANET_DATA, tmodel=tmodel)
+   tso_transit.plot_lightcurve()
 
 We can write this to a FITS file directly ingestible by the JWST pipeline with:
 
 .. code:: python
 
-   tso.to_fits('my_SOSS_simulation.fits')
+   tso_transit.to_fits('my_SOSS_simulation.fits')

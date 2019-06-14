@@ -14,21 +14,16 @@ try:
 except ImportError:
     print("Could not import `batman` package. Functionality limited.")
 
-from awesimsoss import TSO, BlackbodyTSO, TestTSO
+from awesimsoss import TSO, BlackbodyTSO, TestTSO, STAR_DATA, PLANET_DATA
 
 
 class TestTSO(unittest.TestCase):
     """Tests for the TSO class"""
     def setUp(self):
         """Setup for the tests"""
-        # Make star data
-        star_file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
-        star = np.genfromtxt(star_file, unpack=True)
-        self.star = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-
-        # Make planet data
-        planet_file = resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat')
-        self.planet = np.genfromtxt(planet_file, unpack=True)
+        # Get data
+        self.star = STAR_DATA
+        self.planet = PLANET_DATA
 
     def test_init(self):
         """Test that the TSO class is generated properly"""
@@ -314,12 +309,11 @@ class TestTSO(unittest.TestCase):
         # Specific order
         plt = tso.plot_spectrum(order=1, draw=False)
 
-    def test_to_fits(self):
-        """Test the to_fits method"""
-        # Make the TSO object and save
-        tso = TSO(ngrps=2, nints=2, star=self.star)
-        tso.simulate()
-        tso.to_fits('.')
+    # def test_to_fits(self):
+    #     """Test the to_fits method"""
+    #     # Make the TSO object and save
+    #     tso = TestTSO()
+    #     tso.to_fits('.')
 
 
 def test_TestTSO():

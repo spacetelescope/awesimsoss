@@ -97,7 +97,7 @@ class TSO(object):
         -------
         # Imports
         import numpy as np
-        from awesimsoss import TSO
+        from awesimsoss import TSO, STAR_DATA
         import astropy.units as q
         from pkg_resources import resource_filename
         star = np.genfromtxt(resource_filename('awesimsoss', 'files/scaled_spectrum.txt'), unpack=True)
@@ -109,7 +109,7 @@ class TSO(object):
         self.verbose = verbose
 
         # Check the star units
-        self._check_star(star)
+        self._validate_star(star)
 
         # Set static values
         self.gain = 1.61
@@ -230,38 +230,6 @@ class TSO(object):
         # Bottom (Only FULL frame)
         if self.subarray == 'FULL':
             self.tso[:, :, :4, :] = counts
-
-    def _check_star(self, star):
-        """Make sure the input star has units
-
-        Parameters
-        ----------
-        star: sequence
-            The [W, F] or [W, F, E] of the star to simulate
-
-        Returns
-        -------
-        bool
-            True or False
-        """
-        # Check star is a sequence of length 2 or 3
-        if not isinstance(star, (list, tuple)) or not len(star) in [2, 3]:
-            raise ValueError(type(star), ': Star input must be a sequence of [W, F] or [W, F, E]')
-
-        # Check star has units
-        if not all([isinstance(i, q.quantity.Quantity) for i in star]):
-            types = ', '.join([str(type(i)) for i in star])
-            raise ValueError('[{}]: Spectrum must be in astropy units'.format(types))
-
-        # Check the units
-        if not star[0].unit.is_equivalent(q.um):
-            raise ValueError(star[0].unit, ': Wavelength must be in units of distance')
-
-        if not all([i.unit.is_equivalent(q.erg/q.s/q.cm**2/q.AA) for i in star[1:]]):
-            raise ValueError(star[1].unit, ': Flux density must be in units of F_lambda')
-
-        # Good to go
-        self.star = star
 
     @property
     def filter(self):
@@ -1201,6 +1169,38 @@ class TSO(object):
         except:
             print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
 
+    def _validate_star(self, star):
+        """Make sure the input star has units
+
+        Parameters
+        ----------
+        star: sequence
+            The [W, F] or [W, F, E] of the star to simulate
+
+        Returns
+        -------
+        bool
+            True or False
+        """
+        # Check star is a sequence of length 2 or 3
+        if not isinstance(star, (list, tuple)) or not len(star) in [2, 3]:
+            raise ValueError(type(star), ': Star input must be a sequence of [W, F] or [W, F, E]')
+
+        # Check star has units
+        if not all([isinstance(i, q.quantity.Quantity) for i in star]):
+            types = ', '.join([str(type(i)) for i in star])
+            raise ValueError('[{}]: Spectrum must be in astropy units'.format(types))
+
+        # Check the units
+        if not star[0].unit.is_equivalent(q.um):
+            raise ValueError(star[0].unit, ': Wavelength must be in units of distance')
+
+        if not all([i.unit.is_equivalent(q.erg/q.s/q.cm**2/q.AA) for i in star[1:]]):
+            raise ValueError(star[1].unit, ': Flux density must be in units of F_lambda')
+
+        # Good to go
+        self.star = star
+
 
 class TestTSO(TSO):
     """Generate a test object for quick access"""
@@ -1222,19 +1222,13 @@ class TestTSO(TSO):
         add_planet: bool
             Add a transiting exoplanet
         """
-        # Get stored data
-        file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
-        star = np.genfromtxt(file, unpack=True)
-        star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
-
         # Initialize base class
-        super().__init__(ngrps=ngrps, nints=nints, star=star1D, subarray=subarray, filter=filter, **kwargs)
+        super().__init__(ngrps=ngrps, nints=nints, star=utils.STAR_DATA, subarray=subarray, filter=filter, **kwargs)
 
         # Run the simulation
         if run:
             if add_planet:
 
-                planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
                 params = batman.TransitParams()
                 params.t0 = 0.                                # time of inferior conjunction
                 params.per = 0.01 #5.7214742                        # orbital period (days)
@@ -1248,7 +1242,7 @@ class TestTSO(TSO):
                 tmodel.teff = 3500                            # effective temperature of the host star
                 tmodel.logg = 5                               # log surface gravity of the host star
                 tmodel.feh = 0                                # metallicity of the host star
-                self.simulate(planet=planet1D, tmodel=tmodel)
+                self.simulate(planet=utils.PLANET_DATA, tmodel=tmodel)
 
             else:
                 self.simulate()
@@ -1288,7 +1282,6 @@ class BlackbodyTSO(TSO):
         if run:
             if add_planet:
 
-                planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
                 params = batman.TransitParams()
                 params.t0 = 0.                                # time of inferior conjunction
                 params.per = 5.7214742                        # orbital period (days)
@@ -1302,7 +1295,7 @@ class BlackbodyTSO(TSO):
                 tmodel.teff = 3500                            # effective temperature of the host star
                 tmodel.logg = 5                               # log surface gravity of the host star
                 tmodel.feh = 0                                # metallicity of the host star
-                self.simulate(planet=planet1D, tmodel=tmodel)
+                self.simulate(planet=utils.PLANET_DATA, tmodel=tmodel)
 
             else:
                 self.simulate()
