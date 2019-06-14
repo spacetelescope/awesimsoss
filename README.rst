@@ -28,7 +28,7 @@ Advanced Webb Exposure SIMulator for SOSS
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 
 This pure Python 3.5+ package produces simulated time-series data for the `Single
-Object Slitless Spectroscopy (SOSS) mode <https://jwst-docs.stsci.edu/display/JTI/NIRISS+Single+Object+Slitless+Spectroscopy>` of the NIRISS instrument
+Object Slitless Spectroscopy (SOSS) mode <https://jwst-docs.stsci.edu/display/JTI/NIRISS+Single+Object+Slitless+Spectroscopy>_` of the NIRISS instrument
 onboard the James Webb Space Telescope.
 
 Additional resources:
