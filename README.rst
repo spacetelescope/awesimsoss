@@ -40,7 +40,7 @@ Additional resources:
 Installation
 ~~~~~~~~~~~~
 
-The best way to install `awesimsoss` is
+The best way to install ``awesimsoss`` is
 
 .. code-block:: bash
 
