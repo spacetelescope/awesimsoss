@@ -42,7 +42,7 @@ Installation
 
 The best way to install `awesimsoss` is
 
-.. code:: python
+.. code-block:: python
 
    git clone https://github.com/spacetelescope/awesimsoss.git
    cd awesimsoss
@@ -56,10 +56,10 @@ Simulating SOSS Observations
 
 Given a 1D spectrum of a target, this module produces a 2D SOSS ramp
 image with the given number of groups and integrations. For example, if
-I want to produce 20 integrations of 5 groups each for a J=9 A0 star as
+I want to produce 5 integrations of 3 groups each for a J=9 A0 star as
 seen through SOSS, my code might look like:
 
-.. code:: python
+.. code-block:: python
 
    # Imports
    from awesimsoss import TSO, STAR_DATA
@@ -77,7 +77,7 @@ seen through SOSS, my code might look like:
 The `SUBSTRIP256` subarray is the default but the `SUBSTRIP96` subarray and
 `FULL` frame configurations are also supported:
 
-.. code:: python
+.. code-block:: python
 
    tso96_clear = TSO(ngrps=3, nints=5, star=star1D, subarray='SUBSTRIP96')
    tso2048_clear = TSO(ngrps=3, nints=5, star=star1D, subarray='FULL')
@@ -85,7 +85,7 @@ The `SUBSTRIP256` subarray is the default but the `SUBSTRIP96` subarray and
 The default filter is `CLEAR` but you can also simulate observations with
 the `F277W` filter like so:
 
-.. code:: python
+.. code-block:: python
 
    tso256_f277w = TSO(ngrps=3, nints=5, star=star1D, filter='F277W')
 
@@ -98,7 +98,7 @@ and the orbital parameters of the planet.
 
 Here is a sample transmission spectrum generated with `PandExo <https://github.com/natashabatalha/PandExo>`_:
 
-.. code:: python
+.. code-block:: python
 
    from awesimsoss import PLANET_DATA
 
@@ -107,7 +107,7 @@ Here is a sample transmission spectrum generated with `PandExo <https://github.c
 
 And here are some parameters for our planetary system:
 
-.. code:: python
+.. code-block:: python
 
    # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
    import batman
@@ -130,13 +130,13 @@ And here are some parameters for our planetary system:
 
 Now the code to generate a simulated planetary transit around our star might look like:
 
-.. code:: python
+.. code-block:: python
 
    tso_transit.simulate(planet=PLANET_DATA, tmodel=tmodel)
    tso_transit.plot_lightcurve()
 
 We can write this to a FITS file directly ingestible by the JWST pipeline with:
 
-.. code:: python
+.. code-block:: python
 
    tso_transit.to_fits('my_SOSS_simulation.fits')
