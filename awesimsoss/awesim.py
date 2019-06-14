@@ -4,25 +4,26 @@ A module to generate simulated 2D time-series SOSS data
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
-import time
-import warnings
 import datetime
 from functools import partial, wraps
-from pkg_resources import resource_filename
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
+from pkg_resources import resource_filename
+import os
+import time
+import warnings
 
-from astroquery.simbad import Simbad
-import numpy as np
-from bokeh.plotting import figure, show
-from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
-from bokeh.layouts import column
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
 from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
 from astropy.coordinates import SkyCoord
+from astroquery.simbad import Simbad
+from bokeh.plotting import figure, show
+from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
+from bokeh.layouts import column
+import numpy as np
 
 try:
     from jwst.datamodels import RampModel
@@ -47,15 +48,12 @@ def check_psf_files():
     if not os.path.isfile(resource_filename('awesimsoss', 'files/SOSS_CLEAR_PSF_order1_1.npy')):
         print("Looks like you haven't generated the SOSS PSFs yet, which are required to produce simulations.")
         print("This takes about 10 minutes but you will only need to do it this one time.")
-        compute = input(" Would you like to do it now? [y] ")
+        compute = input("Would you like to do it now? [y] ")
 
         if compute is None or compute.lower() in ['y', 'yes']:
             mt.nuke_psfs()
 
 
-check_psf_files()
-
- 
 def run_required(func):
     """A wrapper to check that the simulation has been run before a method can be executed"""
     @wraps(func)
@@ -121,6 +119,9 @@ class TSO(object):
         tso = TSO(ngrps=3, nints=10, star=star1D)
         """
         self.verbose = verbose
+
+        # Check for PSFs
+        check_psf_files()
 
         # Check the star units
         self._validate_star(star)
