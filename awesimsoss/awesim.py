@@ -1133,9 +1133,9 @@ class TSO(object):
                     print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
 
     @run_required
-    def to_fits(self, outfile, all_data=False):
+    def export(self, outfile, all_data=False):
         """
-        Save the data to a JWST pipeline ingestible FITS file
+        Export the simulated data to a JWST pipeline ingestible FITS file
 
         Parameters
         ----------
