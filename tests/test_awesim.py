@@ -25,6 +25,12 @@ class TestTSO(unittest.TestCase):
         self.star = STAR_DATA
         self.planet = PLANET_DATA
 
+    def test_to_fits(self):
+        """Test the to_fits method"""
+        # Make the TSO object and save
+        tso = TestTSO()
+        tso.to_fits('outfile.fits')
+
     def test_init(self):
         """Test that the TSO class is generated properly"""
         # Initialize the FULL frame with two groups and two integrations
@@ -308,12 +314,6 @@ class TestTSO(unittest.TestCase):
 
         # Specific order
         plt = tso.plot_spectrum(order=1, draw=False)
-
-    # def test_to_fits(self):
-    #     """Test the to_fits method"""
-    #     # Make the TSO object and save
-    #     tso = TestTSO()
-    #     tso.to_fits('.')
 
 
 def test_TestTSO():
