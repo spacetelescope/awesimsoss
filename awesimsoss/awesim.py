@@ -223,6 +223,9 @@ class TSO(object):
             # Update the TSO with one containing noise
             self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
 
+        # Memory cleanup
+        del RAMP, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
+
         print('Noise model finished:', round(time.time()-start, 3), 's')
 
     @run_required
@@ -293,6 +296,33 @@ class TSO(object):
 
             # Save the file
             mod.save(outfile, overwrite=True)
+
+            # Save input data
+            with fits.open(outfile) as hdul:
+
+                # Save input star data
+                hdul.append(fits.ImageHDU(data=np.array([i.value for i in self.star], dtype=np.float64), name='STAR'))
+                hdul['STAR'].header.set('FUNITS', str(self.star[1].unit))
+                hdul['STAR'].header.set('WUNITS', str(self.star[0].unit))
+
+                # Save input planet data
+                if self.planet is not None:
+                    hdul.append(fits.ImageHDU(data=np.asarray(self.planet, dtype=np.float64), name='PLANET'))
+                    for param, val in self.tmodel.__dict__.items():
+                        if isinstance(val, (float, int, str)):
+                            hdul['PLANET'].header.set(param.upper()[:8], val)
+                        elif isinstance(val, np.ndarray) and len(val) == 1:
+                            hdul['PLANET'].header.set(param.upper(), val[0])
+                        elif isinstance(val, type(None)):
+                            hdul['PLANET'].header.set(param.upper(), '')
+                        elif param == 'u':
+                            for n, v in enumerate(val):
+                                hdul['PLANET'].header.set('U{}'.format(n+1), v)
+                        else:
+                            print(param, val, type(val))
+
+                # Write to file
+                hdul.writeto(outfile, overwrite=True)
 
             print('File saved as', outfile)
 
@@ -843,6 +873,7 @@ class TSO(object):
                 time_axis.append(times[self.nresets:])
 
             self.time = np.concatenate(time_axis)
+            self.inttime = np.tile(self.time[:self.ngrps], self.nints)
 
     def _reset_response(self):
         """Generate the relative response function for each order"""
@@ -1028,9 +1059,8 @@ class TSO(object):
             # Reshape to make frames
             lightcurves = lightcurves.swapaxes(0, 1)
 
-            # Multiply by the frame time to convert to [ADU]
-            ft = np.tile(self.time[:self.ngrps], self.nints)
-            lightcurves *= ft[:, None, None, None]
+            # Multiply by the integration time to convert to [ADU]
+            lightcurves *= self.inttime[:, None, None, None]
 
             # Generate TSO frames
             if verbose:
@@ -1049,7 +1079,10 @@ class TSO(object):
                 print('Order {} traces finished:'.format(order), round(time.time()-start, 3), 's')
 
             # Add it to the individual order
-            setattr(self, 'tso_order{}_ideal'.format(order), np.array(frames))
+            setattr(self, 'tso_order{}_ideal'.format(order), frames)
+
+            # Clear memory
+            del frames, lightcurves, psfs, response, wave
 
         # Add to the master TSO
         self.tso_ideal = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
@@ -1066,6 +1099,7 @@ class TSO(object):
                 full = np.zeros(self.dims3)
                 full[:, -256:, :] = getattr(self, arr)
                 setattr(self, arr, full)
+                del full
 
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
@@ -1075,6 +1109,7 @@ class TSO(object):
         for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
             data = getattr(self, arr).reshape(self.dims)
             setattr(self, arr, data)
+            del data
 
         # Simulate reference pixels
         self.add_refpix()
@@ -1253,7 +1288,8 @@ class TestTSO(TSO):
                 params.ecc = 0.                               # eccentricity
                 params.w = 90.                                # longitude of periastron (in degrees)
                 params.limb_dark = 'quadratic'                # limb darkening profile to use
-                params.u = [0.1, 0.1]                          # limb darkening coefficients
+                params.u = [0.1, 0.1]                         # limb darkening coefficients
+                params.rp = 0.                                # planet radius (placeholder)
                 tmodel = batman.TransitModel(params, self.time)
                 tmodel.teff = 3500                            # effective temperature of the host star
                 tmodel.logg = 5                               # log surface gravity of the host star
@@ -1307,6 +1343,7 @@ class BlackbodyTSO(TSO):
                 params.w = 90.                                # longitude of periastron (in degrees)
                 params.limb_dark = 'quadratic'                # limb darkening profile to use
                 params.u = [0.1, 0.1]                          # limb darkening coefficients
+                params.rp = 0.                                # planet radius (placeholder)
                 tmodel = batman.TransitModel(params, self.time)
                 tmodel.teff = 3500                            # effective temperature of the host star
                 tmodel.logg = 5                               # log surface gravity of the host star
