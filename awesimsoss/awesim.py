@@ -246,6 +246,59 @@ class TSO(object):
         if self.subarray == 'FULL':
             self.tso[:, :, :4, :] = counts
 
+    @run_required
+    def export(self, outfile, all_data=False):
+        """
+        Export the simulated data to a JWST pipeline ingestible FITS file
+
+        Parameters
+        ----------
+        outfile: str
+            The path of the output file
+        """
+        try:
+
+            # Make a RampModel
+            data = self.tso
+            mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
+            pix = utils.subarray(self.subarray)
+
+            # Set meta data values for header keywords
+            mod.meta.telescope = 'JWST'
+            mod.meta.instrument.name = 'NIRISS'
+            mod.meta.instrument.detector = 'NIS'
+            mod.meta.instrument.filter = self.filter
+            mod.meta.instrument.pupil = 'GR700XD'
+            mod.meta.exposure.type = 'NIS_SOSS'
+            mod.meta.exposure.nints = self.nints
+            mod.meta.exposure.ngroups = self.ngrps
+            mod.meta.exposure.nframes = self.nframes
+            mod.meta.exposure.readpatt = 'NISRAPID'
+            mod.meta.exposure.groupgap = 0
+            mod.meta.exposure.frame_time = self.frame_time
+            mod.meta.exposure.group_time = self.group_time
+            mod.meta.exposure.duration = self.time[-1]-self.time[0]
+            mod.meta.subarray.name = self.subarray
+            mod.meta.subarray.xsize = data.shape[3]
+            mod.meta.subarray.ysize = data.shape[2]
+            mod.meta.subarray.xstart = pix.get('xloc', 1)
+            mod.meta.subarray.ystart = pix.get('yloc', 1)
+            mod.meta.subarray.fastaxis = -2
+            mod.meta.subarray.slowaxis = -1
+            mod.meta.observation.date = self.obs_date
+            mod.meta.observation.time = self.obs_time
+            mod.meta.target.ra = self.ra
+            mod.meta.target.dec = self.dec
+            mod.meta.target.source_type = 'POINT'
+
+            # Save the file
+            mod.save(outfile, overwrite=True)
+
+            print('File saved as', outfile)
+
+        except IOError:
+            print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
+
     @property
     def filter(self):
         """Getter for the filter"""
@@ -1131,59 +1184,6 @@ class TSO(object):
                 if self.verbose:
                     print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
                     print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
-
-    @run_required
-    def export(self, outfile, all_data=False):
-        """
-        Export the simulated data to a JWST pipeline ingestible FITS file
-
-        Parameters
-        ----------
-        outfile: str
-            The path of the output file
-        """
-        try:
-
-            # Make a RampModel
-            data = self.tso
-            mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
-            pix = utils.subarray(self.subarray)
-
-            # Set meta data values for header keywords
-            mod.meta.telescope = 'JWST'
-            mod.meta.instrument.name = 'NIRISS'
-            mod.meta.instrument.detector = 'NIS'
-            mod.meta.instrument.filter = self.filter
-            mod.meta.instrument.pupil = 'GR700XD'
-            mod.meta.exposure.type = 'NIS_SOSS'
-            mod.meta.exposure.nints = self.nints
-            mod.meta.exposure.ngroups = self.ngrps
-            mod.meta.exposure.nframes = self.nframes
-            mod.meta.exposure.readpatt = 'NISRAPID'
-            mod.meta.exposure.groupgap = 0
-            mod.meta.exposure.frame_time = self.frame_time
-            mod.meta.exposure.group_time = self.group_time
-            mod.meta.exposure.duration = self.time[-1]-self.time[0]
-            mod.meta.subarray.name = self.subarray
-            mod.meta.subarray.xsize = data.shape[3]
-            mod.meta.subarray.ysize = data.shape[2]
-            mod.meta.subarray.xstart = pix.get('xloc', 1)
-            mod.meta.subarray.ystart = pix.get('yloc', 1)
-            mod.meta.subarray.fastaxis = -2
-            mod.meta.subarray.slowaxis = -1
-            mod.meta.observation.date = self.obs_date
-            mod.meta.observation.time = self.obs_time
-            mod.meta.target.ra = self.ra
-            mod.meta.target.dec = self.dec
-            mod.meta.target.source_type = 'POINT'
-
-            # Save the file
-            mod.save(outfile, overwrite=True)
-
-            print('File saved as', outfile)
-
-        except IOError:
-            print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
 
     def _validate_star(self, star):
         """Make sure the input star has units
