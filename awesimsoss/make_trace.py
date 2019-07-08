@@ -383,7 +383,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     params = batman.TransitParams()
     params.t0 = 0.                                # time of inferior conjunction
     params.per = 5.7214742                        # orbital period (days)
-    params.a = 0.0558*q.AU.to(q.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+    params.a = 0.0558*q.AU.to(q.R_sun)*0.66       # semi-major axis (in units of stellar radii)
     params.inc = 89.8                             # orbital inclination (in degrees)
     params.ecc = 0.                               # eccentricity
     params.w = 90.                                # longitude of periastron (in degrees)
@@ -391,7 +391,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     params.logg = 5                               # log surface gravity of the host star
     params.feh = 0                                # metallicity of the host star
     params.limb_dark = 'quadratic'                # limb darkening profile to use
-    params.u = [1, 1]                              # limb darkening coefficients
+    params.u = [1, 1]                             # limb darkening coefficients
     tmodel = batman.TransitModel(params, time)
     lc = psf_lightcurve(0.97, psf, 1, [0.1, 0.1], 0.05, time, tmodel, plot=True)
     """
@@ -544,6 +544,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
                 raw_psfs = np.array(pool.map(func, wavelength))
                 pool.close()
                 pool.join()
+                del pool
                 print('Finished in {} seconds.'.format(time.time()-start))
 
                 # Get the PSF tilt at each column
@@ -557,6 +558,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
                 rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
                 pool.close()
                 pool.join()
+                del pool
                 print('Finished in {} seconds.'.format(time.time()-start))
 
                 # Scale psfs to 1
@@ -580,6 +582,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
                     subarray_psfs = pool.starmap(put_psf_on_subarray, data)
                     pool.close()
                     pool.join()
+                    del pool
                     print('Finished in {} seconds.'.format(time.time()-start))
 
                     # Get the filepath

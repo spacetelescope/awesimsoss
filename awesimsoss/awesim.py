@@ -1055,6 +1055,7 @@ class TSO(object):
             lightcurves = np.asarray(pool.starmap(func, data), dtype=np.float64)
             pool.close()
             pool.join()
+            del pool
 
             # Reshape to make frames
             lightcurves = lightcurves.swapaxes(0, 1)
@@ -1073,6 +1074,7 @@ class TSO(object):
             frames = np.asarray(pool.map(mt.make_frame, lightcurves))
             pool.close()
             pool.join()
+            del pool
 
             if verbose:
                 # print('Total flux after warp:', np.nansum(all_frames[0]))
