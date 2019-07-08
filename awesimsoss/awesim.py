@@ -135,8 +135,8 @@ class TSO(object):
         self.nints = nints
         self.nresets = nresets
         self.nframes = (self.nresets+self.ngrps)*self.nints
-        self.obs_date = str(datetime.datetime.now())
-        self.obs_time = str(datetime.datetime.now())
+        self.obs_date = datetime.datetime.now().strftime('%x')
+        self.obs_time = datetime.datetime.now().strftime('%X')
         self.orders = orders
         self.filter = filter
         self.header = ''
@@ -1175,13 +1175,14 @@ class TSO(object):
             mod.meta.observation.time = self.obs_time
             mod.meta.target.ra = self.ra
             mod.meta.target.dec = self.dec
+            mod.meta.target.source_type = 'POINT'
 
             # Save the file
             mod.save(outfile, overwrite=True)
 
             print('File saved as', outfile)
 
-        except:
+        except IOError:
             print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
 
     def _validate_star(self, star):
