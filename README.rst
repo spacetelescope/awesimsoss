@@ -79,15 +79,15 @@ The `SUBSTRIP256` subarray is the default but the `SUBSTRIP96` subarray and
 
 .. code-block:: python
 
-   tso96_clear = TSO(ngrps=3, nints=5, star=star1D, subarray='SUBSTRIP96')
-   tso2048_clear = TSO(ngrps=3, nints=5, star=star1D, subarray='FULL')
+   tso96_clear = TSO(ngrps=3, nints=5, star=STAR_DATA, subarray='SUBSTRIP96')
+   tso2048_clear = TSO(ngrps=3, nints=5, star=STAR_DATA, subarray='FULL')
 
 The default filter is `CLEAR` but you can also simulate observations with
 the `F277W` filter like so:
 
 .. code-block:: python
 
-   tso256_f277w = TSO(ngrps=3, nints=5, star=star1D, filter='F277W')
+   tso256_f277w = TSO(ngrps=3, nints=5, star=STAR_DATA, filter='F277W')
 
 Simulated Planetary Transits
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
