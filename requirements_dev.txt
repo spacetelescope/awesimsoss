@@ -16,7 +16,7 @@ svo_filters==0.2.16
 scipy==1.1.0
 astroquery==0.3.9
 # webbpsf==0.7.0
-# batman-package==2.1.0
+batman-package==2.4.6
 # exoctk
 
 pytest==4.0.0

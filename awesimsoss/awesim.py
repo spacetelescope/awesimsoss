@@ -4,25 +4,26 @@ A module to generate simulated 2D time-series SOSS data
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
-import time
-import warnings
 import datetime
 from functools import partial, wraps
-from pkg_resources import resource_filename
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
+from pkg_resources import resource_filename
+import os
+import time
+import warnings
 
-from astroquery.simbad import Simbad
-import numpy as np
-from bokeh.plotting import figure, show
-from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
-from bokeh.layouts import column
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
 from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
 from astropy.coordinates import SkyCoord
+from astroquery.simbad import Simbad
+from bokeh.plotting import figure, show
+from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
+from bokeh.layouts import column
+import numpy as np
 
 try:
     from jwst.datamodels import RampModel
@@ -40,6 +41,17 @@ from . import utils
 
 
 warnings.simplefilter('ignore')
+
+
+def check_psf_files():
+    """Function to run on import to verify that the PSF files have been precomputed"""
+    if not os.path.isfile(resource_filename('awesimsoss', 'files/SOSS_CLEAR_PSF_order1_1.npy')):
+        print("Looks like you haven't generated the SOSS PSFs yet, which are required to produce simulations.")
+        print("This takes about 10 minutes but you will only need to do it this one time.")
+        compute = input("Would you like to do it now? [y] ")
+
+        if compute is None or compute.lower() in ['y', 'yes']:
+            mt.nuke_psfs()
 
 
 def run_required(func):
@@ -108,6 +120,9 @@ class TSO(object):
         """
         self.verbose = verbose
 
+        # Check for PSFs
+        check_psf_files()
+
         # Check the star units
         self._validate_star(star)
 
@@ -120,8 +135,8 @@ class TSO(object):
         self.nints = nints
         self.nresets = nresets
         self.nframes = (self.nresets+self.ngrps)*self.nints
-        self.obs_date = str(datetime.datetime.now())
-        self.obs_time = str(datetime.datetime.now())
+        self.obs_date = datetime.datetime.now().strftime('%x')
+        self.obs_time = datetime.datetime.now().strftime('%X')
         self.orders = orders
         self.filter = filter
         self.header = ''
@@ -208,6 +223,9 @@ class TSO(object):
             # Update the TSO with one containing noise
             self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
 
+        # Memory cleanup
+        del RAMP, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
+
         print('Noise model finished:', round(time.time()-start, 3), 's')
 
     @run_required
@@ -230,6 +248,86 @@ class TSO(object):
         # Bottom (Only FULL frame)
         if self.subarray == 'FULL':
             self.tso[:, :, :4, :] = counts
+
+    @run_required
+    def export(self, outfile, all_data=False):
+        """
+        Export the simulated data to a JWST pipeline ingestible FITS file
+
+        Parameters
+        ----------
+        outfile: str
+            The path of the output file
+        """
+        try:
+
+            # Make a RampModel
+            data = self.tso
+            mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
+            pix = utils.subarray(self.subarray)
+
+            # Set meta data values for header keywords
+            mod.meta.telescope = 'JWST'
+            mod.meta.instrument.name = 'NIRISS'
+            mod.meta.instrument.detector = 'NIS'
+            mod.meta.instrument.filter = self.filter
+            mod.meta.instrument.pupil = 'GR700XD'
+            mod.meta.exposure.type = 'NIS_SOSS'
+            mod.meta.exposure.nints = self.nints
+            mod.meta.exposure.ngroups = self.ngrps
+            mod.meta.exposure.nframes = self.nframes
+            mod.meta.exposure.readpatt = 'NISRAPID'
+            mod.meta.exposure.groupgap = 0
+            mod.meta.exposure.frame_time = self.frame_time
+            mod.meta.exposure.group_time = self.group_time
+            mod.meta.exposure.duration = self.time[-1]-self.time[0]
+            mod.meta.subarray.name = self.subarray
+            mod.meta.subarray.xsize = data.shape[3]
+            mod.meta.subarray.ysize = data.shape[2]
+            mod.meta.subarray.xstart = pix.get('xloc', 1)
+            mod.meta.subarray.ystart = pix.get('yloc', 1)
+            mod.meta.subarray.fastaxis = -2
+            mod.meta.subarray.slowaxis = -1
+            mod.meta.observation.date = self.obs_date
+            mod.meta.observation.time = self.obs_time
+            mod.meta.target.ra = self.ra
+            mod.meta.target.dec = self.dec
+            mod.meta.target.source_type = 'POINT'
+
+            # Save the file
+            mod.save(outfile, overwrite=True)
+
+            # Save input data
+            with fits.open(outfile) as hdul:
+
+                # Save input star data
+                hdul.append(fits.ImageHDU(data=np.array([i.value for i in self.star], dtype=np.float64), name='STAR'))
+                hdul['STAR'].header.set('FUNITS', str(self.star[1].unit))
+                hdul['STAR'].header.set('WUNITS', str(self.star[0].unit))
+
+                # Save input planet data
+                if self.planet is not None:
+                    hdul.append(fits.ImageHDU(data=np.asarray(self.planet, dtype=np.float64), name='PLANET'))
+                    for param, val in self.tmodel.__dict__.items():
+                        if isinstance(val, (float, int, str)):
+                            hdul['PLANET'].header.set(param.upper()[:8], val)
+                        elif isinstance(val, np.ndarray) and len(val) == 1:
+                            hdul['PLANET'].header.set(param.upper(), val[0])
+                        elif isinstance(val, type(None)):
+                            hdul['PLANET'].header.set(param.upper(), '')
+                        elif param == 'u':
+                            for n, v in enumerate(val):
+                                hdul['PLANET'].header.set('U{}'.format(n+1), v)
+                        else:
+                            print(param, val, type(val))
+
+                # Write to file
+                hdul.writeto(outfile, overwrite=True)
+
+            print('File saved as', outfile)
+
+        except IOError:
+            print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
 
     @property
     def filter(self):
@@ -775,6 +873,7 @@ class TSO(object):
                 time_axis.append(times[self.nresets:])
 
             self.time = np.concatenate(time_axis)
+            self.inttime = np.tile(self.time[:self.ngrps], self.nints)
 
     def _reset_response(self):
         """Generate the relative response function for each order"""
@@ -956,13 +1055,13 @@ class TSO(object):
             lightcurves = np.asarray(pool.starmap(func, data), dtype=np.float64)
             pool.close()
             pool.join()
+            del pool
 
             # Reshape to make frames
             lightcurves = lightcurves.swapaxes(0, 1)
 
-            # Multiply by the frame time to convert to [ADU]
-            ft = np.tile(self.time[:self.ngrps], self.nints)
-            lightcurves *= ft[:, None, None, None]
+            # Multiply by the integration time to convert to [ADU]
+            lightcurves *= self.inttime[:, None, None, None]
 
             # Generate TSO frames
             if verbose:
@@ -975,13 +1074,17 @@ class TSO(object):
             frames = np.asarray(pool.map(mt.make_frame, lightcurves))
             pool.close()
             pool.join()
+            del pool
 
             if verbose:
                 # print('Total flux after warp:', np.nansum(all_frames[0]))
                 print('Order {} traces finished:'.format(order), round(time.time()-start, 3), 's')
 
             # Add it to the individual order
-            setattr(self, 'tso_order{}_ideal'.format(order), np.array(frames))
+            setattr(self, 'tso_order{}_ideal'.format(order), frames)
+
+            # Clear memory
+            del frames, lightcurves, psfs, response, wave
 
         # Add to the master TSO
         self.tso_ideal = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
@@ -998,6 +1101,7 @@ class TSO(object):
                 full = np.zeros(self.dims3)
                 full[:, -256:, :] = getattr(self, arr)
                 setattr(self, arr, full)
+                del full
 
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
@@ -1007,6 +1111,7 @@ class TSO(object):
         for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
             data = getattr(self, arr).reshape(self.dims)
             setattr(self, arr, data)
+            del data
 
         # Simulate reference pixels
         self.add_refpix()
@@ -1117,58 +1222,6 @@ class TSO(object):
                     print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
                     print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
 
-    @run_required
-    def to_fits(self, outfile, all_data=False):
-        """
-        Save the data to a JWST pipeline ingestible FITS file
-
-        Parameters
-        ----------
-        outfile: str
-            The path of the output file
-        """
-        try:
-
-            # Make a RampModel
-            data = self.tso
-            mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
-            pix = utils.subarray(self.subarray)
-
-            # Set meta data values for header keywords
-            mod.meta.telescope = 'JWST'
-            mod.meta.instrument.name = 'NIRISS'
-            mod.meta.instrument.detector = 'NIS'
-            mod.meta.instrument.filter = self.filter
-            mod.meta.instrument.pupil = 'GR700XD'
-            mod.meta.exposure.type = 'NIS_SOSS'
-            mod.meta.exposure.nints = self.nints
-            mod.meta.exposure.ngroups = self.ngrps
-            mod.meta.exposure.nframes = self.nframes
-            mod.meta.exposure.readpatt = 'NISRAPID'
-            mod.meta.exposure.groupgap = 0
-            mod.meta.exposure.frame_time = self.frame_time
-            mod.meta.exposure.group_time = self.group_time
-            mod.meta.exposure.duration = self.time[-1]-self.time[0]
-            mod.meta.subarray.name = self.subarray
-            mod.meta.subarray.xsize = data.shape[3]
-            mod.meta.subarray.ysize = data.shape[2]
-            mod.meta.subarray.xstart = pix.get('xloc', 1)
-            mod.meta.subarray.ystart = pix.get('yloc', 1)
-            mod.meta.subarray.fastaxis = -2
-            mod.meta.subarray.slowaxis = -1
-            mod.meta.observation.date = self.obs_date
-            mod.meta.observation.time = self.obs_time
-            mod.meta.target.ra = self.ra
-            mod.meta.target.dec = self.dec
-
-            # Save the file
-            mod.save(outfile, overwrite=True)
-
-            print('File saved as', outfile)
-
-        except:
-            print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
-
     def _validate_star(self, star):
         """Make sure the input star has units
 
@@ -1237,7 +1290,8 @@ class TestTSO(TSO):
                 params.ecc = 0.                               # eccentricity
                 params.w = 90.                                # longitude of periastron (in degrees)
                 params.limb_dark = 'quadratic'                # limb darkening profile to use
-                params.u = [0.1, 0.1]                          # limb darkening coefficients
+                params.u = [0.1, 0.1]                         # limb darkening coefficients
+                params.rp = 0.                                # planet radius (placeholder)
                 tmodel = batman.TransitModel(params, self.time)
                 tmodel.teff = 3500                            # effective temperature of the host star
                 tmodel.logg = 5                               # log surface gravity of the host star
@@ -1291,6 +1345,7 @@ class BlackbodyTSO(TSO):
                 params.w = 90.                                # longitude of periastron (in degrees)
                 params.limb_dark = 'quadratic'                # limb darkening profile to use
                 params.u = [0.1, 0.1]                          # limb darkening coefficients
+                params.rp = 0.                                # planet radius (placeholder)
                 tmodel = batman.TransitModel(params, self.time)
                 tmodel.teff = 3500                            # effective temperature of the host star
                 tmodel.logg = 5                               # log surface gravity of the host star
