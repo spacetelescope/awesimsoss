@@ -105,7 +105,7 @@ Here is a sample transmission spectrum generated with `PandExo <https://github.c
 .. figure:: awesimsoss/img/1D_planet.png
    :alt: The input transmission spectrum
 
-And here are some parameters for our planetary system:
+And here are some orbital parameters for our planetary system using `batman <https://www.cfa.harvard.edu/~lkreidberg/batman/>`_:
 
 .. code-block:: python
 
@@ -115,7 +115,7 @@ And here are some parameters for our planetary system:
    params = batman.TransitParams()
    params.t0 = 0. # time of inferior conjunction
    params.per = 5.7214742 # orbital period (days)
-   params.a = 0.0558*q.AU.to(q.R_sun)*0.66 # semi-major axis (in units of stellar radii)
+   params.a = 7.92 # semi-major axis (in units of stellar radii)
    params.rp = 0.1 # radius ratio for Jupiter orbiting the Sun
    params.inc = 89.8 # orbital inclination (in degrees)
    params.ecc = 0. # eccentricity
@@ -139,4 +139,4 @@ We can write this to a FITS file directly ingestible by the JWST pipeline with:
 
 .. code-block:: python
 
-   tso_transit.to_fits('my_SOSS_simulation.fits')
+   tso_transit.export('my_SOSS_simulation.fits')
