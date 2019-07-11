@@ -9,15 +9,40 @@ from pkg_resources import resource_filename
 import numpy as np
 import astropy.units as q
 import astropy.constants as ac
-try:
-    import batman
-except ImportError:
-    print("Could not import `batman` package. Functionality limited.")
+import batman
 
 from awesimsoss import TSO, BlackbodyTSO, TestTSO, STAR_DATA, PLANET_DATA
 
 
-class TestTSO(unittest.TestCase):
+class test_BlackbodyTSO(unittest.TestCase):
+    """A test of the BlackbodyTSO class"""
+    def setUp(self):
+        pass
+
+    def test_run_no_planet(self):
+        """A test of the BlackbodyTSO class with no planet"""
+        tso = BlackbodyTSO()
+
+    def test_run_with_planet(self):
+        """A test of the BlackbodyTSO class with a planet"""
+        tso = BlackbodyTSO(add_planet=True)
+
+
+class test_TestTSO(unittest.TestCase):
+    """A test of the TestTSO class"""
+    def setUp(self):
+        pass
+
+    def test_run_no_planet(self):
+        """A test of the TestTSO class with no planet"""
+        tso = TestTSO()
+
+    def test_run_with_planet(self):
+        """A test of the TestTSO class with a planet"""
+        tso = TestTSO(add_planet=True)
+
+
+class test_TSO(unittest.TestCase):
     """Tests for the TSO class"""
     def setUp(self):
         """Setup for the tests"""
@@ -29,6 +54,7 @@ class TestTSO(unittest.TestCase):
         """Test the export method"""
         # Make the TSO object and save
         test_tso = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP256')
+        test_tso.simulate()
         test_tso.export('outfile.fits')
 
     def test_init(self):
@@ -114,31 +140,28 @@ class TestTSO(unittest.TestCase):
         # Make the TSO object
         tso = TSO(ngrps=2, nints=2, star=self.star)
 
-        # Make the parameters
-        try:
-            params = batman.TransitParams()
-            params.t0 = 0.
-            params.per = 5.7214742
-            params.a = 0.0558*q.AU.to(ac.R_sun)*0.66
-            params.inc = 89.8
-            params.ecc = 0.
-            params.w = 90.
-            params.limb_dark = 'quadratic'
-            params.u = [0.1, 0.1]
-            tmodel = batman.TransitModel(params, tso.time)
-            tmodel.teff = 3500
-            tmodel.logg = 5
-            tmodel.feh = 0
+        # Make orbital params
+        params = batman.TransitParams()
+        params.t0 = 0.
+        params.per = 5.7214742
+        params.a = 0.0558*q.AU.to(ac.R_sun)*0.66
+        params.inc = 89.8
+        params.ecc = 0.
+        params.w = 90.
+        params.limb_dark = 'quadratic'
+        params.u = [0.1, 0.1]
+        params.rp = 0.
+        tmodel = batman.TransitModel(params, tso.time)
+        tmodel.teff = 3500
+        tmodel.logg = 5
+        tmodel.feh = 0
 
-            # Run the simulation
-            tso.simulate(planet=self.planet, tmodel=tmodel)
-            tso.subarray = 'SUBSTRIP96'
-            tso.simulate(planet=self.planet, tmodel=tmodel)
-            tso.subarray = 'FULL'
-            tso.simulate(planet=self.planet, tmodel=tmodel)
-
-        except:
-            pass
+        # Run the simulation
+        tso.simulate(planet=self.planet, tmodel=tmodel)
+        tso.subarray = 'SUBSTRIP96'
+        tso.simulate(planet=self.planet, tmodel=tmodel)
+        tso.subarray = 'FULL'
+        tso.simulate(planet=self.planet, tmodel=tmodel)
 
     def test_lookup(self):
         """Test that coordinates are looked up if given a name"""
@@ -163,7 +186,7 @@ class TestTSO(unittest.TestCase):
 
         # Test that non flux density units fail
         bad_flux_star = copy(self.star)
-        bad_flux_star[1] *= q.um
+        bad_flux_star[1] *= q.K
         kwargs = {'nints':2, 'ngrps':2, 'star':bad_flux_star}
         self.assertRaises(ValueError, TSO, **kwargs)
 
@@ -214,6 +237,18 @@ class TestTSO(unittest.TestCase):
         # Bad target
         self.assertRaises(TypeError, setattr, tso, 'target', 3)
 
+    def test_ldcs(self):
+        """Test the limb darkening coefficients"""
+        # Create instance
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+
+        # Set manually
+        ldcs = tso.ld_coeffs
+        tso.ld_coeffs = np.ones((3, 2048, 2))
+
+        # Bad LDCs
+        self.assertRaises(TypeError, setattr, tso, 'ld_coeffs', 'foo')
+
     def test_plot(self):
         """Test plot method"""
         # Make the TSO object
@@ -253,8 +288,8 @@ class TestTSO(unittest.TestCase):
         # Standard plot with one order
         plt = tso.plot_slice(500, order=1, draw=False)
 
-        # No noise plot
-        plt = tso.plot_slice(500, noise=False, draw=False)
+        # Plot with noise
+        plt = tso.plot_slice(500, noise=True, draw=False)
 
         # Log plot
         plt = tso.plot_slice(500, scale='log', draw=False)
@@ -314,13 +349,3 @@ class TestTSO(unittest.TestCase):
 
         # Specific order
         plt = tso.plot_spectrum(order=1, draw=False)
-
-
-def test_TestTSO():
-    """A test of the TestTSO class"""
-    tso = TestTSO()
-
-
-def test_BlackbodyTSO():
-    """A test of the BlackbodyTSO class"""
-    tso = BlackbodyTSO(teff=2000)

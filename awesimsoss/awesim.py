@@ -8,8 +8,8 @@ import datetime
 from functools import partial, wraps
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
-from pkg_resources import resource_filename
 import os
+from pkg_resources import resource_filename
 import time
 import warnings
 
@@ -20,20 +20,12 @@ from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
+import batman
 from bokeh.plotting import figure, show
 from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
+from jwst.datamodels import RampModel
 import numpy as np
-
-try:
-    from jwst.datamodels import RampModel
-except ImportError:
-    print("Could not import `jwst` package. Functionality limited.")
-
-try:
-    import batman
-except ImportError:
-    print("Could not import `batman` package. Functionality limited.")
 
 from . import generate_darks as gd
 from . import make_trace as mt
@@ -259,75 +251,70 @@ class TSO(object):
         outfile: str
             The path of the output file
         """
-        try:
+        # Make a RampModel
+        data = self.tso
+        mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
+        pix = utils.subarray(self.subarray)
 
-            # Make a RampModel
-            data = self.tso
-            mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
-            pix = utils.subarray(self.subarray)
+        # Set meta data values for header keywords
+        mod.meta.telescope = 'JWST'
+        mod.meta.instrument.name = 'NIRISS'
+        mod.meta.instrument.detector = 'NIS'
+        mod.meta.instrument.filter = self.filter
+        mod.meta.instrument.pupil = 'GR700XD'
+        mod.meta.exposure.type = 'NIS_SOSS'
+        mod.meta.exposure.nints = self.nints
+        mod.meta.exposure.ngroups = self.ngrps
+        mod.meta.exposure.nframes = self.nframes
+        mod.meta.exposure.readpatt = 'NISRAPID'
+        mod.meta.exposure.groupgap = 0
+        mod.meta.exposure.frame_time = self.frame_time
+        mod.meta.exposure.group_time = self.group_time
+        mod.meta.exposure.duration = self.time[-1]-self.time[0]
+        mod.meta.subarray.name = self.subarray
+        mod.meta.subarray.xsize = data.shape[3]
+        mod.meta.subarray.ysize = data.shape[2]
+        mod.meta.subarray.xstart = pix.get('xloc', 1)
+        mod.meta.subarray.ystart = pix.get('yloc', 1)
+        mod.meta.subarray.fastaxis = -2
+        mod.meta.subarray.slowaxis = -1
+        mod.meta.observation.date = self.obs_date
+        mod.meta.observation.time = self.obs_time
+        mod.meta.target.ra = self.ra
+        mod.meta.target.dec = self.dec
+        mod.meta.target.source_type = 'POINT'
 
-            # Set meta data values for header keywords
-            mod.meta.telescope = 'JWST'
-            mod.meta.instrument.name = 'NIRISS'
-            mod.meta.instrument.detector = 'NIS'
-            mod.meta.instrument.filter = self.filter
-            mod.meta.instrument.pupil = 'GR700XD'
-            mod.meta.exposure.type = 'NIS_SOSS'
-            mod.meta.exposure.nints = self.nints
-            mod.meta.exposure.ngroups = self.ngrps
-            mod.meta.exposure.nframes = self.nframes
-            mod.meta.exposure.readpatt = 'NISRAPID'
-            mod.meta.exposure.groupgap = 0
-            mod.meta.exposure.frame_time = self.frame_time
-            mod.meta.exposure.group_time = self.group_time
-            mod.meta.exposure.duration = self.time[-1]-self.time[0]
-            mod.meta.subarray.name = self.subarray
-            mod.meta.subarray.xsize = data.shape[3]
-            mod.meta.subarray.ysize = data.shape[2]
-            mod.meta.subarray.xstart = pix.get('xloc', 1)
-            mod.meta.subarray.ystart = pix.get('yloc', 1)
-            mod.meta.subarray.fastaxis = -2
-            mod.meta.subarray.slowaxis = -1
-            mod.meta.observation.date = self.obs_date
-            mod.meta.observation.time = self.obs_time
-            mod.meta.target.ra = self.ra
-            mod.meta.target.dec = self.dec
-            mod.meta.target.source_type = 'POINT'
+        # Save the file
+        mod.save(outfile, overwrite=True)
 
-            # Save the file
-            mod.save(outfile, overwrite=True)
+        # Save input data
+        with fits.open(outfile) as hdul:
 
-            # Save input data
-            with fits.open(outfile) as hdul:
+            # Save input star data
+            hdul.append(fits.ImageHDU(data=np.array([i.value for i in self.star], dtype=np.float64), name='STAR'))
+            hdul['STAR'].header.set('FUNITS', str(self.star[1].unit))
+            hdul['STAR'].header.set('WUNITS', str(self.star[0].unit))
 
-                # Save input star data
-                hdul.append(fits.ImageHDU(data=np.array([i.value for i in self.star], dtype=np.float64), name='STAR'))
-                hdul['STAR'].header.set('FUNITS', str(self.star[1].unit))
-                hdul['STAR'].header.set('WUNITS', str(self.star[0].unit))
+            # Save input planet data
+            if self.planet is not None:
+                hdul.append(fits.ImageHDU(data=np.asarray(self.planet, dtype=np.float64), name='PLANET'))
+                for param, val in self.tmodel.__dict__.items():
+                    if isinstance(val, (float, int, str)):
+                        hdul['PLANET'].header.set(param.upper()[:8], val)
+                    elif isinstance(val, np.ndarray) and len(val) == 1:
+                        hdul['PLANET'].header.set(param.upper(), val[0])
+                    elif isinstance(val, type(None)):
+                        hdul['PLANET'].header.set(param.upper(), '')
+                    elif param == 'u':
+                        for n, v in enumerate(val):
+                            hdul['PLANET'].header.set('U{}'.format(n+1), v)
+                    else:
+                        print(param, val, type(val))
 
-                # Save input planet data
-                if self.planet is not None:
-                    hdul.append(fits.ImageHDU(data=np.asarray(self.planet, dtype=np.float64), name='PLANET'))
-                    for param, val in self.tmodel.__dict__.items():
-                        if isinstance(val, (float, int, str)):
-                            hdul['PLANET'].header.set(param.upper()[:8], val)
-                        elif isinstance(val, np.ndarray) and len(val) == 1:
-                            hdul['PLANET'].header.set(param.upper(), val[0])
-                        elif isinstance(val, type(None)):
-                            hdul['PLANET'].header.set(param.upper(), '')
-                        elif param == 'u':
-                            for n, v in enumerate(val):
-                                hdul['PLANET'].header.set('U{}'.format(n+1), v)
-                        else:
-                            print(param, val, type(val))
+            # Write to file
+            hdul.writeto(outfile, overwrite=True)
 
-                # Write to file
-                hdul.writeto(outfile, overwrite=True)
-
-            print('File saved as', outfile)
-
-        except IOError:
-            print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
+        print('File saved as', outfile)
 
     @property
     def filter(self):
@@ -403,7 +390,7 @@ class TSO(object):
             self._ld_coeffs = coeffs
 
         # Or generate them if the stellar parameters have changed
-        elif str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>" and str(type(self.model_grid)) == "<class 'exoctk.modelgrid.ModelGrid'>":
+        elif str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>" and str(type(self.model_grid)) == "<class 'exoctk.modelgrid.ModelGrid'>":
             self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
 
         else:
