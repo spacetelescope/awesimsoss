@@ -24,8 +24,11 @@ import batman
 from bokeh.plotting import figure, show
 from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
-from jwst.datamodels import RampModel
 import numpy as np
+try:
+     from jwst.datamodels import RampModel
+ except ImportError:
+     print("Could not import `jwst` package. Functionality limited.")
 
 from . import generate_darks as gd
 from . import make_trace as mt
