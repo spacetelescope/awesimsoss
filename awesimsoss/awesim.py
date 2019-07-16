@@ -26,9 +26,9 @@ from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper
 from bokeh.layouts import column
 import numpy as np
 try:
-     from jwst.datamodels import RampModel
- except ImportError:
-     print("Could not import `jwst` package. Functionality limited.")
+    from jwst.datamodels import RampModel
+except ImportError:
+    print("Could not import `jwst` package. Functionality limited.")
 
 from . import generate_darks as gd
 from . import make_trace as mt
