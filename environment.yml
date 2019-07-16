@@ -208,6 +208,7 @@ dependencies:
   - pip:
     - asteval==0.9.14
     - bibtexparser==1.1.0
+    - batman-package==2.4.6
     - et-xmlfile==1.0.1
     - exoctk==0.2.3
     - flask==1.0.3

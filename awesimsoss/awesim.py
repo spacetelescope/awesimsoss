@@ -8,8 +8,8 @@ import datetime
 from functools import partial, wraps
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
-from pkg_resources import resource_filename
 import os
+from pkg_resources import resource_filename
 import time
 import warnings
 
@@ -20,20 +20,15 @@ from astropy.modeling.models import BlackBody1D
 from astropy.modeling.blackbody import FLAM
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
+import batman
 from bokeh.plotting import figure, show
 from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
 import numpy as np
-
 try:
     from jwst.datamodels import RampModel
 except ImportError:
     print("Could not import `jwst` package. Functionality limited.")
-
-try:
-    import batman
-except ImportError:
-    print("Could not import `batman` package. Functionality limited.")
 
 from . import generate_darks as gd
 from . import make_trace as mt
@@ -72,7 +67,7 @@ class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
-    def __init__(self, ngrps, nints, star, snr=700, filter='CLEAR',
+    def __init__(self, ngrps, nints, star=None, snr=700, filter='CLEAR',
                  subarray='SUBSTRIP256', orders=[1, 2], t0=0, nresets=0,
                  target='New Target', title=None, verbose=True):
         """
@@ -123,11 +118,9 @@ class TSO(object):
         # Check for PSFs
         check_psf_files()
 
-        # Check the star units
-        self._validate_star(star)
-
         # Set static values
         self.gain = 1.61
+        self._star = None
 
         # Set instance attributes for the exposure
         self.t0 = t0
@@ -143,6 +136,7 @@ class TSO(object):
         self.snr = snr
         self.model_grid = None
         self.subarray = subarray
+        self.star = star
 
         # Reset data based on subarray and observation settings
         self._reset_data()
@@ -156,12 +150,6 @@ class TSO(object):
         self._ld_coeffs = np.zeros((3, 2048, 2))
         self.planet = None
         self.tmodel = None
-
-        # Generate the psfs
-        self._reset_psfs()
-
-        # Generate the response function
-        self._reset_response()
 
     @run_required
     def add_noise(self, zodi_scale=1., offset=500):
@@ -259,75 +247,70 @@ class TSO(object):
         outfile: str
             The path of the output file
         """
-        try:
+        # Make a RampModel
+        data = self.tso
+        mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
+        pix = utils.subarray(self.subarray)
 
-            # Make a RampModel
-            data = self.tso
-            mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
-            pix = utils.subarray(self.subarray)
+        # Set meta data values for header keywords
+        mod.meta.telescope = 'JWST'
+        mod.meta.instrument.name = 'NIRISS'
+        mod.meta.instrument.detector = 'NIS'
+        mod.meta.instrument.filter = self.filter
+        mod.meta.instrument.pupil = 'GR700XD'
+        mod.meta.exposure.type = 'NIS_SOSS'
+        mod.meta.exposure.nints = self.nints
+        mod.meta.exposure.ngroups = self.ngrps
+        mod.meta.exposure.nframes = self.nframes
+        mod.meta.exposure.readpatt = 'NISRAPID'
+        mod.meta.exposure.groupgap = 0
+        mod.meta.exposure.frame_time = self.frame_time
+        mod.meta.exposure.group_time = self.group_time
+        mod.meta.exposure.duration = self.time[-1]-self.time[0]
+        mod.meta.subarray.name = self.subarray
+        mod.meta.subarray.xsize = data.shape[3]
+        mod.meta.subarray.ysize = data.shape[2]
+        mod.meta.subarray.xstart = pix.get('xloc', 1)
+        mod.meta.subarray.ystart = pix.get('yloc', 1)
+        mod.meta.subarray.fastaxis = -2
+        mod.meta.subarray.slowaxis = -1
+        mod.meta.observation.date = self.obs_date
+        mod.meta.observation.time = self.obs_time
+        mod.meta.target.ra = self.ra
+        mod.meta.target.dec = self.dec
+        mod.meta.target.source_type = 'POINT'
 
-            # Set meta data values for header keywords
-            mod.meta.telescope = 'JWST'
-            mod.meta.instrument.name = 'NIRISS'
-            mod.meta.instrument.detector = 'NIS'
-            mod.meta.instrument.filter = self.filter
-            mod.meta.instrument.pupil = 'GR700XD'
-            mod.meta.exposure.type = 'NIS_SOSS'
-            mod.meta.exposure.nints = self.nints
-            mod.meta.exposure.ngroups = self.ngrps
-            mod.meta.exposure.nframes = self.nframes
-            mod.meta.exposure.readpatt = 'NISRAPID'
-            mod.meta.exposure.groupgap = 0
-            mod.meta.exposure.frame_time = self.frame_time
-            mod.meta.exposure.group_time = self.group_time
-            mod.meta.exposure.duration = self.time[-1]-self.time[0]
-            mod.meta.subarray.name = self.subarray
-            mod.meta.subarray.xsize = data.shape[3]
-            mod.meta.subarray.ysize = data.shape[2]
-            mod.meta.subarray.xstart = pix.get('xloc', 1)
-            mod.meta.subarray.ystart = pix.get('yloc', 1)
-            mod.meta.subarray.fastaxis = -2
-            mod.meta.subarray.slowaxis = -1
-            mod.meta.observation.date = self.obs_date
-            mod.meta.observation.time = self.obs_time
-            mod.meta.target.ra = self.ra
-            mod.meta.target.dec = self.dec
-            mod.meta.target.source_type = 'POINT'
+        # Save the file
+        mod.save(outfile, overwrite=True)
 
-            # Save the file
-            mod.save(outfile, overwrite=True)
+        # Save input data
+        with fits.open(outfile) as hdul:
 
-            # Save input data
-            with fits.open(outfile) as hdul:
+            # Save input star data
+            hdul.append(fits.ImageHDU(data=np.array([i.value for i in self.star], dtype=np.float64), name='STAR'))
+            hdul['STAR'].header.set('FUNITS', str(self.star[1].unit))
+            hdul['STAR'].header.set('WUNITS', str(self.star[0].unit))
 
-                # Save input star data
-                hdul.append(fits.ImageHDU(data=np.array([i.value for i in self.star], dtype=np.float64), name='STAR'))
-                hdul['STAR'].header.set('FUNITS', str(self.star[1].unit))
-                hdul['STAR'].header.set('WUNITS', str(self.star[0].unit))
+            # Save input planet data
+            if self.planet is not None:
+                hdul.append(fits.ImageHDU(data=np.asarray(self.planet, dtype=np.float64), name='PLANET'))
+                for param, val in self.tmodel.__dict__.items():
+                    if isinstance(val, (float, int, str)):
+                        hdul['PLANET'].header.set(param.upper()[:8], val)
+                    elif isinstance(val, np.ndarray) and len(val) == 1:
+                        hdul['PLANET'].header.set(param.upper(), val[0])
+                    elif isinstance(val, type(None)):
+                        hdul['PLANET'].header.set(param.upper(), '')
+                    elif param == 'u':
+                        for n, v in enumerate(val):
+                            hdul['PLANET'].header.set('U{}'.format(n+1), v)
+                    else:
+                        print(param, val, type(val))
 
-                # Save input planet data
-                if self.planet is not None:
-                    hdul.append(fits.ImageHDU(data=np.asarray(self.planet, dtype=np.float64), name='PLANET'))
-                    for param, val in self.tmodel.__dict__.items():
-                        if isinstance(val, (float, int, str)):
-                            hdul['PLANET'].header.set(param.upper()[:8], val)
-                        elif isinstance(val, np.ndarray) and len(val) == 1:
-                            hdul['PLANET'].header.set(param.upper(), val[0])
-                        elif isinstance(val, type(None)):
-                            hdul['PLANET'].header.set(param.upper(), '')
-                        elif param == 'u':
-                            for n, v in enumerate(val):
-                                hdul['PLANET'].header.set('U{}'.format(n+1), v)
-                        else:
-                            print(param, val, type(val))
+            # Write to file
+            hdul.writeto(outfile, overwrite=True)
 
-                # Write to file
-                hdul.writeto(outfile, overwrite=True)
-
-            print('File saved as', outfile)
-
-        except IOError:
-            print("Sorry, I could not save this simulation to file. Check that you have the `jwst` pipeline installed.")
+        print('File saved as', outfile)
 
     @property
     def filter(self):
@@ -403,7 +386,7 @@ class TSO(object):
             self._ld_coeffs = coeffs
 
         # Or generate them if the stellar parameters have changed
-        elif str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>" and str(type(self.model_grid)) == "<class 'exoctk.modelgrid.ModelGrid'>":
+        elif str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>" and str(type(self.model_grid)) == "<class 'exoctk.modelgrid.ModelGrid'>":
             self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], coeffs.limb_dark, [getattr(coeffs, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
 
         else:
@@ -878,7 +861,7 @@ class TSO(object):
     def _reset_response(self):
         """Generate the relative response function for each order"""
         # Check that all the appropriate values have been initialized
-        if all([i in self.info for i in ['filter', 'subarray']]):
+        if all([i in self.info for i in ['filter', 'subarray']]) and self.star is not None:
 
             for order in self.orders:
 
@@ -900,7 +883,7 @@ class TSO(object):
     def _reset_psfs(self):
         """Scale the psf for each detector column to the flux from the 1D spectrum"""
         # Check that all the appropriate values have been initialized
-        if all([i in self.info for i in ['filter', 'subarray']]):
+        if all([i in self.info for i in ['filter', 'subarray']]) and self.star is not None:
 
             for order in self.orders:
 
@@ -909,7 +892,7 @@ class TSO(object):
                 setattr(self, 'order{}_flux'.format(order), flux)
                 setattr(self, 'order{}_psfs'.format(order), cube)
 
-    def simulate(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days',
+    def simulate(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', noise=True,
                  ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
         """
         Generate the simulated 4D ramp data given the initialized TSO object
@@ -929,6 +912,8 @@ class TSO(object):
         time_unit: string
             The string indicator for the units that the tmodel.t array is in
             options: 'seconds', 'minutes', 'hours', 'days' (default)
+        noise: bool
+            Add noise model
         orders: sequence
             The list of orders to imulate
         model_grid: ExoCTK.modelgrid.ModelGrid (optional)
@@ -955,13 +940,18 @@ class TSO(object):
         params.ecc = 0.                               # eccentricity
         params.w = 90.                                # longitude of periastron (in degrees)
         params.limb_dark = 'quadratic'                # limb darkening profile to use
-        params.u = [0.1, 0.1]                          # limb darkening coefficients
+        params.u = [0.1, 0.1]                         # limb darkening coefficients
         tmodel = batman.TransitModel(params, tso.time)
         tmodel.teff = 3500                            # effective temperature of the host star
         tmodel.logg = 5                               # log surface gravity of the host star
         tmodel.feh = 0                                # metallicity of the host star
         tso.simulate(planet=planet1D, tmodel=tmodel)
         """
+        # Check that there is star data
+        if self.star is None:
+            print("No star to simulate! Please set the self.star attribute!")
+            return
+
         if verbose:
             begin = time.time()
 
@@ -1105,7 +1095,8 @@ class TSO(object):
 
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
-        self.add_noise()
+        if noise:
+            self.add_noise()
 
         # Reshape into (nints, ngrps, y, x)
         for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
@@ -1118,6 +1109,59 @@ class TSO(object):
 
         if verbose:
             print('\nTotal time:', round(time.time()-begin, 3), 's')
+
+    @property
+    def star(self):
+        """Getter for the stellar data"""
+        return self._star
+
+    @star.setter
+    def star(self, spectrum):
+        """Setter for the stellar data
+
+        Parameters
+        ----------
+        spectrum: sequence
+            The [W, F] or [W, F, E] of the star to simulate
+        """
+        # Check if the star has been set
+        if spectrum is None:
+            if self.verbose:
+                print("No star to simulate! Please set the self.star attribute!")
+            self._star = None
+
+        else:
+
+            # Check star is a sequence of length 2 or 3
+            if not isinstance(spectrum, (list, tuple)) or not len(spectrum) in [2, 3]:
+                raise ValueError(type(spectrum), ': Star input must be a sequence of [W, F] or [W, F, E]')
+
+            # Check star has units
+            if not all([isinstance(i, q.quantity.Quantity) for i in spectrum]):
+                types = ', '.join([str(type(i)) for i in spectrum])
+                raise ValueError('[{}]: Spectrum must be in astropy units'.format(types))
+
+            # Check the units
+            if not spectrum[0].unit.is_equivalent(q.um):
+                raise ValueError(spectrum[0].unit, ': Wavelength must be in units of distance')
+
+            if not all([i.unit.is_equivalent(q.erg/q.s/q.cm**2/q.AA) for i in spectrum[1:]]):
+                raise ValueError(spectrum[1].unit, ': Flux density must be in units of F_lambda')
+
+            # Check the wavelength range
+            spec_min = np.nanmin(spectrum[0][spectrum[0] > 0.])
+            spec_max = np.nanmax(spectrum[0][spectrum[0] > 0.])
+            sim_min = np.nanmin(self.wave[self.wave > 0.])*q.um
+            sim_max = np.nanmax(self.wave[self.wave > 0.])*q.um
+            if spec_min > sim_min or spec_max < sim_max:
+                print("Wavelength range of input spectrum ({} - {} um) does not cover the {} - {} um range needed for a complete simulation. Interpolation will be used at the edges.".format(spec_min, spec_max, sim_min, sim_max))
+
+            # Good to go
+            self._star = spectrum
+
+            # Reset the relative response function and the psfs
+            self._reset_response()
+            self._reset_psfs()
 
     @property
     def subarray(self):
@@ -1221,38 +1265,6 @@ class TSO(object):
                 if self.verbose:
                     print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
                     print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
-
-    def _validate_star(self, star):
-        """Make sure the input star has units
-
-        Parameters
-        ----------
-        star: sequence
-            The [W, F] or [W, F, E] of the star to simulate
-
-        Returns
-        -------
-        bool
-            True or False
-        """
-        # Check star is a sequence of length 2 or 3
-        if not isinstance(star, (list, tuple)) or not len(star) in [2, 3]:
-            raise ValueError(type(star), ': Star input must be a sequence of [W, F] or [W, F, E]')
-
-        # Check star has units
-        if not all([isinstance(i, q.quantity.Quantity) for i in star]):
-            types = ', '.join([str(type(i)) for i in star])
-            raise ValueError('[{}]: Spectrum must be in astropy units'.format(types))
-
-        # Check the units
-        if not star[0].unit.is_equivalent(q.um):
-            raise ValueError(star[0].unit, ': Wavelength must be in units of distance')
-
-        if not all([i.unit.is_equivalent(q.erg/q.s/q.cm**2/q.AA) for i in star[1:]]):
-            raise ValueError(star[1].unit, ': Flux density must be in units of F_lambda')
-
-        # Good to go
-        self.star = star
 
 
 class TestTSO(TSO):
