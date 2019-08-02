@@ -25,6 +25,8 @@ from bokeh.plotting import figure, show
 from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
 import numpy as np
+# from numba import jit
+
 try:
     from jwst.datamodels import RampModel
 except ImportError:
@@ -38,36 +40,39 @@ from . import utils
 warnings.simplefilter('ignore')
 
 
-def check_psf_files():
-    """Function to run on import to verify that the PSF files have been precomputed"""
-    if not os.path.isfile(resource_filename('awesimsoss', 'files/SOSS_CLEAR_PSF_order1_1.npy')):
-        print("Looks like you haven't generated the SOSS PSFs yet, which are required to produce simulations.")
-        print("This takes about 10 minutes but you will only need to do it this one time.")
-        compute = input("Would you like to do it now? [y] ")
-
-        if compute is None or compute.lower() in ['y', 'yes']:
-            mt.nuke_psfs()
-
-
-def run_required(func):
-    """A wrapper to check that the simulation has been run before a method can be executed"""
-    @wraps(func)
-    def _run_required(*args, **kwargs):
-        """Check that the 'tso' attribute is not None"""
-        if args[0].tso is None:
-            print("No simulation found! Please run the 'simulate' method first.")
-
-        else:
-            return func(*args, **kwargs)
-
-    return _run_required
+# def check_psf_files():
+#     """Function to run on import to verify that the PSF files have been precomputed"""
+#     if not os.path.isfile(resource_filename('awesimsoss', 'files/SOSS_CLEAR_PSF_order1_1.npy')):
+#         print("Looks like you haven't generated the SOSS PSFs yet, which are required to produce simulations.")
+#         print("This takes about 10 minutes but you will only need to do it this one time.")
+#         compute = input("Would you like to do it now? [y] ")
+#
+#         if compute is None or compute.lower() in ['y', 'yes']:
+#             mt.nuke_psfs()
+#
+#
+# def run_required(func):
+#     """A wrapper to check that the simulation has been run before a method can be executed"""
+#     @wraps(func)
+#     def _run_required(*args, **kwargs):
+#         """Check that the 'tso' attribute is not None"""
+#         if args[0].tso is None:
+#             print("No simulation found! Please run the 'simulate' method first.")
+#
+#         else:
+#             return func(*args, **kwargs)
+#
+#     return _run_required
+#
+#
+# check_psf_files()
 
 
 class TSO(object):
     """
     Generate NIRISS SOSS time series observations
     """
-    def __init__(self, ngrps, nints, star=None, snr=700, filter='CLEAR',
+    def __init__(self, ngrps, nints, star=None, planet=None, snr=700, filter='CLEAR',
                  subarray='SUBSTRIP256', orders=[1, 2], t0=0, nresets=0,
                  target='New Target', title=None, verbose=True):
         """
@@ -81,6 +86,8 @@ class TSO(object):
             The number of integrations for the exposure
         star: sequence
             The wavelength and flux of the star
+        planet: sequence
+            The wavelength and transmission of the planet
         snr: float
             The signal-to-noise
         filter: str
@@ -115,9 +122,6 @@ class TSO(object):
         """
         self.verbose = verbose
 
-        # Check for PSFs
-        check_psf_files()
-
         # Set static values
         self.gain = 1.61
         self._star = None
@@ -147,11 +151,12 @@ class TSO(object):
         self.title = title or '{} Simulation'.format(self.target)
 
         # Set instance attributes for the target
+        self._tmodel = None
         self._ld_coeffs = np.zeros((3, 2048, 2))
-        self.planet = None
-        self.tmodel = None
+        self.ld_profile = 'quadratic'
+        self.planet = planet
 
-    @run_required
+    # @run_required
     def add_noise(self, zodi_scale=1., offset=500):
         """
         Generate ramp and background noise
@@ -216,7 +221,7 @@ class TSO(object):
 
         print('Noise model finished:', round(time.time()-start, 3), 's')
 
-    @run_required
+    # @run_required
     def add_refpix(self, counts=0):
         """Add reference pixels to detector edges
 
@@ -237,7 +242,7 @@ class TSO(object):
         if self.subarray == 'FULL':
             self.tso[:, :, :4, :] = counts
 
-    @run_required
+    # @run_required
     def export(self, outfile, all_data=False):
         """
         Export the simulated data to a JWST pipeline ingestible FITS file
@@ -351,14 +356,14 @@ class TSO(object):
         self._reset_data()
 
         # Reset relative response function
-        self._reset_response()
+        self._reset_psfs()
 
     @property
     def info(self):
         """Summary table for the observation settings"""
         # Pull out relevant attributes
-        track = ['_ncols', '_nrows', '_nints', '_ngrps', '_nresets', '_subarray', '_filter', '_t0', '_orders']
-        settings = {key[1:]: val for key, val in self.__dict__.items() if key in track}
+        track = ['_ncols', '_nrows', '_nints', '_ngrps', '_nresets', '_subarray', '_filter', '_t0', '_orders', 'ld_profile', '_target', 'title', 'ra', 'dec']
+        settings = {key.strip('_'): val for key, val in self.__dict__.items() if key in track}
         return settings
 
     @property
@@ -518,7 +523,50 @@ class TSO(object):
         # Update the results
         self._reset_data()
 
-    @run_required
+    @property
+    def planet(self):
+        """Getter for the stellar data"""
+        return self._planet
+
+    @planet.setter
+    def planet(self, spectrum):
+        """Setter for the planetary data
+
+        Parameters
+        ----------
+        spectrum: sequence
+            The [W, F] or [W, F, E] of the planet to simulate
+        """
+        # Check if the planet has been set
+        if spectrum is None:
+            self._planet = None
+
+        else:
+
+            # Check planet is a sequence of length 2 or 3
+            if not isinstance(spectrum, (list, tuple)) or not len(spectrum) in [2, 3]:
+                raise ValueError(type(spectrum), ': Planet input must be a sequence of [W, F] or [W, F, E]')
+
+            # Check the units
+            if not spectrum[0].unit.is_equivalent(q.um):
+                raise ValueError(spectrum[0].unit, ': Wavelength must be in units of distance')
+
+            # Check the transmission spectrum is less than 1
+            if not all(spectrum[1] < 1):
+                raise ValueError('{} - {}: Transmission must be between 0 and 1'.format(min(spectrum[1]), max(spectrum[1])))
+
+            # Check the wavelength range
+            spec_min = np.nanmin(spectrum[0][spectrum[0] > 0.])
+            spec_max = np.nanmax(spectrum[0][spectrum[0] > 0.])
+            sim_min = np.nanmin(self.wave[self.wave > 0.])*q.um
+            sim_max = np.nanmax(self.wave[self.wave > 0.])*q.um
+            if spec_min > sim_min or spec_max < sim_max:
+                print("Wavelength range of input spectrum ({} - {} um) does not cover the {} - {} um range needed for a complete simulation. Interpolation will be used at the edges.".format(spec_min, spec_max, sim_min, sim_max))
+
+            # Good to go
+            self._planet = spectrum
+
+    # @run_required
     def plot(self, ptype='data', idx=0, scale='linear', order=None, noise=True,
              traces=False, saturation=0.8, draw=True):
         """
@@ -613,7 +661,7 @@ class TSO(object):
         else:
             return fig
 
-    @run_required
+    # @run_required
     def plot_slice(self, col, idx=0, order=None, noise=False, draw=True, **kwargs):
         """
         Plot a column of a frame to see the PSF in the cross dispersion direction
@@ -665,7 +713,7 @@ class TSO(object):
         else:
             return column(fig, dfig)
 
-    @run_required
+    # @run_required
     def plot_ramp(self, draw=True):
         """
         Plot the total flux on each frame to display the ramp
@@ -687,7 +735,7 @@ class TSO(object):
         else:
             return fig
 
-    @run_required
+    # @run_required
     def plot_lightcurve(self, column, time_unit='s', resolution_mult=20, draw=True):
         """
         Plot a lightcurve for each column index given
@@ -769,7 +817,7 @@ class TSO(object):
         else:
             return lc
 
-    @run_required
+    # @run_required
     def plot_spectrum(self, frame=0, order=None, noise=False, scale='log', draw=True):
         """
         Parameters
@@ -858,8 +906,9 @@ class TSO(object):
             self.time = np.concatenate(time_axis)
             self.inttime = np.tile(self.time[:self.ngrps], self.nints)
 
-    def _reset_response(self):
-        """Generate the relative response function for each order"""
+    # @jit
+    def _reset_psfs(self):
+        """Scale the psf for each detector column to the flux from the 1D spectrum"""
         # Check that all the appropriate values have been initialized
         if all([i in self.info for i in ['filter', 'subarray']]) and self.star is not None:
 
@@ -878,33 +927,17 @@ class TSO(object):
                 # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
                 # that we can convert the flux at each wavelegth into [ADU/s]
                 response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
-                setattr(self, 'order{}_response'.format(order), response)
-
-    def _reset_psfs(self):
-        """Scale the psf for each detector column to the flux from the 1D spectrum"""
-        # Check that all the appropriate values have been initialized
-        if all([i in self.info for i in ['filter', 'subarray']]) and self.star is not None:
-
-            for order in self.orders:
-
-                flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)
+                flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)*response
                 cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux[:, None, None]
-                setattr(self, 'order{}_flux'.format(order), flux)
+                setattr(self, 'order{}_response'.format(order), response)
                 setattr(self, 'order{}_psfs'.format(order), cube)
 
-    def simulate(self, planet=None, tmodel=None, ld_coeffs=None, time_unit='days', noise=True,
-                 ld_profile='quadratic', model_grid=None, n_jobs=-1, verbose=True):
+    def simulate(self, ld_coeffs=None, time_unit='days', noise=True, model_grid=None, n_jobs=-1, verbose=True, **kwargs):
         """
         Generate the simulated 4D ramp data given the initialized TSO object
 
         Parameters
         ----------
-        filt: str
-            The element from the filter wheel to use, i.e. 'CLEAR' or 'F277W'
-        planet: sequence (optional)
-            The wavelength and Rp/R* of the planet at t=0
-        tmodel: batman.transitmodel.TransitModel (optional)
-            The transit model of the planet
         ld_coeffs: array-like (optional)
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
         ld_profile: str (optional)
@@ -914,8 +947,6 @@ class TSO(object):
             options: 'seconds', 'minutes', 'hours', 'days' (default)
         noise: bool
             Add noise model
-        orders: sequence
-            The list of orders to imulate
         model_grid: ExoCTK.modelgrid.ModelGrid (optional)
             The model atmosphere grid to calculate LDCs
         n_jobs: int
@@ -952,9 +983,14 @@ class TSO(object):
             print("No star to simulate! Please set the self.star attribute!")
             return
 
+        # Check kwargs for updated attrs
+        for key, val in kwargs.items():
+            setattr(self, key, val)
+
         if verbose:
             begin = time.time()
 
+        # Set the number of cores for multiprocessing
         max_cores = cpu_count()
         if n_jobs == -1 or n_jobs > max_cores:
             n_jobs = max_cores
@@ -963,36 +999,25 @@ class TSO(object):
         self._reset_data()
 
         # If there is a planet transmission spectrum but no LDCs generate them
-        is_tmodel = str(type(tmodel)) == "<class 'batman.transitmodel.TransitModel'>"
-        if planet is not None and is_tmodel:
+        if self.planet is not None and self.tmodel is not None:
 
-            if time_unit not in ['seconds', 'minutes', 'hours', 'days']:
-                raise ValueError("time_unit must be either 'seconds', 'hours', or 'days']")
+            time_units = {'seconds': 86400., 'minutes': 1440., 'hours': 24., 'days': 1.}
+            if time_unit not in time_units:
+                raise ValueError("time_unit must be in", time_units)
 
             # Check if the stellar params are the same
             plist = ['teff', 'logg', 'feh', 'limb_dark']
             old_params = [getattr(self.tmodel, p, None) for p in plist]
 
-            # Store planet details
-            self.planet = planet
-            self.tmodel = tmodel
-
-            if self.tmodel.limb_dark is None:
-                self.tmodel.limb_dark = ld_profile
+            # Update the transit model LD profile
+            self.tmodel.limb_dark = self.ld_profile
 
             # Set time of inferior conjunction
             if self.tmodel.t0 is None or self.time[0] > self.tmodel.t0 > self.time[-1]:
                 self.tmodel.t0 = self.time[self.nframes//2]
 
-            # Convert seconds to days, in order to match the Period and
-            # T0 parameters
-            days_to_seconds = 86400.
-            if time_unit == 'seconds':
-                self.tmodel.t /= days_to_seconds
-            if time_unit == 'minutes':
-                self.tmodel.t /= days_to_seconds / 60
-            if time_unit == 'hours':
-                self.tmodel.t /= days_to_seconds / 3600
+            # Convert seconds to days, in order to match the Period and T0 parameters
+            self.tmodel.t /= time_units[time_unit]
 
             # Set the ld_coeffs if provided
             stellar_params = [getattr(tmodel, p) for p in plist]
@@ -1019,7 +1044,6 @@ class TSO(object):
 
             # Get the psf cube and filter response function
             psfs = getattr(self, 'order{}_psfs'.format(order))
-            response = getattr(self, 'order{}_response'.format(order))
 
             # Get limb darkening coeffs and make into a list
             ld_coeffs = self.ld_coeffs[order-1]
@@ -1041,7 +1065,7 @@ class TSO(object):
             # Generate the lightcurves at each wavelength
             pool = ThreadPool(n_jobs)
             func = partial(mt.psf_lightcurve, time=self.time, tmodel=self.tmodel)
-            data = list(zip(wave, psfs, response, ld_coeffs, self.rp))
+            data = list(zip(psfs, ld_coeffs, self.rp))
             lightcurves = np.asarray(pool.starmap(func, data), dtype=np.float64)
             pool.close()
             pool.join()
@@ -1074,7 +1098,7 @@ class TSO(object):
             setattr(self, 'tso_order{}_ideal'.format(order), frames)
 
             # Clear memory
-            del frames, lightcurves, psfs, response, wave
+            del frames, lightcurves, psfs, wave
 
         # Add to the master TSO
         self.tso_ideal = np.sum([getattr(self, 'tso_order{}_ideal'.format(order)) for order in self.orders], axis=0)
@@ -1159,8 +1183,7 @@ class TSO(object):
             # Good to go
             self._star = spectrum
 
-            # Reset the relative response function and the psfs
-            self._reset_response()
+            # Reset the psfs
             self._reset_psfs()
 
     @property
@@ -1199,8 +1222,7 @@ class TSO(object):
         self._reset_data()
         self._reset_time()
 
-        # Reset the relative response function and the psfs
-        self._reset_response()
+        # Reset the psfs
         self._reset_psfs()
 
     @property
@@ -1221,7 +1243,7 @@ class TSO(object):
         if not isinstance(tmid, (float, int)):
             raise ValueError("'{}' not a supported transit midpoint. Try a float or integer value.".format(tmid))
 
-        # Set the subarray
+        # Set the transit midpoint
         self._t0 = tmid
 
         # Reset the data and time arrays
@@ -1260,11 +1282,31 @@ class TSO(object):
                 self.ra = coords.ra.degree
                 self.dec = coords.dec.degree
                 if self.verbose:
-                    print("Coordinates for '{}' found in Simbad!".format(self.target))
+                    print("Coordinates {} {} for '{}' found in Simbad!".format(self.ra, self.dec, self.target))
             except TypeError:
                 if self.verbose:
                     print("Could not resolve target '{}' in Simbad. Using ra={}, dec={}.".format(self.target, self.ra, self.dec))
                     print("Set coordinates manually by updating 'ra' and 'dec' attributes.")
+
+    @property
+    def tmodel(self):
+        """Getter for the transit model"""
+        return self._tmodel
+
+    @tmodel.setter
+    def tmodel(self, model):
+        """Setter for the transit model
+
+        Parameters
+        ----------
+        model: batman.transitmodel.TransitModel
+        """
+        mod_type = str(type(model))
+        if not mod_type == "<class 'batman.transitmodel.TransitModel'>":
+            raise TypeError("{}: Transit model must be of type batman.transitmodel.TransitModel".format(mod_type))
+
+        # Set the transit model
+        self._tmodel = model
 
 
 class TestTSO(TSO):
