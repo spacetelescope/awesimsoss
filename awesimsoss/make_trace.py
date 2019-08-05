@@ -336,18 +336,14 @@ def make_frame(psfs):
     return frame[:, 38:-38]
 
 
-def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=False):
+def psf_lightcurve(psf, ld_coeffs, rp, time, tmodel, plot=False):
     """
     Generate a lightcurve for a (76, 76) psf of a given wavelength
 
     Parameters
     ----------
-    wavelength: float
-        The wavelength value in microns
     psf: sequencs
         The flux-scaled psf for the given wavelength
-    response: float
-        The spectral response of the detector at the given wavelength
     ld_coeffs: sequence
         The limb darkening coefficients to use
     rp: float
@@ -371,7 +367,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     from awesimsoss.make_trace import psf_lightcurve
     psf = np.ones((76, 76))
     time = np.linspace(-0.2, 0.2, 200)
-    lc = psf_lightcurve(0.97, psf, 1, None, None, time, None, plot=True)
+    lc = psf_lightcurve(psf, None, None, time, None, plot=True)
 
     Example 2
     ---------
@@ -393,7 +389,7 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
     params.limb_dark = 'quadratic'                # limb darkening profile to use
     params.u = [1, 1]                             # limb darkening coefficients
     tmodel = batman.TransitModel(params, time)
-    lc = psf_lightcurve(0.97, psf, 1, [0.1, 0.1], 0.05, time, tmodel, plot=True)
+    lc = psf_lightcurve(psf, [0.1, 0.1], 0.05, time, tmodel, plot=True)
     """
     # Expand to shape of time axis
     flux = np.tile(psf, (len(time), 1, 1))
@@ -410,9 +406,6 @@ def psf_lightcurve(wavelength, psf, response, ld_coeffs, rp, time, tmodel, plot=
 
         # Scale the flux with the lightcurve
         flux *= lightcurve[:, None, None]
-
-    # Apply the filter response to convert to [ADU/s]
-    flux *= response
 
     return flux
 

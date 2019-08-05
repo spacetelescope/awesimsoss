@@ -10,20 +10,28 @@ from pkg_resources import resource_filename
 
 from astropy.io import fits
 import astropy.units as q
+import batman
 from bokeh.palettes import Category20
 import numpy as np
 
 
 def color_gen():
+    """Generator for a Bokeh color palette"""
     yield from itertools.cycle(Category20[20])
 
 
 def planet_data():
     """
     Dummy data for time series simulations
+
+    Returns
+    -------
+    sequence
+        The wavelength and atmospheric transmission of the planet
     """
     planet_file = resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat')
-    planet1D = np.genfromtxt(planet_file, unpack=True)
+    planet = np.genfromtxt(planet_file, unpack=True)
+    planet1D = [planet[0]*q.um, planet[1]]
 
     return planet1D
 
@@ -31,17 +39,54 @@ def planet_data():
 def star_data():
     """
     Dummy data for time series simulations
+
+    Returns
+    -------
+    sequence
+        The wavelength and flux of the star
     """
-    star = np.genfromtxt(resource_filename('awesimsoss', 'files/scaled_spectrum.txt'), unpack=True)
+    star_file = resource_filename('awesimsoss', 'files/scaled_spectrum.txt')
+    star = np.genfromtxt(star_file, unpack=True)
     star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
 
     return star1D
 
 
+def transit_params(time):
+    """
+    Dummy transit parameters for time series simulations
+
+    Parameters
+    ----------
+    time: sequence
+        The time axis of the transit observation
+
+    Returns
+    -------
+    batman.transitmodel.TransitModel
+        The transit model
+    """
+    params = batman.TransitParams()
+    params.t0 = 0.                                # time of inferior conjunction
+    params.per = 5.7214742                        # orbital period (days)
+    params.a = 0.0558*q.AU.to(q.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+    params.inc = 89.8                             # orbital inclination (in degrees)
+    params.ecc = 0.                               # eccentricity
+    params.w = 90.                                # longitude of periastron (in degrees)
+    params.limb_dark = 'quadratic'                # limb darkening profile to use
+    params.u = [0.1, 0.1]                          # limb darkening coefficients
+    params.rp = 0.                                # planet radius (placeholder)
+    tmodel = batman.TransitModel(params, time)
+    tmodel.teff = 3500                            # effective temperature of the host star
+    tmodel.logg = 5                               # log surface gravity of the host star
+    tmodel.feh = 0                                # metallicity of the host star
+
+    return tmodel
+
+
 COLORS = color_gen()
 STAR_DATA = star_data()
 PLANET_DATA = planet_data()
-
 
 def subarray(subarr):
     """
