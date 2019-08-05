@@ -184,24 +184,24 @@ class test_TSO(unittest.TestCase):
         # Test that non wavelength units fail
         bad_wave_star = copy(self.star)
         bad_wave_star[0] *= q.Jy
-        kwargs = {'nints':2, 'ngrps':2, 'star':bad_wave_star}
+        kwargs = {'nints': 2, 'ngrps': 2, 'star': bad_wave_star}
         self.assertRaises(ValueError, TSO, **kwargs)
 
         # Test that non flux density units fail
         bad_flux_star = copy(self.star)
         bad_flux_star[1] *= q.K
-        kwargs = {'nints':2, 'ngrps':2, 'star':bad_flux_star}
+        kwargs = {'nints': 2, 'ngrps': 2, 'star': bad_flux_star}
         self.assertRaises(ValueError, TSO, **kwargs)
 
         # Test that no units fail
         bad_unit_star = copy(self.star)
         bad_unit_star[0] = bad_unit_star[0].value
-        kwargs = {'nints':2, 'ngrps':2, 'star':bad_unit_star}
+        kwargs = {'nints': 2, 'ngrps': 2, 'star': bad_unit_star}
         self.assertRaises(ValueError, TSO, **kwargs)
 
         # Test that spectrum shape
         bad_size_star = [self.star[0]]
-        kwargs = {'nints':2, 'ngrps':2, 'star':bad_size_star}
+        kwargs = {'nints': 2, 'ngrps': 2, 'star': bad_size_star}
         self.assertRaises(ValueError, TSO, **kwargs)
 
     def test_bad_attrs(self):
@@ -249,8 +249,8 @@ class test_TSO(unittest.TestCase):
         ldcs = tso.ld_coeffs
         tso.ld_coeffs = np.ones((3, 2048, 2))
 
-        # Bad LDCs
-        self.assertRaises(TypeError, setattr, tso, 'ld_coeffs', 'foo')
+        # Bad LDCs (Removed TypeError in favor of print statement)
+        # self.assertRaises(TypeError, setattr, tso, 'ld_coeffs', 'foo')
 
     def test_plot(self):
         """Test plot method"""
@@ -264,7 +264,7 @@ class test_TSO(unittest.TestCase):
         tso.simulate()
 
         # Test bad ptype
-        kwargs = {'ptype':'foo', 'draw':False}
+        kwargs = {'ptype': 'foo', 'draw': False}
         self.assertRaises(ValueError, tso.plot, **kwargs)
 
         # Standard plot with traces
@@ -317,7 +317,7 @@ class test_TSO(unittest.TestCase):
         tso.simulate()
 
         # Test bad units
-        kwargs = {'column':500, 'time_unit':'foo', 'draw':False}
+        kwargs = {'column': 500, 'time_unit': 'foo', 'draw': False}
         self.assertRaises(ValueError, tso.plot_lightcurve, **kwargs)
 
         # Standard plot

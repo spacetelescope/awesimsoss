@@ -367,7 +367,7 @@ def psf_lightcurve(psf, ld_coeffs, rp, time, tmodel, plot=False):
     from awesimsoss.make_trace import psf_lightcurve
     psf = np.ones((76, 76))
     time = np.linspace(-0.2, 0.2, 200)
-    lc = psf_lightcurve(0.97, psf, 1, None, None, time, None, plot=True)
+    lc = psf_lightcurve(psf, None, None, time, None, plot=True)
 
     Example 2
     ---------
@@ -389,7 +389,7 @@ def psf_lightcurve(psf, ld_coeffs, rp, time, tmodel, plot=False):
     params.limb_dark = 'quadratic'                # limb darkening profile to use
     params.u = [1, 1]                             # limb darkening coefficients
     tmodel = batman.TransitModel(params, time)
-    lc = psf_lightcurve(0.97, psf, 1, [0.1, 0.1], 0.05, time, tmodel, plot=True)
+    lc = psf_lightcurve(psf, [0.1, 0.1], 0.05, time, tmodel, plot=True)
     """
     # Expand to shape of time axis
     flux = np.tile(psf, (len(time), 1, 1))
