@@ -111,7 +111,7 @@ And here are some orbital parameters for our planetary system using `batman <htt
 
    # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
    import batman
-   tso_transit = TSO(ngrps=3, nints=5, star=STAR_DATA, run=False)
+   tso_transit = TSO(ngrps=3, nints=5, star=STAR_DATA)
    params = batman.TransitParams()
    params.t0 = 0. # time of inferior conjunction
    params.per = 5.7214742 # orbital period (days)
