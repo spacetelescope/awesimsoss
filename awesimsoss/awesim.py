@@ -781,7 +781,7 @@ class TSO(object):
             color = next(utils.COLORS)
 
             # If it is an index
-            if isinstance(col, int):
+            if isinstance(col, (int, np.integer)):
                 lightcurve = flux_cols[:, col]
                 label = 'Column {}'.format(col)
 
