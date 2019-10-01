@@ -1,5 +1,4 @@
 channels:
-  - http://ssb.stsci.edu/astroconda-dev
   - conda-forge
   - http://ssb.stsci.edu/astroconda
   - defaults
@@ -204,7 +203,6 @@ dependencies:
   - stsci.tools=3.4.13=py36_1
   - verhawk=0.0.2=py36_1
   - webbpsf-data=0.8.0=0
-  - namedlist=1.7=py36_1
   - pip:
     - asteval==0.9.14
     - bibtexparser==1.1.0
@@ -215,12 +213,12 @@ dependencies:
     - future==0.17.1
     - itsdangerous==1.1.0
     - jdcal==1.4
-    - jwst==0.13.8a0.dev37+g1f2237de
     - jwst-backgrounds==1.1.1
     - jwxml==0.3.0
     - llvmlite==0.29.0
     - lmfit==0.9.13
     - msgpack==0.6.1
+    - namedlist==1.7
     - numba==0.44.1
     - numpydoc==0.8.0
     - openpyxl==2.5.8
@@ -231,4 +229,4 @@ dependencies:
     - uncertainties==3.1.1
     - webbpsf==0.7.0
     - werkzeug==0.15.4
-
+    - git+https://github.com/spacetelescope/jwst@1f2237de#egg=jwst
