@@ -24,6 +24,7 @@ import batman
 from bokeh.plotting import figure, show
 from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
+from hotsoss import utils, plotting
 import numpy as np
 
 try:
