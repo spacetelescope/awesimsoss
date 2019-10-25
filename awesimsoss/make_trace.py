@@ -14,6 +14,7 @@ import warnings
 import numpy as np
 from astropy.io import fits
 from bokeh.plotting import figure, show
+from hotsoss import utils
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
@@ -23,8 +24,6 @@ try:
     import webbpsf
 except ImportError:
     print("Could not import `webbpsf` package. Functionality limited.")
-
-from . import utils
 
 warnings.simplefilter('ignore')
 

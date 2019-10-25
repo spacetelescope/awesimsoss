@@ -7,4 +7,3 @@ __email__ = 'jfilippazzo@stsci.edu'
 __version__ = '0.2.0'
 
 from .awesim import TSO, TestTSO, BlackbodyTSO
-from .utils import STAR_DATA, PLANET_DATA

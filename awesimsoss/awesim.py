@@ -34,7 +34,6 @@ except ImportError:
 
 from . import generate_darks as gd
 from . import make_trace as mt
-from . import utils
 
 
 warnings.simplefilter('ignore')
@@ -254,7 +253,7 @@ class TSO(object):
         # Make a RampModel
         data = self.tso
         mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
-        pix = utils.subarray(self.subarray)
+        pix = utils.subarray_specs(self.subarray)
 
         # Set meta data values for header keywords
         mod.meta.telescope = 'JWST'
@@ -575,15 +574,13 @@ class TSO(object):
             self._planet = spectrum
 
     @run_required
-    def plot(self, ptype='data', idx=0, scale='linear', order=None, noise=True,
-             traces=False, saturation=0.8, draw=True):
+    def plot(self, idx=0, scale='linear', order=None, noise=True,
+                   traces=False, saturation=0.8, draw=True):
         """
         Plot a TSO frame
 
         Parameters
         ----------
-        ptype: str
-            The type of plot, ['data', 'snr', 'saturation']
         idx: int
             The frame index to plot
         scale: str
@@ -599,11 +596,7 @@ class TSO(object):
         draw: bool
             Render the figure instead of returning it
         """
-        # Check plot type
-        ptypes = ['data', 'snr', 'saturation']
-        if ptype.lower() not in ptypes:
-            raise ValueError("'ptype' must be {}".format(ptypes))
-
+        # Get the data cube
         if order in [1, 2]:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
@@ -612,57 +605,16 @@ class TSO(object):
             else:
                 tso = self.tso_ideal
 
-        # Get data, snr, and saturation for plotting
-        vmax = int(np.nanmax(tso[tso < np.inf]))
-        dat = np.array(tso.reshape(self.dims3)[idx].data)
-        snr = np.sqrt(dat.data)
-        fullWell = 65536.0
-        sat = dat > saturation * fullWell
-        sat = sat.astype(int)
+        # Reshape data
+        tso.shape = self.dims3
 
-        # Make the figure
-        height = 180 if self.subarray == 'SUBSTRIP96' else 800 if self.subarray == 'FULL' else 225
-        tooltips = [("(x,y)", "($x{int}, $y{int})"), ("ADU/s", "@data"), ("SNR", "@snr"), ('Saturation', '@saturation')]
-        fig = figure(x_range=(0, dat.shape[1]), y_range=(0, dat.shape[0]),
-                     tooltips=tooltips, width=int(dat.shape[1]/2), height=height,
-                     title='{}: Frame {}'.format(self.target, idx),
-                     toolbar_location='above', toolbar_sticky=True)
+        # Set the plot args
+        wavecal = self.wave
+        title = '{} - Frame {}'.format(self.title, idx)
+        coeffs = lt.trace_polynomial() if traces else None
 
         # Plot the frame
-        if scale == 'log':
-            dat[dat < 1.] = 1.
-            source = dict(data=[dat], snr=[snr], saturation=[sat])
-            color_mapper = LogColorMapper(palette="Viridis256", low=dat.min(), high=dat.max())
-            fig.image(source=source, image=ptype, x=0, y=0, dw=dat.shape[1],
-                      dh=dat.shape[0], color_mapper=color_mapper)
-            color_bar = ColorBar(color_mapper=color_mapper, ticker=LogTicker(),
-                                 orientation="horizontal", label_standoff=12,
-                                 border_line_color=None, location=(0, 0))
-
-        else:
-            source = dict(data=[dat], snr=[snr], saturation=[sat])
-            color_mapper = LinearColorMapper(palette="Viridis256", low=dat.min(), high=dat.max())
-            fig.image(source=source, image=ptype, x=0, y=0, dw=dat.shape[1],
-                      dh=dat.shape[0], palette='Viridis256')
-            color_bar = ColorBar(color_mapper=color_mapper,
-                                 orientation="horizontal", label_standoff=12,
-                                 border_line_color=None, location=(0, 0))
-
-        # Add color bar
-        if ptype != 'saturation':
-            fig.add_layout(color_bar, 'below')
-
-        # Plot the polynomial too
-        if traces:
-            X = np.linspace(0, 2048, 2048)
-
-            # Order 1
-            Y = np.polyval(self.coeffs[0], X)
-            fig.line(X, Y, color='red')
-
-            # Order 2
-            Y = np.polyval(self.coeffs[1], X)
-            fig.line(X, Y, color='red')
+        fig = plotting.plot_frames(data=tso, idx=idx, scale=scale, trace_coeffs=coeffs, saturation=saturation, title=title, wavecal=wavecal)
 
         if draw:
             show(fig)
@@ -670,16 +622,12 @@ class TSO(object):
             return fig
 
     @run_required
-    def plot_slice(self, col, idx=0, order=None, noise=False, draw=True, **kwargs):
+    def plot_ramp(self, order=None, noise=True, draw=True):
         """
-        Plot a column of a frame to see the PSF in the cross dispersion direction
+        Plot the total flux on each frame to display the ramp
 
         Parameters
         ----------
-        col: int, sequence
-            The column index(es) to plot
-        idx: int
-            The frame index to plot
         order: sequence
             The order to isolate
         noise: bool
@@ -687,6 +635,7 @@ class TSO(object):
         draw: bool
             Render the figure instead of returning it
         """
+        # Get the data cube
         if order in [1, 2]:
             tso = getattr(self, 'tso_order{}_ideal'.format(order))
         else:
@@ -695,48 +644,11 @@ class TSO(object):
             else:
                 tso = self.tso_ideal
 
-        # Transpose data
-        flux = tso.reshape(self.dims3)[idx].T
-
-        # Turn one column into a list
-        if isinstance(col, int):
-            col = [col]
-
-        # Get the data
-        dfig = self.plot(ptype='data', idx=idx, order=order, draw=False, noise=noise, **kwargs)
+        # Reshape data
+        tso.shape = self.dims3
 
         # Make the figure
-        fig = figure(width=1024, height=500)
-        fig.xaxis.axis_label = 'Row'
-        fig.yaxis.axis_label = 'Count Rate [ADU/s]'
-        fig.legend.click_policy = 'mute'
-        for c in col:
-            color = next(utils.COLORS)
-            fig.line(np.arange(flux[c, :].size), flux[c, :], color=color, legend='Column {}'.format(c))
-            vline = Span(location=c, dimension='height', line_color=color, line_width=3)
-            dfig.add_layout(vline)
-
-        if draw:
-            show(column(fig, dfig))
-        else:
-            return column(fig, dfig)
-
-    @run_required
-    def plot_ramp(self, draw=True):
-        """
-        Plot the total flux on each frame to display the ramp
-
-        Parameters
-        ----------
-        draw: bool
-            Render the figure instead of returning it
-        """
-        fig = figure()
-        x = range(self.dims3[0])
-        y = np.sum(self.tso.reshape(self.dims3), axis=(-1, -2))
-        fig.circle(x, y, size=12)
-        fig.xaxis.axis_label = 'Group'
-        fig.yaxis.axis_label = 'Count Rate [ADU/s]'
+        fig = plotting.plot_ramp(tso)
 
         if draw:
             show(fig)
@@ -924,8 +836,7 @@ class TSO(object):
                 # Get the wavelength map
                 wave = self.avg_wave[order-1]
 
-                # Get relative spectral response for the order (from
-                # /grp/crds/jwst/references/jwst/jwst_niriss_photom_0028.fits)
+                # Get relative spectral response for the order
                 throughput = self.photom[self.photom['order'] == order]
                 ph_wave = throughput.wavelength[throughput.wavelength > 0][1:-2]
                 ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
@@ -1173,7 +1084,7 @@ class TSO(object):
 
         # Set the subarray
         self._subarray = subarr
-        self.subarray_specs = utils.subarray(subarr)
+        self.subarray_specs = utils.subarray_specs(subarr)
 
         # Set the dependent quantities
         self._ncols = 2048
