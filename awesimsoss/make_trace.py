@@ -14,6 +14,7 @@ import warnings
 import numpy as np
 from astropy.io import fits
 from bokeh.plotting import figure, show
+from hotsoss import utils
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
@@ -23,8 +24,6 @@ try:
     import webbpsf
 except ImportError:
     print("Could not import `webbpsf` package. Functionality limited.")
-
-from . import utils
 
 warnings.simplefilter('ignore')
 
@@ -601,48 +600,3 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
             full_data.append(np.load(file))
 
         return np.concatenate(full_data, axis=0)
-
-
-def trace_polynomials(subarray='SUBSTRIP256', order=None, poly_order=4, generate=False):
-    """
-    Determine the polynomial coefficients of the SOSS traces from the IDT's values
-
-    Parameters
-    ----------
-    subarray: str
-        The name of the subarray
-    order: int (optional)
-        The trace order, [1, 2]
-    poly_order: int
-        The order polynomail to fit
-    generate: bool
-        Generate new coefficients
-
-    Returns
-    -------
-    sequence
-        The list of polynomial coefficients for orders 1  and 2
-    """
-    if generate:
-
-        # Get the data
-        file = resource_filename('awesimsoss', 'files/soss_wavelength_trace_table1.txt')
-        x1, y1, w1, x2, y2, w2 = np.genfromtxt(file, unpack=True)
-
-        # Fit the polynomails
-        fit1 = np.polyfit(x1, y1, poly_order)
-        fit2 = np.polyfit(x2, y2, poly_order)
-
-        return fit1, fit2
-
-    else:
-
-        # Select the right order
-        if order in [1, 2]:
-            order = int(order)-1
-        else:
-            order = slice(0, 3)
-
-        coeffs = [[1.71164994e-11, -4.72119272e-08, 5.10276801e-05, -5.91535309e-02, 8.30680347e+01], [2.35792131e-13, 2.42999478e-08, 1.03641247e-05, -3.63088657e-02, 9.96766537e+01]]
-
-        return coeffs[order]

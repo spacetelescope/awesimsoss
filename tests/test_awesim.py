@@ -10,8 +10,9 @@ import numpy as np
 import astropy.units as q
 import astropy.constants as ac
 import batman
+from hotsoss import STAR_DATA, PLANET_DATA
 
-from awesimsoss import TSO, BlackbodyTSO, TestTSO, STAR_DATA, PLANET_DATA
+from awesimsoss import TSO, BlackbodyTSO, TestTSO
 
 
 class test_BlackbodyTSO(unittest.TestCase):
@@ -263,10 +264,6 @@ class test_TSO(unittest.TestCase):
         # Run simulation
         tso.simulate()
 
-        # Test bad ptype
-        kwargs = {'ptype': 'foo', 'draw': False}
-        self.assertRaises(ValueError, tso.plot, **kwargs)
-
         # Standard plot with traces
         plt = tso.plot(traces=True)
 
@@ -278,27 +275,6 @@ class test_TSO(unittest.TestCase):
 
         # Log plot
         plt = tso.plot(scale='log', draw=False)
-
-    def test_plot_slice(self):
-        """Test plot_slice method"""
-        # Make the TSO object
-        tso = TSO(ngrps=2, nints=2, star=self.star)
-        tso.simulate()
-
-        # Standard plot with traces
-        plt = tso.plot_slice(500, traces=True)
-
-        # Standard plot with one order
-        plt = tso.plot_slice(500, order=1, draw=False)
-
-        # Plot with noise
-        plt = tso.plot_slice(500, noise=True, draw=False)
-
-        # Log plot
-        plt = tso.plot_slice(500, scale='log', draw=False)
-
-        # List of slices
-        plt = tso.plot_slice([500, 1000], draw=False)
 
     def test_plot_ramp(self):
         """Test plot_ramp method"""
