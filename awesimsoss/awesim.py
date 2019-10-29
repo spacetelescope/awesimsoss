@@ -24,7 +24,7 @@ import batman
 from bokeh.plotting import figure, show
 from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
-from hotsoss import utils, plotting
+from hotsoss import utils, plotting, locate_trace
 import numpy as np
 
 try:
@@ -611,7 +611,7 @@ class TSO(object):
         # Set the plot args
         wavecal = self.wave
         title = '{} - Frame {}'.format(self.title, idx)
-        coeffs = lt.trace_polynomial() if traces else None
+        coeffs = locate_trace.trace_polynomial() if traces else None
 
         # Plot the frame
         fig = plotting.plot_frames(data=tso, idx=idx, scale=scale, trace_coeffs=coeffs, saturation=saturation, title=title, wavecal=wavecal)
@@ -1091,7 +1091,7 @@ class TSO(object):
         self._nrows = self.subarray_specs.get('y')
         self.wave = utils.wave_solutions(subarr)
         self.avg_wave = np.mean(self.wave, axis=1)
-        self.coeffs = mt.trace_polynomials(subarray=subarr)
+        self.coeffs = locate_trace.trace_polynomial(subarray=subarr)
 
         # Reset the data and time arrays
         self._reset_data()
