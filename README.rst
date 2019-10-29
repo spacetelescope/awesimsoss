@@ -62,7 +62,8 @@ seen through SOSS, my code might look like:
 .. code-block:: python
 
    # Imports
-   from awesimsoss import TSO, STAR_DATA
+   from awesimsoss import TSO
+   from hotsoss import STAR_DATA
 
    # Initialize simulation
    tso256_clear = TSO(ngrps=3, nints=5, star=STAR_DATA)
@@ -71,8 +72,12 @@ seen through SOSS, my code might look like:
    tso256_clear.simulate()
    tso256_clear.plot()
 
-.. figure:: awesimsoss/img/2D_star.png
+.. figure:: awesimsoss/img/plot_frames.png
    :alt: The output trace
+
+The `plot` method generates an interactive figure of counts, SNR, and saturation
+values for the entire exposure as well as the wavelength value at each pixel for
+each order and a slider to inspect each frame in the cross dispersion direction.
 
 The `SUBSTRIP256` subarray is the default but the `SUBSTRIP96` subarray and
 `FULL` frame configurations are also supported:
@@ -100,7 +105,7 @@ Here is a sample transmission spectrum generated with `PandExo <https://github.c
 
 .. code-block:: python
 
-   from awesimsoss import PLANET_DATA
+   from hotsoss import PLANET_DATA
 
 .. figure:: awesimsoss/img/1D_planet.png
    :alt: The input transmission spectrum
