@@ -21,11 +21,12 @@ after_success:
 # deploy new versions to PyPI
 deploy:
   provider: pypi
-  distributions: sdist bdist_wheel
-  user: hover2pi
+  distributions: "sdist bdist_wheel"
+  user: "__token__"
   password:
-    secure: HR9v0eHcHdj1U3quVZACdTxZO7atf/avqq63mhFjiPDCfmdNUeq3WucpgwPMO2rx2xlLyeSqSHxbW84X46efKFh/DbgxC9HWpv7QoWEgwjJWhQ384BfDbHa+4Khj7+JtxKAyuU4JMay87QcQiCvilBJFguQ3KWVrlE5kC+PPieVjT3iRLuwakc+pUKKXub38CPhDv7LY6WEtjpxkHSCKPSMT5u+/SbPwOEqQjwQe2HSOcfRCYo/DjRQa933Bziwd563wuxusRH2YoIXRGQyYss/psUi2GQEzrlIe7lsAeEEcSAWQv0J7P8tMXw0+EisQe4gXNjxIV1/9oWulwnL6wBeEP4Ytsxw2I3FM7YPdXgZvkxAY69cyqDIzFK6qfvsdaW0VEz5Cgu2AfBEu0XcK6OlOUWjT8NFb5cYgtAPa1ATD0g0z0Yy3uv3qruhLUkegEhCealbowmy8yTOSfAG4cOGe/SAElpAfbrHkPdNdCB5BwY6L7xEbb5Xjy8NnqlfYHPwtsfKOP85SZiEMy3wYptHVMmgl/sv6hwoOZHZn1rZtuj9MwoyActREdxxHkhLiGKPrw+A0/g5R55j5Bf6V712v/ZPH/ikdQVYTAUkmPleUSyzwALugxLwiYU7oqEXmZk2KEq1rcyA/3WU+YhsE5j/g+5yCQ0FR65hOgL0z9+Y=
-  on:
+    secure: "pypi-AgEIcHlwaS5vcmcCJDk1YWM2MWJiLWJkY2YtNDZmMC05YWNlLTAzNDYyZTgxZGVlYwACO3sicGVybWlzc2lvbnMiOiB7InByb2plY3RzIjogWyJhd2VzaW1zb3NzIl19LCAidmVyc2lvbiI6IDF9AAAGIMtrbKrXoSda3BcSs59WkNb8gdiTvfeGosbRn1GA7FQD"
     tags: true
     repo: spacetelescope/awesimsoss
     python: 3.5
+  on:
+    tags: true
