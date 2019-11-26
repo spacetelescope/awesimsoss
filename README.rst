@@ -4,7 +4,7 @@ awesimsoss
 
 .. image:: https://img.shields.io/github/v/release/spacetelescope/awesimsoss?label=awesimsoss
         :alt: GitHub release
-        :target: https://pypi.python.org/pypi/awesimsoss
+        :target: https://github.com/spacetelescope/awesimsoss/releases
 
 .. image:: https://img.shields.io/travis/hover2pi/awesimsoss.svg
         :target: https://travis-ci.com/hover2pi/awesimsoss
