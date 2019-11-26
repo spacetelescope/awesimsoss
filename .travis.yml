@@ -17,16 +17,3 @@ script:
 
 after_success:
   - coveralls
-
-# deploy new versions to PyPI
-deploy:
-  provider: pypi
-  distributions: "sdist bdist_wheel"
-  user: "__token__"
-  password:
-    secure: "pypi-AgEIcHlwaS5vcmcCJDk1YWM2MWJiLWJkY2YtNDZmMC05YWNlLTAzNDYyZTgxZGVlYwACO3sicGVybWlzc2lvbnMiOiB7InByb2plY3RzIjogWyJhd2VzaW1zb3NzIl19LCAidmVyc2lvbiI6IDF9AAAGIMtrbKrXoSda3BcSs59WkNb8gdiTvfeGosbRn1GA7FQD"
-    tags: true
-    repo: spacetelescope/awesimsoss
-    python: 3.5
-  on:
-    tags: true
