@@ -574,6 +574,33 @@ class TSO(object):
             self._planet = spectrum
 
     @run_required
+    def _select_data(self, order, noise):
+        """
+        Select the data given the order and noise args
+
+        Parameters
+        ----------
+        order: int (optional)
+            The order to use, [1, 2, 3]
+        noise: bool
+            Include noise model
+
+        Returns
+        -------
+        np.ndarray
+            The selected data
+        """
+        if order in [1, 2]:
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
+        else:
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
+
+        return tso
+
+    @run_required
     def plot(self, idx=0, scale='linear', order=None, noise=True,
                    traces=False, saturation=0.8, draw=True):
         """
@@ -585,7 +612,7 @@ class TSO(object):
             The frame index to plot
         scale: str
             Plot scale, ['linear', 'log']
-        order: sequence
+        order: int (optional)
             The order to isolate
         noise: bool
             Plot with the noise model
@@ -597,13 +624,7 @@ class TSO(object):
             Render the figure instead of returning it
         """
         # Get the data cube
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
+        tso = self._select_datar(order, noise)
 
         # Reshape data
         tso.shape = self.dims3
@@ -636,13 +657,7 @@ class TSO(object):
             Render the figure instead of returning it
         """
         # Get the data cube
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
+        tso = self._select_data(order, noise)
 
         # Reshape data
         tso.shape = self.dims3
@@ -753,13 +768,8 @@ class TSO(object):
         draw: bool
             Render the figure instead of returning it
         """
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
+        # Get the data cube
+        tso = self._select_data(order, noise)
 
         # Get extracted spectrum (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
