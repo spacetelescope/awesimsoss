@@ -574,7 +574,7 @@ class TSO(object):
             self._planet = spectrum
 
     @run_required
-    def _select_data(self, order, noise):
+    def _select_data(self, order, noise, reshape=3):
         """
         Select the data given the order and noise args
 
@@ -584,6 +584,8 @@ class TSO(object):
             The order to use, [1, 2, 3]
         noise: bool
             Include noise model
+        reshape: bool
+            Reshape to 3 dimensions
 
         Returns
         -------
@@ -597,6 +599,10 @@ class TSO(object):
                 tso = self.tso
             else:
                 tso = self.tso_ideal
+
+        # Reshape data
+        if reshape:
+            tso.shape = self.dims3
 
         return tso
 
@@ -624,10 +630,7 @@ class TSO(object):
             Render the figure instead of returning it
         """
         # Get the data cube
-        tso = self._select_datar(order, noise)
-
-        # Reshape data
-        tso.shape = self.dims3
+        tso = self._select_data(order, noise)
 
         # Set the plot args
         wavecal = self.wave
@@ -658,9 +661,6 @@ class TSO(object):
         """
         # Get the data cube
         tso = self._select_data(order, noise)
-
-        # Reshape data
-        tso.shape = self.dims3
 
         # Make the figure
         fig = plotting.plot_ramp(tso)
@@ -773,7 +773,7 @@ class TSO(object):
 
         # Get extracted spectrum (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
-        flux_out = np.sum(tso.reshape(self.dims3)[frame].data, axis=0)
+        flux_out = np.sum(tso[frame].data, axis=0)
         response = 1./self.order1_response
 
         # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
