@@ -574,7 +574,7 @@ class TSO(object):
             self._planet = spectrum
 
     @run_required
-    def _select_data(self, order, noise, reshape=3):
+    def _select_data(self, order, noise, reshape=True):
         """
         Select the data given the order and noise args
 
@@ -607,8 +607,7 @@ class TSO(object):
         return tso
 
     @run_required
-    def plot(self, idx=0, scale='linear', order=None, noise=True,
-                   traces=False, saturation=0.8, draw=True):
+    def plot(self, idx=0, scale='linear', order=None, noise=True, traces=False, saturation=0.8, draw=True):
         """
         Plot a TSO frame
 
