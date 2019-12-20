@@ -680,7 +680,7 @@ class TSO(object):
         # Get the scaled flux in each column for the last group in
         # each integration
         flux_cols = np.nansum(self.tso_ideal.reshape(self.dims3)[self.ngrps-1::self.ngrps], axis=1)
-        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
+        flux_cols = flux_cols=flux_cols/np.nanmax(flux_cols, axis=0)[None, :]
 
         # Make it into an array
         if isinstance(column, (int, float)):
@@ -720,7 +720,7 @@ class TSO(object):
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
 
-                lc.line(time, theory, legend=label+' model', color=color, alpha=0.1)
+                lc.line(time, theory, legend=label+' model', color=color, alpha=0.8)
 
             # Convert datetime
             data_time = self.time[self.ngrps-1::self.ngrps].copy()
