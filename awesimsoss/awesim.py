@@ -713,18 +713,20 @@ class TSO(object):
 
                 # Make time axis and convert to desired units
                 time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-                time = time*q.d.to(time_unit)
+                time = time*q.s.to('d')
 
                 tmodel = batman.TransitModel(self.tmodel, time)
                 tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
 
+                time = time*q.d.to(time_unit)
+
                 lc.line(time, theory, legend=label+' model', color=color, alpha=0.8)
 
-            # Convert datetime
+            # Convert datatime
             data_time = self.time[self.ngrps-1::self.ngrps].copy()
-            data_time*q.d.to(time_unit)
+            data_time = data_time*q.s.to(time_unit)
 
             # Plot the lightcurve
             lc.circle(data_time, lightcurve, legend=label, color=color)
