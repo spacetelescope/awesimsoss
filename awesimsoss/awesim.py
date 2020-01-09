@@ -4,6 +4,7 @@ A module to generate simulated 2D time-series SOSS data
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
+from copy import copy
 import datetime
 from functools import partial, wraps
 from multiprocessing.pool import ThreadPool
@@ -172,6 +173,10 @@ class TSO(object):
         # Get the separated orders
         orders = np.asarray([getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders])
 
+        # Make sure they are in 3 dimensions
+        orders = [order.reshape(self.dims3) if order.ndim == 4 else order for order in orders]
+        tso_ideal = self.tso_ideal.reshape(self.dims3) if self.tso_ideal.ndim == 4 else self.tso_ideal
+
         # Load the reference files
         pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
         nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/forward_coefficients_dms.fits'))
@@ -200,10 +205,11 @@ class TSO(object):
         RAMP = gd.make_exposure(1, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
 
         # Iterate over integrations
+        tso = copy(tso_ideal)
         for n in range(self.nints):
 
             # Add in the SOSS signal
-            ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+            ramp = gd.add_signal(tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
 
             # Apply the non-linearity function
             ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
@@ -212,10 +218,13 @@ class TSO(object):
             ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
 
             # Update the TSO with one containing noise
-            self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
+            tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
+
+        # Save the new 3D TSO
+        self.tso = tso
 
         # Memory cleanup
-        del RAMP, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
+        del RAMP, tso, tso_ideal, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders, tso_ideal
 
         print('Noise model finished:', round(time.time()-start, 3), 's')
 
@@ -1258,7 +1267,7 @@ class TestTSO(TSO):
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, **kwargs):
+    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
         """Get the test data and load the object
 
         Parmeters
@@ -1277,11 +1286,13 @@ class BlackbodyTSO(TSO):
             Run the simulation after initialization
         add_planet: bool
             Add a transiting exoplanet
+        scale: int, float
+            Scale the flux by the given factor
         """
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
         wav = np.linspace(0.5, 2.9, 1000) * q.um
-        flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
+        flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8*scale
 
         # Initialize base class
         super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
