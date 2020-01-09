@@ -173,9 +173,9 @@ class TSO(object):
         # Get the separated orders
         orders = np.asarray([getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders])
 
-        # Make sure they are in 3 dimensions
-        orders = [order.reshape(self.dims3) if order.ndim == 4 else order for order in orders]
-        tso_ideal = self.tso_ideal.reshape(self.dims3) if self.tso_ideal.ndim == 4 else self.tso_ideal
+        # Put into 3D
+        orders = [order.reshape(self.dims3) for order in orders]
+        tso_ideal = self.tso_ideal.reshape(self.dims3)
 
         # Load the reference files
         pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
@@ -220,11 +220,11 @@ class TSO(object):
             # Update the TSO with one containing noise
             tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
 
-        # Save the new 3D TSO
-        self.tso = tso
+        # Put into 4D
+        self.tso = tso.reshape(self.dims)
 
         # Memory cleanup
-        del RAMP, tso, tso_ideal, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders, tso_ideal
+        del RAMP, tso, tso_ideal, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
 
         print('Noise model finished:', round(time.time()-start, 3), 's')
 
@@ -1010,16 +1010,14 @@ class TSO(object):
                 setattr(self, arr, full)
                 del full
 
+        # Reshape into (nints, ngrps, y, x)
+        for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+            setattr(self, arr, getattr(self, arr).reshape(self.dims))
+
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
         if noise:
             self.add_noise()
-
-        # Reshape into (nints, ngrps, y, x)
-        for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
-            data = getattr(self, arr).reshape(self.dims)
-            setattr(self, arr, data)
-            del data
 
         # Simulate reference pixels
         self.add_refpix()
