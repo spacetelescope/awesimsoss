@@ -17,8 +17,9 @@ import warnings
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
-from astropy.modeling.models import BlackBody1D
+from astropy.modeling.models import BlackBody1D, Voigt1D, Gaussian1D, Lorentz1D
 from astropy.modeling.blackbody import FLAM
+import astropy.table as at
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 import batman
@@ -145,6 +146,7 @@ class TSO(object):
         self.subarray = subarray
 
         # Set instance attributes for the target
+        self.lines = at.Table(names=('name', 'profile', 'x_0', 'amp', 'fwhm', 'flux'), dtype=('S20', 'S20', float, float, 'O', 'O'))
         self.star = star
         self.tmodel = tmodel
         self.ld_coeffs = np.zeros((3, 2048, 2))
@@ -154,6 +156,58 @@ class TSO(object):
         # Reset data based on subarray and observation settings
         self._reset_data()
         self._reset_time()
+
+    def add_line(self, x_0, amplitude, fwhm, profile='lorentz', name='Line I'):
+        """
+        Add an emission or absorption line to the spectrum
+
+        Parameters
+        ----------
+        x_0: astropy.units.quantity.Quantity
+            The rest wavelength of the line
+        amplitude: astropy.units.quantity.Quantity
+            The amplitude of the line relative to the continuum,
+            with negative value for absorption and positive for emission
+        fwhm: astropy.units.quantity.Quantity, sequence
+            The full-width-half-max(s) of the line ('voigt' requires 2)
+        profile: str
+            The profile to use, ['voigt', 'lorentz', 'gaussian']
+        name: str
+            A name for the line
+        """
+        # Check the profile
+        profiles = {'voigt': Voigt1D, 'gaussian': Gaussian1D, 'lorentz': Lorentz1D}
+        if profile not in profiles:
+            raise ValueError("'{}' profile not supported. Please select from {}".format(profile, list(profiles.keys())))
+
+        # Select the profile
+        prof = profiles[profile]
+
+        # Convert to match star units and remove units
+        x_0 = x_0.to(self.star[0].unit).value
+        amplitude = amplitude.to(self.star[1].unit).value
+
+        # Generate the line function
+        if profile == 'voigt':
+            if len(fwhm) != 2:
+                raise TypeError("fwhm must be sequence of two values for Voigt profile.")
+            else:
+                fwhm_L, fwhm_G = [fw.to(self.star[0].unit).value for fw in fwhm]
+            func = prof(amplitude_L=amplitude, x_0=x_0, fwhm_L=fwhm_L, fwhm_G=fwhm_G)
+
+        elif profile == 'lorentz':
+            fwhm = fwhm.to(self.star[0].unit).value
+            func = prof(amplitude=amplitude, x_0=x_0, fwhm=fwhm)
+
+        elif profile == 'gaussian':
+            fwhm = fwhm.to(self.star[0].unit).value
+            func = prof(amplitude=amplitude, mean=x_0, stddev=fwhm/2.355)
+
+        # Evaluate the profile
+        line = func(self.star[0].value)*self.star[1].unit
+
+        # Add the line to the line list
+        self.lines.add_row([name, profile, x_0, amplitude, fwhm, line])
 
     @run_required
     def add_noise(self, zodi_scale=1., offset=500):
@@ -171,10 +225,10 @@ class TSO(object):
         start = time.time()
 
         # Get the separated orders
-        orders = np.asarray([getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders])
+        orders = [getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders]
 
         # Put into 3D
-        orders = [order.reshape(self.dims3) for order in orders]
+        orders = np.array([order.reshape(self.dims3) for order in orders])
         tso_ideal = self.tso_ideal.reshape(self.dims3)
 
         # Load the reference files
@@ -583,39 +637,6 @@ class TSO(object):
             self._planet = spectrum
 
     @run_required
-    def _select_data(self, order, noise, reshape=True):
-        """
-        Select the data given the order and noise args
-
-        Parameters
-        ----------
-        order: int (optional)
-            The order to use, [1, 2, 3]
-        noise: bool
-            Include noise model
-        reshape: bool
-            Reshape to 3 dimensions
-
-        Returns
-        -------
-        np.ndarray
-            The selected data
-        """
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Reshape data
-        if reshape:
-            tso.shape = self.dims3
-
-        return tso
-
-    @run_required
     def plot(self, idx=0, scale='linear', order=None, noise=True, traces=False, saturation=0.8, draw=True):
         """
         Plot a TSO frame
@@ -860,6 +881,10 @@ class TSO(object):
                 ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
                 response = np.interp(wave, ph_wave, ph_resp)
 
+                # Add spectral lines if necessary
+                for line in self.lines:
+                    self.star[1] += line['flux']
+
                 # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
                 # that we can convert the flux at each wavelegth into [ADU/s]
                 response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
@@ -867,6 +892,39 @@ class TSO(object):
                 cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux[:, None, None]
                 setattr(self, 'order{}_response'.format(order), response)
                 setattr(self, 'order{}_psfs'.format(order), cube)
+
+    @run_required
+    def _select_data(self, order, noise, reshape=True):
+        """
+        Select the data given the order and noise args
+
+        Parameters
+        ----------
+        order: int (optional)
+            The order to use, [1, 2, 3]
+        noise: bool
+            Include noise model
+        reshape: bool
+            Reshape to 3 dimensions
+
+        Returns
+        -------
+        np.ndarray
+            The selected data
+        """
+        if order in [1, 2]:
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
+        else:
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
+
+        # Reshape data
+        if reshape:
+            tso.shape = self.dims3
+
+        return tso
 
     def simulate(self, ld_coeffs=None, noise=True, model_grid=None, n_jobs=-1, **kwargs):
         """
