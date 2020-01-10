@@ -4,6 +4,7 @@ A module to generate simulated 2D time-series SOSS data
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
+from copy import copy
 import datetime
 from functools import partial, wraps
 from multiprocessing.pool import ThreadPool
@@ -16,8 +17,9 @@ import warnings
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
-from astropy.modeling.models import BlackBody1D
+from astropy.modeling.models import BlackBody1D, Voigt1D, Gaussian1D, Lorentz1D
 from astropy.modeling.blackbody import FLAM
+import astropy.table as at
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 import batman
@@ -144,6 +146,7 @@ class TSO(object):
         self.subarray = subarray
 
         # Set instance attributes for the target
+        self.lines = at.Table(names=('name', 'profile', 'x_0', 'amp', 'fwhm', 'flux'), dtype=('S20', 'S20', float, float, 'O', 'O'))
         self.star = star
         self.tmodel = tmodel
         self.ld_coeffs = np.zeros((3, 2048, 2))
@@ -153,6 +156,61 @@ class TSO(object):
         # Reset data based on subarray and observation settings
         self._reset_data()
         self._reset_time()
+
+    def add_line(self, x_0, amplitude, fwhm, profile='lorentz', name='Line I'):
+        """
+        Add an emission or absorption line to the spectrum
+
+        Parameters
+        ----------
+        x_0: astropy.units.quantity.Quantity
+            The rest wavelength of the line
+        amplitude: astropy.units.quantity.Quantity
+            The amplitude of the line relative to the continuum,
+            with negative value for absorption and positive for emission
+        fwhm: astropy.units.quantity.Quantity, sequence
+            The full-width-half-max(s) of the line ('voigt' requires 2)
+        profile: str
+            The profile to use, ['voigt', 'lorentz', 'gaussian']
+        name: str
+            A name for the line
+        """
+        # Check the profile
+        profiles = {'voigt': Voigt1D, 'gaussian': Gaussian1D, 'lorentz': Lorentz1D}
+        if profile not in profiles:
+            raise ValueError("'{}' profile not supported. Please select from {}".format(profile, list(profiles.keys())))
+
+        # Select the profile
+        prof = profiles[profile]
+
+        # Convert to match star units and remove units
+        x_0 = x_0.to(self.star[0].unit).value
+        amplitude = amplitude.to(self.star[1].unit).value
+
+        # Generate the line function
+        if profile == 'voigt':
+            if len(fwhm) != 2:
+                raise TypeError("fwhm must be sequence of two values for Voigt profile.")
+            else:
+                fwhm_L, fwhm_G = [fw.to(self.star[0].unit).value for fw in fwhm]
+            func = prof(amplitude_L=amplitude, x_0=x_0, fwhm_L=fwhm_L, fwhm_G=fwhm_G)
+
+        elif profile == 'lorentz':
+            fwhm = fwhm.to(self.star[0].unit).value
+            func = prof(amplitude=amplitude, x_0=x_0, fwhm=fwhm)
+
+        elif profile == 'gaussian':
+            fwhm = fwhm.to(self.star[0].unit).value
+            func = prof(amplitude=amplitude, mean=x_0, stddev=fwhm/2.355)
+
+        # Evaluate the profile
+        line = func(self.star[0].value)*self.star[1].unit
+
+        # Add the line to the line list
+        self.lines.add_row([name, profile, x_0, amplitude, fwhm, line])
+
+        # Reset the psfs
+        self._reset_psfs()
 
     @run_required
     def add_noise(self, zodi_scale=1., offset=500):
@@ -170,7 +228,11 @@ class TSO(object):
         start = time.time()
 
         # Get the separated orders
-        orders = np.asarray([getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders])
+        orders = [getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders]
+
+        # Put into 3D
+        orders = np.array([order.reshape(self.dims3) for order in orders])
+        tso_ideal = self.tso_ideal.reshape(self.dims3)
 
         # Load the reference files
         pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
@@ -200,10 +262,11 @@ class TSO(object):
         RAMP = gd.make_exposure(1, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
 
         # Iterate over integrations
+        tso = copy(tso_ideal)
         for n in range(self.nints):
 
             # Add in the SOSS signal
-            ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+            ramp = gd.add_signal(tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
 
             # Apply the non-linearity function
             ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
@@ -212,10 +275,13 @@ class TSO(object):
             ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
 
             # Update the TSO with one containing noise
-            self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
+            tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
+
+        # Put into 4D
+        self.tso = tso.reshape(self.dims)
 
         # Memory cleanup
-        del RAMP, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
+        del RAMP, tso, tso_ideal, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
 
         print('Noise model finished:', round(time.time()-start, 3), 's')
 
@@ -574,8 +640,7 @@ class TSO(object):
             self._planet = spectrum
 
     @run_required
-    def plot(self, idx=0, scale='linear', order=None, noise=True,
-                   traces=False, saturation=0.8, draw=True):
+    def plot(self, idx=0, scale='linear', order=None, noise=True, traces=False, saturation=0.8, draw=True):
         """
         Plot a TSO frame
 
@@ -585,7 +650,7 @@ class TSO(object):
             The frame index to plot
         scale: str
             Plot scale, ['linear', 'log']
-        order: sequence
+        order: int (optional)
             The order to isolate
         noise: bool
             Plot with the noise model
@@ -597,16 +662,7 @@ class TSO(object):
             Render the figure instead of returning it
         """
         # Get the data cube
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Reshape data
-        tso.shape = self.dims3
+        tso = self._select_data(order, noise)
 
         # Set the plot args
         wavecal = self.wave
@@ -636,16 +692,7 @@ class TSO(object):
             Render the figure instead of returning it
         """
         # Get the data cube
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Reshape data
-        tso.shape = self.dims3
+        tso = self._select_data(order, noise)
 
         # Make the figure
         fig = plotting.plot_ramp(tso)
@@ -753,17 +800,12 @@ class TSO(object):
         draw: bool
             Render the figure instead of returning it
         """
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
+        # Get the data cube
+        tso = self._select_data(order, noise)
 
         # Get extracted spectrum (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
-        flux_out = np.sum(tso.reshape(self.dims3)[frame].data, axis=0)
+        flux_out = np.sum(tso[frame].data, axis=0)
         response = 1./self.order1_response
 
         # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
@@ -842,6 +884,10 @@ class TSO(object):
                 ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
                 response = np.interp(wave, ph_wave, ph_resp)
 
+                # Add spectral lines if necessary
+                for line in self.lines:
+                    self.star[1] += line['flux']
+
                 # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
                 # that we can convert the flux at each wavelegth into [ADU/s]
                 response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
@@ -849,6 +895,39 @@ class TSO(object):
                 cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux[:, None, None]
                 setattr(self, 'order{}_response'.format(order), response)
                 setattr(self, 'order{}_psfs'.format(order), cube)
+
+    @run_required
+    def _select_data(self, order, noise, reshape=True):
+        """
+        Select the data given the order and noise args
+
+        Parameters
+        ----------
+        order: int (optional)
+            The order to use, [1, 2, 3]
+        noise: bool
+            Include noise model
+        reshape: bool
+            Reshape to 3 dimensions
+
+        Returns
+        -------
+        np.ndarray
+            The selected data
+        """
+        if order in [1, 2]:
+            tso = getattr(self, 'tso_order{}_ideal'.format(order))
+        else:
+            if noise:
+                tso = self.tso
+            else:
+                tso = self.tso_ideal
+
+        # Reshape data
+        if reshape:
+            tso.shape = self.dims3
+
+        return tso
 
     def simulate(self, ld_coeffs=None, noise=True, model_grid=None, n_jobs=-1, **kwargs):
         """
@@ -874,12 +953,11 @@ class TSO(object):
 
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
         import batman
-        import astropy.constants as ac
-        planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
+        from hotsoss import PLANET_DATA
         params = batman.TransitParams()
         params.t0 = 0.                                # time of inferior conjunction
         params.per = 5.7214742                        # orbital period (days)
-        params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+        params.a = 3.5                                # semi-major axis (in units of stellar radii)
         params.inc = 89.8                             # orbital inclination (in degrees)
         params.ecc = 0.                               # eccentricity
         params.w = 90.                                # longitude of periastron (in degrees)
@@ -889,7 +967,7 @@ class TSO(object):
         tmodel.teff = 3500                            # effective temperature of the host star
         tmodel.logg = 5                               # log surface gravity of the host star
         tmodel.feh = 0                                # metallicity of the host star
-        tso.simulate(planet=planet1D, tmodel=tmodel)
+        tso.simulate(planet=PLANET_DATA, tmodel=tmodel)
         """
         # Check that there is star data
         if self.star is None:
@@ -992,16 +1070,14 @@ class TSO(object):
                 setattr(self, arr, full)
                 del full
 
+        # Reshape into (nints, ngrps, y, x)
+        for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+            setattr(self, arr, getattr(self, arr).reshape(self.dims))
+
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
         if noise:
             self.add_noise()
-
-        # Reshape into (nints, ngrps, y, x)
-        for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
-            data = getattr(self, arr).reshape(self.dims)
-            setattr(self, arr, data)
-            del data
 
         # Simulate reference pixels
         self.add_refpix()
@@ -1249,7 +1325,7 @@ class TestTSO(TSO):
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, **kwargs):
+    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
         """Get the test data and load the object
 
         Parmeters
@@ -1268,11 +1344,13 @@ class BlackbodyTSO(TSO):
             Run the simulation after initialization
         add_planet: bool
             Add a transiting exoplanet
+        scale: int, float
+            Scale the flux by the given factor
         """
         # Generate a blackbody at the given temperature
         bb = BlackBody1D(temperature=teff*q.K)
         wav = np.linspace(0.5, 2.9, 1000) * q.um
-        flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
+        flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8*scale
 
         # Initialize base class
         super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
