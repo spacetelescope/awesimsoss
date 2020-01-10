@@ -209,6 +209,9 @@ class TSO(object):
         # Add the line to the line list
         self.lines.add_row([name, profile, x_0, amplitude, fwhm, line])
 
+        # Reset the psfs
+        self._reset_psfs()
+
     @run_required
     def add_noise(self, zodi_scale=1., offset=500):
         """
@@ -950,12 +953,11 @@ class TSO(object):
 
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
         import batman
-        import astropy.constants as ac
-        planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
+        from hotsoss import PLANET_DATA
         params = batman.TransitParams()
         params.t0 = 0.                                # time of inferior conjunction
         params.per = 5.7214742                        # orbital period (days)
-        params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+        params.a = 3.5                                # semi-major axis (in units of stellar radii)
         params.inc = 89.8                             # orbital inclination (in degrees)
         params.ecc = 0.                               # eccentricity
         params.w = 90.                                # longitude of periastron (in degrees)
@@ -965,7 +967,7 @@ class TSO(object):
         tmodel.teff = 3500                            # effective temperature of the host star
         tmodel.logg = 5                               # log surface gravity of the host star
         tmodel.feh = 0                                # metallicity of the host star
-        tso.simulate(planet=planet1D, tmodel=tmodel)
+        tso.simulate(planet=PLANET_DATA, tmodel=tmodel)
         """
         # Check that there is star data
         if self.star is None:
