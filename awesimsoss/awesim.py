@@ -134,7 +134,7 @@ class TSO(object):
         self.nints = nints
         self.nresets = nresets
         self.nframes = (self.nresets+self.ngrps)*self.nints
-        self.obs_date = datetime.datetime.now().strftime('%x')
+        self.obs_date = datetime.datetime.now().strftime("%d/%m/%y")
         self.obs_time = datetime.datetime.now().strftime('%X')
         self.orders = orders
         self.filter = filter
