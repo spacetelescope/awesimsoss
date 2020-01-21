@@ -135,7 +135,7 @@ class TSO(object):
         self.nresets = nresets
         self.nframes = (self.nresets+self.ngrps)*self.nints
         self.obs_date = datetime.datetime.now().strftime("%d/%m/%y")
-        self.obs_time = datetime.datetime.now().strftime('%X')
+        self.obs_time = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
         self.orders = orders
         self.filter = filter
         self.header = ''
@@ -270,6 +270,8 @@ class TSO(object):
         mod.meta.exposure.frame_time = self.frame_time
         mod.meta.exposure.group_time = self.group_time
         mod.meta.exposure.duration = self.time[-1]-self.time[0]
+        mod.meta.exposure.nresets_at_start = 1
+        mod.meta.exposure.nresets_between_ints = 1
         mod.meta.subarray.name = self.subarray
         mod.meta.subarray.xsize = data.shape[3]
         mod.meta.subarray.ysize = data.shape[2]
