@@ -136,8 +136,8 @@ class TSO(object):
         self.nints = nints
         self.nresets = nresets
         self.nframes = (self.nresets+self.ngrps)*self.nints
-        self.obs_date = datetime.datetime.now().strftime('%x')
-        self.obs_time = datetime.datetime.now().strftime('%X')
+        self.obs_date = datetime.datetime.now().strftime("%Y-%m-%d")
+        self.obs_time = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
         self.orders = orders
         self.filter = filter
         self.header = ''
@@ -336,6 +336,8 @@ class TSO(object):
         mod.meta.exposure.frame_time = self.frame_time
         mod.meta.exposure.group_time = self.group_time
         mod.meta.exposure.duration = self.time[-1]-self.time[0]
+        mod.meta.exposure.nresets_at_start = 1
+        mod.meta.exposure.nresets_between_ints = 1
         mod.meta.subarray.name = self.subarray
         mod.meta.subarray.xsize = data.shape[3]
         mod.meta.subarray.ysize = data.shape[2]
@@ -727,7 +729,7 @@ class TSO(object):
         # Get the scaled flux in each column for the last group in
         # each integration
         flux_cols = np.nansum(self.tso_ideal.reshape(self.dims3)[self.ngrps-1::self.ngrps], axis=1)
-        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
+        flux_cols = flux_cols/np.nanmax(flux_cols, axis=0)[None, :]
 
         # Make it into an array
         if isinstance(column, (int, float)):
@@ -760,18 +762,20 @@ class TSO(object):
 
                 # Make time axis and convert to desired units
                 time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-                time = time*q.d.to(time_unit)
+                time = time*q.s.to('d')
 
                 tmodel = batman.TransitModel(self.tmodel, time)
                 tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
 
-                lc.line(time, theory, legend=label+' model', color=color, alpha=0.1)
+                time = time*q.d.to(time_unit)
 
-            # Convert datetime
+                lc.line(time, theory, legend=label+' model', color=color, alpha=0.8)
+
+            # Convert datatime
             data_time = self.time[self.ngrps-1::self.ngrps].copy()
-            data_time*q.d.to(time_unit)
+            data_time = data_time*q.s.to(time_unit)
 
             # Plot the lightcurve
             lc.circle(data_time, lightcurve, legend=label, color=color)
