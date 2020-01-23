@@ -682,7 +682,7 @@ class TSO(object):
         # Get the scaled flux in each column for the last group in
         # each integration
         flux_cols = np.nansum(self.tso_ideal.reshape(self.dims3)[self.ngrps-1::self.ngrps], axis=1)
-        flux_cols = flux_cols=flux_cols/np.nanmax(flux_cols, axis=0)[None, :]
+        flux_cols = flux_cols/np.nanmax(flux_cols, axis=0)[None, :]
 
         # Make it into an array
         if isinstance(column, (int, float)):
