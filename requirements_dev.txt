@@ -12,11 +12,11 @@ click==7.0
 astropy==4.0
 numpy==1.16.1
 bokeh==1.0.4
-svo_filters==0.2.16
+svo_filters==0.2.19
 scipy==1.1.0
 astroquery==0.4
-hotsoss==0.1.5
-# webbpsf==0.7.0
+hotsoss==0.1.6
+webbpsf
 batman-package==2.4.6
 
 pytest==4.0.0
