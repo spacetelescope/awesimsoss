@@ -316,8 +316,11 @@ class TSO(object):
         outfile: str
             The path of the output file
         """
+        if not outfile.endswith('_uncal.fits'):
+            raise ValueError("Filename must end with '_uncal.fits'")
+
         # Make a RampModel
-        data = self.tso
+        data = copy(self.tso)
         mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
         pix = utils.subarray_specs(self.subarray)
 
@@ -791,6 +794,8 @@ class TSO(object):
     @run_required
     def plot_spectrum(self, frame=0, order=None, noise=False, scale='log', draw=True):
         """
+        Plot a column sum of counts converted to flux density as a function of the mean column wavelength
+
         Parameters
         ----------
         frame: int
@@ -807,14 +812,14 @@ class TSO(object):
         # Get the data cube
         tso = self._select_data(order, noise)
 
-        # Get extracted spectrum (Column sum for now)
+        # Get counts per wavelength (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
-        flux_out = np.sum(tso[frame].data, axis=0)
-        response = 1./self.order1_response
+        counts = np.sum(tso[frame].data, axis=0)
+        response = self.order1_response
 
         # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
         # that we can convert the flux at each wavelegth into [ADU/s]
-        flux_out *= response/self.time[np.mod(self.ngrps, frame)]
+        flux_out = (counts/response/(self.time[np.mod(self.ngrps, frame)]*q.s)).value
 
         # Trim wacky extracted edges
         flux_out[0] = flux_out[-1] = np.nan
@@ -894,8 +899,8 @@ class TSO(object):
 
                 # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
                 # that we can convert the flux at each wavelegth into [ADU/s]
-                response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
-                flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)*response
+                response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit)
+                flux = np.interp(wave, self.star[0].value, self.star[1].value, left=0, right=0)*self.star[1].unit*response
                 cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux[:, None, None]
                 setattr(self, 'order{}_response'.format(order), response)
                 setattr(self, 'order{}_psfs'.format(order), cube)
@@ -920,12 +925,12 @@ class TSO(object):
             The selected data
         """
         if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
+            tso = copy(getattr(self, 'tso_order{}_ideal'.format(order)))
         else:
             if noise:
-                tso = self.tso
+                tso = copy(self.tso)
             else:
-                tso = self.tso_ideal
+                tso = copy(self.tso_ideal)
 
         # Reshape data
         if reshape:
@@ -1009,9 +1014,10 @@ class TSO(object):
             # Set the radius at the given wavelength from the transmission
             # spectrum (Rp/R*)**2... or an array of ones
             if self.planet is not None:
-                tdepth = np.interp(wave, self.planet[0], self.planet[1])
+                tdepth = np.interp(wave, self.planet[0].to(q.um).value, self.planet[1])
             else:
                 tdepth = np.ones_like(wave)
+            tdepth[tdepth < 0] = np.nan
             self.rp = np.sqrt(tdepth)
 
             # Run multiprocessing to generate lightcurves

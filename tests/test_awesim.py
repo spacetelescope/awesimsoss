@@ -85,12 +85,13 @@ class test_TSO(unittest.TestCase):
     def test_export(self):
         """Test the export method"""
         # Make the TSO object and save
-        test_tso = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP256')
-        test_tso.simulate()
-        try:
-            test_tso.export('outfile.fits')
-        except NameError:
-            pass
+        test_tso = TestTSO(add_planet=True)
+
+        # Good filename
+        test_tso.export('outfile_uncal.fits')
+
+        # Bad filename (no '_uncal')
+        self.assertRaises(ValueError, test_tso.export, 'outfile.fits')
 
     def test_init(self):
         """Test that the TSO class is generated properly"""
