@@ -37,6 +37,13 @@ except ImportError:
 from . import generate_darks as gd
 from . import make_trace as mt
 
+# Some extra imports for PHOENIX model download:
+import zipfile
+import shutil
+import glob
+import urllib.request as request
+from contextlib import closing
+
 
 warnings.simplefilter('ignore')
 
@@ -1366,4 +1373,160 @@ class BlackbodyTSO(TSO):
 
         # Run the simulation
         if run:
+            self.simulate()
+
+class ModelTSO(TSO):
+    def closest_value(self, input_value, mode):
+        """
+        This function calculates, given a user-defined metallicity or alpha-enhancement, the closest one to the PHOENIX model grid.
+        """
+        if mode == 'metallicity':
+             # Possible PHOENIX metallicities:
+             possible_values = np.array([-4.0,-3.0,-2.0,-1.5,-1.0,-0.5,0.0,0.5,1.0])
+        elif mode == 'alpha':
+             # Possible PHOENIX alphas:
+             possible_values = np.array([-0.2,0.0,0.2,0.4,0.6,0.8,1.0,1.20])
+        distance = np.abs(possible_values - input_value)
+        idx = np.where(distance == np.min(distance))[0]
+        return possible_values[idx[0]]
+
+    def get_zip_fname(self, feh, alpha):
+        """
+        Given input metallicity and alpha-enhancement, this function 
+        """
+        model_metallicity = closest_value(feh, mode = 'metallicity')
+        model_alpha = closest_value(alpha, mode = 'alpha')
+        met_sign, alpha_sign = '-', '-'
+        # Define the sign before the filename, obtain absolute value if needed:
+        if model_metallicity > 0.0:
+            met_sign = '+'
+        else:
+            model_metallicity = np.abs(model_metallicity)
+        if model_alpha > 0.0:
+            alpha_sign = '+'
+        else:
+            model_alpha = np.abs(model_alpha)
+        # Create the filename:
+        if alpha == 0.0:
+            fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/MedResFITS/R10000FITS/PHOENIX-ACES-AGSS-COND-2011_R10000FITS_Z{0:}{1:.1f}.zip'.format(met_sign,model_metallicity)
+        else:
+            if (model_metallicity == 4.0 and met_sign == '-') or (model_metallicity > 0.0 and met_sign == '+'):
+                fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/MedResFITS/R10000FITS/PHOENIX-ACES-AGSS-COND-2011_R10000FITS_Z{0:}{1:.1f}.zip'.format(met_sign,model_metallicity)
+            else:
+                fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/MedResFITS/R10000FITS/PHOENIX-ACES-AGSS-COND-2011_R10000FITS_Z{0:}{1:.1f}.Alpha={2:}{3:.2f}.zip'.format(met_sign,\
+                                                                                                                                              model_metallicity,alpha_sign,model_alpha)
+        return fname
+
+    def download(self, url, fname):
+        """
+        Download files from ftp server at url in filename fname. Obtained from jfs here: https://stackoverflow.com/questions/11768214/python-download-a-file-over-an-ftp-server
+        """
+        with closing(request.urlopen(url)) as r:
+            with open(fname, 'wb') as f:
+                shutil.copyfileobj(r, f)
+
+    def unzip(self, input_file, outfolder):
+        """
+        Given input_file, a filename for a zip file, unzip it on the outfolder 
+        """
+        with zipfile.ZipFile(input_file,'r') as zip_ref:
+             zip_ref.extractall(outfolder)
+
+    def select_model(self, folder, teff, logg):
+        """
+        Given a folder full of .fits with PHOENIX models, choose the model that has the closest teff and logg to the input ones:
+        """
+        all_files = np.array(glob.glob(folder+'/*.fits'))
+        teffs = np.zeros(len(all_files))
+        loggs = np.zeros(len(all_files))
+        for i in range(len(all_files)):
+            t,l = all_files[i].split('/')[-1].split('-')[:2]
+            teffs[i], loggs[i] = np.double(t[3:]),np.double(l)
+        # First choose the closest model in teff space:
+        distance = np.abs(teffs - teff)
+        idx_t = np.where(distance == np.min(distance))[0]
+        # From all the chosen ones, select the one that gives the closest one in logg space:
+        distance = np.abs(loggs[idx_t] - logg)
+        idx_l = np.where(distance == np.min(distance))[0]
+        return all_files[idx_t[idx_l][0]]
+
+
+    """Generate a test object with a blackbody spectrum"""
+    def __init__(self, ngrps=2, nints=2, teff=5700.0, logg = 4.0, feh = 0.0, vturb = 2.0, alpha = 0.0, jmag = 9.0, stellar_model = 'PHOENIX', filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
+        """Get the test data and load the object
+
+        Parmeters
+        ---------
+        ngrps: int
+            The number of groups per integration
+        nints: int
+            The number of integrations for the exposure
+        teff: double
+            The effective temperature in kelvins of the stellar source
+        logg: double
+            The log-gravity of the stellar source
+        feh: double
+            The [Fe/H] of the stellar source
+        vturb: double
+            The microturbulent velocity of the stellar source in km/s
+        alpha: double
+            The alpha enhancement of the stellar source
+        jmag: double
+            The J magnitude of the source
+        stellar_model: str
+            The stellar model grid to use. Can either be 'ATLAS' or 'PHOENIX'. Default is 'PHOENIX'
+        filter: str
+            The name of the filter to use, ['CLEAR', 'F277W']
+        subarray: str
+            The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
+        run: bool
+            Run the simulation after initialization
+        add_planet: bool
+            Add a transiting exoplanet
+        scale: int, float
+            Scale the flux by the given factor
+        """
+        # Retrieve PHOENIX stellar model if not already in the system:
+        if stellar_model.lower() == 'phoenix':
+            # First get grid corresponding to input Fe/H and alpha:
+            url = self.get_zip_fname(feh, alpha)
+            filename = fname.split('/')[-1].split('.zip')[0]
+            folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
+            # Check if we already have the downloaded and unzipped models. If not, download and unzip them:
+            if not os.path.exists(folder_path+filename):
+                print('PHOENIX stellar models for Fe/H = {0:.2f} and alpha = {1:.2f} not found in {2:}. Downloading them...'.format(feh,alpha,folder_path))
+                if not os.path.exists(folder_path):
+                    os.mkdir(folder_path)
+                if not os.path.exists(folder_path+filename):
+                    os.mkdir(folder_path+filename)
+                self.download(url,folder_path+filename+'/file.zip')
+                self.unzip(folder_path+filename+'/file.zip',folder_path+filename)
+                os.remove(folder_path+filename+'/file.zip')
+            # Once we have the files, simply look for the model that is closer to the input temperature and log-g the user wanted:
+            selected_model = self.select_model(folder_path+filename, teff, logg)
+            # Open the selected model. Extract flux and header, to extract wavelength solution:
+            flux,h = fits.getdata(selected_model,header=True)
+            # Extract wavelength solution:
+            CDELT1, CRVAL1 = h['CDELT1'], h['CRVAL1']
+            if 'LOG' in h['CTYPE1']:
+                wavelengths = np.exp(np.arange(len(flux)) * CDELT1 + CRVAL1)
+            else:
+                wavelengths = np.arange(len(flux)) * CDELT1 + CRVAL1
+            wav = wavelengths * q.angstrom
+            # Need to convert flux: flux = flux * 
+        else:
+            bb = BlackBody1D(temperature=teff*q.K)
+            wav = np.linspace(0.5, 2.9, 1000) * q.um 
+            flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8*scale
+
+        # Initialize base class
+        super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
+
+        # Add planet
+        if add_planet:
+            self.planet = utils.PLANET_DATA
+            self.tmodel = utils.transit_params(self.time)
+
+        # Run the simulation
+        if run: 
             self.simulate()
