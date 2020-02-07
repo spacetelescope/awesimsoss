@@ -1397,8 +1397,8 @@ class ModelTSO(TSO):
         """
         Given input metallicity and alpha-enhancement, this function 
         """
-        model_metallicity = closest_value(feh, mode = 'metallicity')
-        model_alpha = closest_value(alpha, mode = 'alpha')
+        model_metallicity = self.closest_value(feh, mode = 'metallicity')
+        model_alpha = self.closest_value(alpha, mode = 'alpha')
         met_sign, alpha_sign = '-', '-'
         # Define the sign before the filename, obtain absolute value if needed:
         if model_metallicity > 0.0:
@@ -1465,12 +1465,12 @@ class ModelTSO(TSO):
     def get_phoenix_model(self, feh, alpha, teff, logg):
         # First get grid corresponding to input Fe/H and alpha:
         url = self.get_zip_fname(feh, alpha)
-        filename = fname.split('/')[-1].split('.zip')[0]
+        filename = url.split('/')[-1].split('.zip')[0]
         folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
 
         # Check if we already have the downloaded and unzipped models. If not, download and unzip them:
         if not os.path.exists(folder_path+filename):
-            print('PHOENIX stellar models for Fe/H = {0:.2f} and alpha = {1:.2f} not found in {2:}. Downloading them...'.format(feh,alpha,folder_path))
+            print('PHOENIX stellar models for Fe/H = {0:.2f} and alpha = {1:.2f} \n not found in {2:}. Downloading them (this might take a while...).'.format(feh,alpha,folder_path))
             if not os.path.exists(folder_path):
                 os.mkdir(folder_path)
             if not os.path.exists(folder_path+filename):
@@ -1495,7 +1495,7 @@ class ModelTSO(TSO):
         flux = (flux * (q.erg/q.s/q.cm**2/q.cm)).to(q.erg/q.s/q.cm**2/q.AA)
         return wav, flux
 
-    def spec_integral(w,f,wT,TT):
+    def spec_integral(self, w, f, wT, TT):
         """
         This function computes the integral of lambda*f*T divided by the integral of lambda*T, where 
         lambda is the wavelength, f the flux (in f-lambda) and T the transmission function. The input 
@@ -1505,7 +1505,7 @@ class ModelTSO(TSO):
         """
 
         interp_spectra = interpolate.interp1d(w,f)
-        numerator = np.trapz(wT*interp_vega(wT)*TT, x = wT)
+        numerator = np.trapz(wT*interp_spectra(wT)*TT, x = wT)
         denominator = np.trapz(wT*TT, x = wT)
         return numerator/denominator
 
@@ -1515,7 +1515,7 @@ class ModelTSO(TSO):
         Casagrande et al. (2014, MNRAS, 444, 392).
         """
         # Get filter response (note wT is in microns):
-        wT,TT = np.loadtxt(resource_filename('awesimsoss', 'files/jband_transmission.dat'),unpack=True,usecol=(0,1))
+        wT,TT = np.loadtxt(resource_filename('awesimsoss', 'files/jband_transmission.dat'),unpack=True,usecols=(0,1))
         # Get spectrum of vega:
         w_vega,f_vega = self.get_vega()
         # Use those two to get the absolute flux calibration for Vega (left-most term in equation (9) in Casagrande et al., 2014).
@@ -1572,6 +1572,8 @@ class ModelTSO(TSO):
         # Now scale model spectrum to user-input J-band:
         f = self.scale_spectrum(w,f,jmag)
 
+        self.stellar_spectrum_wav = w
+        self.stellar_spectrum_flux = f
         # Initialize base class
         super().__init__(ngrps=ngrps, nints=nints, star=[w, f], subarray=subarray, filter=filter, **kwargs)
 
