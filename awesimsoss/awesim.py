@@ -37,12 +37,15 @@ except ImportError:
 from . import generate_darks as gd
 from . import make_trace as mt
 
-# Some extra imports for PHOENIX model download:
+# Some extra imports for PHOENIX model downloads:
 import zipfile
 import shutil
 import glob
 import urllib.request as request
 from contextlib import closing
+
+# Interpolation tools:
+from scipy import interpolate
 
 
 warnings.simplefilter('ignore')
@@ -1450,6 +1453,82 @@ class ModelTSO(TSO):
         idx_l = np.where(distance == np.min(distance))[0]
         return all_files[idx_t[idx_l][0]]
 
+    def get_vega(self):
+        """
+        This functions reads in the spectrum of Vega (Alpha Lyr) from CALSPEC
+        """
+        data = fits.getdata(resource_filename('awesimsoss', 'files/alpha_lyr_stis_009.fits'),header=False)
+        # Wavelength is in Angstroms, convert to microns to match the get_phoenix_model function. 
+        # Flux is in Flambda (same as Phoenix; i.e., erg/s/cm2/A):
+        return (data['WAVELENGTH']*q.angstrom).to(q.um),data['FLUX']*(q.erg/q.s/q.cm**2/q.AA) 
+    
+    def get_phoenix_model(self, feh, alpha, teff, logg):
+        # First get grid corresponding to input Fe/H and alpha:
+        url = self.get_zip_fname(feh, alpha)
+        filename = fname.split('/')[-1].split('.zip')[0]
+        folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
+
+        # Check if we already have the downloaded and unzipped models. If not, download and unzip them:
+        if not os.path.exists(folder_path+filename):
+            print('PHOENIX stellar models for Fe/H = {0:.2f} and alpha = {1:.2f} not found in {2:}. Downloading them...'.format(feh,alpha,folder_path))
+            if not os.path.exists(folder_path):
+                os.mkdir(folder_path)
+            if not os.path.exists(folder_path+filename):
+                os.mkdir(folder_path+filename)
+            self.download(url,folder_path+filename+'/file.zip')
+            self.unzip(folder_path+filename+'/file.zip',folder_path+filename)
+            os.remove(folder_path+filename+'/file.zip')
+
+        # Once we have the files, simply look for the model that is closer to the input temperature and log-g the user wanted:
+        selected_model = self.select_model(folder_path+filename, teff, logg)
+        # Open the selected model. Extract flux and header, to extract wavelength solution:
+        flux,h = fits.getdata(selected_model,header=True)
+        # Extract wavelength solution:
+        CDELT1, CRVAL1 = h['CDELT1'], h['CRVAL1']
+        if 'LOG' in h['CTYPE1']:
+            wavelengths = np.exp(np.arange(len(flux)) * CDELT1 + CRVAL1)
+        else:
+            wavelengths = np.arange(len(flux)) * CDELT1 + CRVAL1
+
+        # Change units in order to match what is expected by the TSO modules:
+        wav = (wavelengths * q.angstrom).to(q.um)
+        flux = (flux * (q.erg/q.s/q.cm**2/q.cm)).to(q.erg/q.s/q.cm**2/q.AA)
+        return wav, flux
+
+    def spec_integral(w,f,wT,TT):
+        """
+        This function computes the integral of lambda*f*T divided by the integral of lambda*T, where 
+        lambda is the wavelength, f the flux (in f-lambda) and T the transmission function. The input 
+        stellar spectrum is given by wavelength w and flux f. The input filter response wavelengths 
+        are given by wT and transmission curve by TT. It is assumed both w and wT are in the same wavelength 
+        units.
+        """
+
+        interp_spectra = interpolate.interp1d(w,f)
+        numerator = np.trapz(wT*interp_vega(wT)*TT, x = wT)
+        denominator = np.trapz(wT*TT, x = wT)
+        return numerator/denominator
+
+    def scale_spectrum(self, w, f, jmag):
+        """
+        Function expects input wavelength (w) in um, flux (f) in erg/s/cm2/A. To scale the spectra, we use equation (8) in 
+        Casagrande et al. (2014, MNRAS, 444, 392).
+        """
+        # Get filter response (note wT is in microns):
+        wT,TT = np.loadtxt(resource_filename('awesimsoss', 'files/jband_transmission.dat'),unpack=True,usecol=(0,1))
+        # Get spectrum of vega:
+        w_vega,f_vega = self.get_vega()
+        # Use those two to get the absolute flux calibration for Vega (left-most term in equation (9) in Casagrande et al., 2014).
+        # Multiply wavelengths by 1e4 as they are in microns (i.e., transform back to angstroms both wavelength ranges):
+        vega_weighted_flux = self.spec_integral(w_vega*1e4, f_vega, wT*1e4, TT)
+        # J-band zero-point is thus (maginutde of Vega, m_*, obtained from Table 1 in Casagrande et al, 2014):
+        ZP = -0.001 + 2.5*np.log10(vega_weighted_flux)
+        # Now compute (inverse?) bolometric correction for target star. For this, compute same integral as for vega, but for target:
+        target_weighted_flux = self.spec_integral(w*1e4, f, wT*1e4, TT)
+        # Get scaling factor for target spectrum (this ommits any extinction):
+        scaling_factor = 10**(-((jmag + 2.5*np.log10(target_weighted_flux) - ZP)/2.5))
+        # Return scaled spectrum:
+        return f*scaling_factor
 
     """Generate a test object with a blackbody spectrum"""
     def __init__(self, ngrps=2, nints=2, teff=5700.0, logg = 4.0, feh = 0.0, vturb = 2.0, alpha = 0.0, jmag = 9.0, stellar_model = 'PHOENIX', filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
@@ -1486,41 +1565,15 @@ class ModelTSO(TSO):
         scale: int, float
             Scale the flux by the given factor
         """
-        # Retrieve PHOENIX stellar model if not already in the system:
+        # Retrieve PHOENIX stellar model:
         if stellar_model.lower() == 'phoenix':
-            # First get grid corresponding to input Fe/H and alpha:
-            url = self.get_zip_fname(feh, alpha)
-            filename = fname.split('/')[-1].split('.zip')[0]
-            folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
-            # Check if we already have the downloaded and unzipped models. If not, download and unzip them:
-            if not os.path.exists(folder_path+filename):
-                print('PHOENIX stellar models for Fe/H = {0:.2f} and alpha = {1:.2f} not found in {2:}. Downloading them...'.format(feh,alpha,folder_path))
-                if not os.path.exists(folder_path):
-                    os.mkdir(folder_path)
-                if not os.path.exists(folder_path+filename):
-                    os.mkdir(folder_path+filename)
-                self.download(url,folder_path+filename+'/file.zip')
-                self.unzip(folder_path+filename+'/file.zip',folder_path+filename)
-                os.remove(folder_path+filename+'/file.zip')
-            # Once we have the files, simply look for the model that is closer to the input temperature and log-g the user wanted:
-            selected_model = self.select_model(folder_path+filename, teff, logg)
-            # Open the selected model. Extract flux and header, to extract wavelength solution:
-            flux,h = fits.getdata(selected_model,header=True)
-            # Extract wavelength solution:
-            CDELT1, CRVAL1 = h['CDELT1'], h['CRVAL1']
-            if 'LOG' in h['CTYPE1']:
-                wavelengths = np.exp(np.arange(len(flux)) * CDELT1 + CRVAL1)
-            else:
-                wavelengths = np.arange(len(flux)) * CDELT1 + CRVAL1
-            wav = wavelengths * q.angstrom
-            # Need to convert flux: flux = flux * 
-        else:
-            bb = BlackBody1D(temperature=teff*q.K)
-            wav = np.linspace(0.5, 2.9, 1000) * q.um 
-            flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8*scale
+            w,f = self.get_phoenix_model(feh, alpha, teff, logg)
+
+        # Now scale model spectrum to user-input J-band:
+        f = self.scale_spectrum(w,f,jmag)
 
         # Initialize base class
-        super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
+        super().__init__(ngrps=ngrps, nints=nints, star=[w, f], subarray=subarray, filter=filter, **kwargs)
 
         # Add planet
         if add_planet:
