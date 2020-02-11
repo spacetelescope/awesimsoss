@@ -1379,26 +1379,24 @@ class BlackbodyTSO(TSO):
             self.simulate()
 
 class ModelTSO(TSO):
-    def closest_value(self, input_value, mode):
+    def closest_value(self, input_value, possible_values):
         """
-        This function calculates, given a user-defined metallicity or alpha-enhancement, the closest one to the PHOENIX model grid.
+        This function calculates, given an input_value and an array of possible_values, 
+        the closest value to input_value in the array.
         """
-        if mode == 'metallicity':
-             # Possible PHOENIX metallicities:
-             possible_values = np.array([-4.0,-3.0,-2.0,-1.5,-1.0,-0.5,0.0,0.5,1.0])
-        elif mode == 'alpha':
-             # Possible PHOENIX alphas:
-             possible_values = np.array([-0.2,0.0,0.2,0.4,0.6,0.8,1.0,1.20])
         distance = np.abs(possible_values - input_value)
         idx = np.where(distance == np.min(distance))[0]
         return possible_values[idx[0]]
 
-    def get_zip_fname(self, feh, alpha):
+    def get_phoenix_folder(self, feh, alpha):
         """
-        Given input metallicity and alpha-enhancement, this function 
+        Given input metallicity and alpha-enhancement, this function defines the first part of the URL that will define what 
+        file to download from the PHOENIX site.
         """
-        model_metallicity = self.closest_value(feh, mode = 'metallicity')
-        model_alpha = self.closest_value(alpha, mode = 'alpha')
+        # Define closest possible metallicity from PHOENIX models:
+        model_metallicity = self.closest_value(feh, np.array([-4.0,-3.0,-2.0,-1.5,-1.0,-0.5,0.0,0.5,1.0]))
+        # Same for alpha-enhancement:
+        model_alpha = self.closest_value(alpha, np.array([-0.2,0.0,0.2,0.4,0.6,0.8,1.0,1.20]))
         met_sign, alpha_sign = '-', '-'
         # Define the sign before the filename, obtain absolute value if needed:
         if model_metallicity > 0.0:
@@ -1409,15 +1407,11 @@ class ModelTSO(TSO):
             alpha_sign = '+'
         else:
             model_alpha = np.abs(model_alpha)
-        # Create the filename:
+        # Create the folder name
         if alpha == 0.0:
-            fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/MedResFITS/R10000FITS/PHOENIX-ACES-AGSS-COND-2011_R10000FITS_Z{0:}{1:.1f}.zip'.format(met_sign,model_metallicity)
+            fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/Z{0:}{1:.1f}/'.format(met_sign,model_metallicity)
         else:
-            if (model_metallicity == 4.0 and met_sign == '-') or (model_metallicity > 0.0 and met_sign == '+'):
-                fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/MedResFITS/R10000FITS/PHOENIX-ACES-AGSS-COND-2011_R10000FITS_Z{0:}{1:.1f}.zip'.format(met_sign,model_metallicity)
-            else:
-                fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/MedResFITS/R10000FITS/PHOENIX-ACES-AGSS-COND-2011_R10000FITS_Z{0:}{1:.1f}.Alpha={2:}{3:.2f}.zip'.format(met_sign,\
-                                                                                                                                              model_metallicity,alpha_sign,model_alpha)
+            fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/Z{0:}{1:.1f}.Alpha={2:}{3:.2f}/'.format(met_sign,model_metallicity,alpha_sign,model_alpha)
         return fname
 
     def download(self, url, fname):
@@ -1461,34 +1455,95 @@ class ModelTSO(TSO):
         # Wavelength is in Angstroms, convert to microns to match the get_phoenix_model function. 
         # Flux is in Flambda (same as Phoenix; i.e., erg/s/cm2/A):
         return (data['WAVELENGTH']*q.angstrom).to(q.um),data['FLUX']*(q.erg/q.s/q.cm**2/q.AA) 
+
+    def read_phoenix_list(self, phoenix_model_list):
+        fin = open(phoenix_model_list,'r')
+        fnames = np.array([])
+        teffs = np.array([])
+        loggs = np.array([])
+        while True:
+            line = fin.readline()
+            if line!='':
+                fname = line.split()[-1]
+                teff, logg = fname.split('-')[:2]
+                fnames = np.append(fnames, fname)
+                teffs = np.append(teffs, np.double(teff[3:]))
+                loggs = np.append(loggs, np.double(logg))
+
+            else:
+                break
+        return fnames, teffs, loggs
     
     def get_phoenix_model(self, feh, alpha, teff, logg):
         # First get grid corresponding to input Fe/H and alpha:
-        url = self.get_zip_fname(feh, alpha)
-        filename = url.split('/')[-1].split('.zip')[0]
-        folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
+        url_folder = self.get_phoenix_folder(feh, alpha)
+        # Now define details for filenames and folders. First, extract metallicity and alpha-enhancement in 
+        # the PHOENIX filename format (and get rid of the "Z" in, e.g., "Z-1.0.Alpha=-0.20"):
+        phoenix_met_and_alpha = url_folder.split('/')[-2][1:]
+        # Define folders where we will save (1) all stellar model data and (2) all phoenix models:
+        stellarmodels_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
+        phoenix_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/phoenix/')
+        model_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/phoenix/'+phoenix_met_and_alpha+'/')
 
-        # Check if we already have the downloaded and unzipped models. If not, download and unzip them:
-        if not os.path.exists(folder_path+filename):
-            print('PHOENIX stellar models for Fe/H = {0:.2f} and alpha = {1:.2f} \n not found in {2:}. Downloading them (this might take a while...).'.format(feh,alpha,folder_path))
-            if not os.path.exists(folder_path):
-                os.mkdir(folder_path)
-            if not os.path.exists(folder_path+filename):
-                os.mkdir(folder_path+filename)
-            self.download(url,folder_path+filename+'/file.zip')
-            self.unzip(folder_path+filename+'/file.zip',folder_path+filename)
-            os.remove(folder_path+filename+'/file.zip')
+        # Check if we even have stellarmodels folder created. Create it if not:
+        if not os.path.exists(stellarmodels_folder_path):
+            os.mkdir(stellarmodels_folder_path)
+        # Same for phoenix folder:
+        if not os.path.exists(phoenix_folder_path):
+            os.mkdir(phoenix_folder_path)
+        # Check if the current metallicity-alpha folder exists as well:
+        if not os.path.exists(model_folder_path):
+            os.mkdir(model_folder_path)
 
-        # Once we have the files, simply look for the model that is closer to the input temperature and log-g the user wanted:
-        selected_model = self.select_model(folder_path+filename, teff, logg)
-        # Open the selected model. Extract flux and header, to extract wavelength solution:
-        flux,h = fits.getdata(selected_model,header=True)
+        # Check if we have the PHOENIX wavelength solution. If not, download it:
+        if not os.path.exists(phoenix_folder_path+'wavsol.fits'):
+            self.download('ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/WAVE_PHOENIX-ACES-AGSS-COND-2011.fits',phoenix_folder_path+'wavsol.fits')
+
         # Extract wavelength solution:
-        CDELT1, CRVAL1 = h['CDELT1'], h['CRVAL1']
-        if 'LOG' in h['CTYPE1']:
-            wavelengths = np.exp(np.arange(len(flux)) * CDELT1 + CRVAL1)
-        else:
-            wavelengths = np.arange(len(flux)) * CDELT1 + CRVAL1
+        wavelengths = fits.getdata(phoenix_folder_path+'wavsol.fits')
+
+        # Now, figure out the closest model to the input stellar parameters. For this, first figure out the range of teff and logg 
+        # for the current metallicity and alpha. For this, either retrieve from the system or download the full list of PHOENIX models 
+        # for the current metallicity and alpha. If not already here, save it on the system:
+        phoenix_model_list = model_folder_path+'model_list.txt'
+        if not os.path.exists(phoenix_model_list):
+            self.download(url_folder, phoenix_model_list)
+        # Extract information from this list:
+        model_names, possible_teffs, possible_loggs = self.read_phoenix_list(model_folder_path+'model_list.txt')
+
+        # Search the closest to the input teff:
+        phoenix_teff = self.closest_value(teff, possible_teffs)
+
+        # Raise a warning in case the found teff is outside the PHOENIX model range, give some 
+        # guidance on how to proceed:
+        if np.abs(phoenix_teff-teff)>200.:
+            print('Warning: the input stellar effective temperature is outside the {0:}-{1:} K model range of PHOENIX models for {2:}.'.format(np.min(possible_teffs),np.max(possible_teffs),phoenix_met_and_alpha))
+            if 'Alpha' in phoenix_met_and_alpha:
+                print('         Modelling using a {0:} K model. Using models without alpha-enhancement (alpha = 0.0), which range '+\
+                                'from 2300 to 12000 K would perhaps help find more suitable temperature models.'.format(phoenix_teff))
+            else:
+                print('         Modelling using a {0:} K model.'.format(phoenix_teff))
+
+        # Same excercise for logg, given the teffs:
+        idx_logg = np.where(np.abs(phoenix_teff-possible_teffs) == 0.)[0]
+        phoenix_logg = self.closest_value(logg, possible_loggs[idx_logg])
+        
+        # Select final model:
+        idx = np.where((np.abs(phoenix_teff-possible_teffs) == 0.)&(np.abs(possible_loggs == phoenix_logg)))[0]
+        phoenix_model, phoenix_logg = model_names[idx][0], possible_loggs[idx][0]
+        
+        # Raise warning for logg as well:
+        if np.abs(phoenix_logg - logg)>0.5:
+            print('Warning: the input stellar log-gravity is outside the {0:}-{1:} model range of PHOENIX models for {2:} and Teff {3:}.'.format(\
+                   np.min(possible_loggs[idx_logg]),np.max(possible_loggs[idx_logg]),phoenix_met_and_alpha,phoenix_teff))
+
+        # Check if we already have the downloaded model. If not, download the corresponding file:
+        if not os.path.exists(model_folder_path+phoenix_model):
+            print('PHOENIX stellar models for {0:} not found in {1:}. Downloading...'.format(phoenix_met_and_alpha,model_folder_path))
+            self.download(url_folder+phoenix_model,model_folder_path+phoenix_model)
+
+        # Once we have the file, simply extract the data:
+        flux = fits.getdata(model_folder_path+phoenix_model,header=False)
 
         # Change units in order to match what is expected by the TSO modules:
         wav = (wavelengths * q.angstrom).to(q.um)
