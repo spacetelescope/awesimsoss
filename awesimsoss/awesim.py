@@ -45,7 +45,7 @@ import urllib.request as request
 from contextlib import closing
 
 # Interpolation tools:
-from scipy import interpolate
+from scipy import interpolate,ndimage
 
 
 warnings.simplefilter('ignore')
@@ -1416,36 +1416,11 @@ class ModelTSO(TSO):
 
     def download(self, url, fname):
         """
-        Download files from ftp server at url in filename fname. Obtained from jfs here: https://stackoverflow.com/questions/11768214/python-download-a-file-over-an-ftp-server
+        Download files from ftp server at url in filename fname. Obtained/modified from jfs here: https://stackoverflow.com/questions/11768214/python-download-a-file-over-an-ftp-server
         """
         with closing(request.urlopen(url)) as r:
             with open(fname, 'wb') as f:
                 shutil.copyfileobj(r, f)
-
-    def unzip(self, input_file, outfolder):
-        """
-        Given input_file, a filename for a zip file, unzip it on the outfolder 
-        """
-        with zipfile.ZipFile(input_file,'r') as zip_ref:
-             zip_ref.extractall(outfolder)
-
-    def select_model(self, folder, teff, logg):
-        """
-        Given a folder full of .fits with PHOENIX models, choose the model that has the closest teff and logg to the input ones:
-        """
-        all_files = np.array(glob.glob(folder+'/*.fits'))
-        teffs = np.zeros(len(all_files))
-        loggs = np.zeros(len(all_files))
-        for i in range(len(all_files)):
-            t,l = all_files[i].split('/')[-1].split('-')[:2]
-            teffs[i], loggs[i] = np.double(t[3:]),np.double(l)
-        # First choose the closest model in teff space:
-        distance = np.abs(teffs - teff)
-        idx_t = np.where(distance == np.min(distance))[0]
-        # From all the chosen ones, select the one that gives the closest one in logg space:
-        distance = np.abs(loggs[idx_t] - logg)
-        idx_l = np.where(distance == np.min(distance))[0]
-        return all_files[idx_t[idx_l][0]]
 
     def get_vega(self):
         """
@@ -1469,7 +1444,6 @@ class ModelTSO(TSO):
                 fnames = np.append(fnames, fname)
                 teffs = np.append(teffs, np.double(teff[3:]))
                 loggs = np.append(loggs, np.double(logg))
-
             else:
                 break
         return fnames, teffs, loggs
@@ -1517,12 +1491,13 @@ class ModelTSO(TSO):
         # Raise a warning in case the found teff is outside the PHOENIX model range, give some 
         # guidance on how to proceed:
         if np.abs(phoenix_teff-teff)>200.:
-            print('Warning: the input stellar effective temperature is outside the {0:}-{1:} K model range of PHOENIX models for {2:}.'.format(np.min(possible_teffs),np.max(possible_teffs),phoenix_met_and_alpha))
+            print('\t Warning: the input stellar effective temperature is outside the {0:}-{1:} K model range of PHOENIX models for {2:}.'.format(np.min(possible_teffs),\
+                    np.max(possible_teffs),phoenix_met_and_alpha))
             if 'Alpha' in phoenix_met_and_alpha:
-                print('         Modelling using a {0:} K model. Using models without alpha-enhancement (alpha = 0.0), which range '+\
+                print('\t Modelling using a {0:} K model. Using models without alpha-enhancement (alpha = 0.0), which range '+\
                                 'from 2300 to 12000 K would perhaps help find more suitable temperature models.'.format(phoenix_teff))
             else:
-                print('         Modelling using a {0:} K model.'.format(phoenix_teff))
+                print('\t Modelling using a {0:} K model.'.format(phoenix_teff))
 
         # Same excercise for logg, given the teffs:
         idx_logg = np.where(np.abs(phoenix_teff-possible_teffs) == 0.)[0]
@@ -1534,15 +1509,16 @@ class ModelTSO(TSO):
         
         # Raise warning for logg as well:
         if np.abs(phoenix_logg - logg)>0.5:
-            print('Warning: the input stellar log-gravity is outside the {0:}-{1:} model range of PHOENIX models for {2:} and Teff {3:}.'.format(\
+            print('\t Warning: the input stellar log-gravity is outside the {0:}-{1:} model range of PHOENIX models for {2:} and Teff {3:}.'.format(\
                    np.min(possible_loggs[idx_logg]),np.max(possible_loggs[idx_logg]),phoenix_met_and_alpha,phoenix_teff))
 
         # Check if we already have the downloaded model. If not, download the corresponding file:
         if not os.path.exists(model_folder_path+phoenix_model):
-            print('PHOENIX stellar models for {0:} not found in {1:}. Downloading...'.format(phoenix_met_and_alpha,model_folder_path))
+            print('\t PHOENIX stellar models for {0:} not found in {1:}. Downloading...'.format(phoenix_met_and_alpha,model_folder_path))
             self.download(url_folder+phoenix_model,model_folder_path+phoenix_model)
 
         # Once we have the file, simply extract the data:
+        print('\t Using the {0:} PHOENIX model (Teff {1:}, logg {2:}).'.format(phoenix_model, phoenix_teff, phoenix_logg))
         flux = fits.getdata(model_folder_path+phoenix_model,header=False)
 
         # Change units in order to match what is expected by the TSO modules:
@@ -1550,7 +1526,12 @@ class ModelTSO(TSO):
         flux = (flux * (q.erg/q.s/q.cm**2/q.cm)).to(q.erg/q.s/q.cm**2/q.AA)
         return wav, flux
 
-    def spec_integral(self, w, f, wT, TT):
+    def get_resolution(self, w, f):
+        eff_wav = np.sum(w*f)/np.sum(f)
+        delta_wav = np.median(np.abs(np.diff(w)))
+        return eff_wav/delta_wav
+
+    def spec_integral(self, input_w, input_f, wT, TT):
         """
         This function computes the integral of lambda*f*T divided by the integral of lambda*T, where 
         lambda is the wavelength, f the flux (in f-lambda) and T the transmission function. The input 
@@ -1559,6 +1540,23 @@ class ModelTSO(TSO):
         units.
         """
 
+        # If resolution of input spectra in the wavelength range of the response function 
+        # is higher than it, degrade it to match the transmission function resolution. First, 
+        # check that resolution of input spectra is indeed higher than the one of the 
+        # transmisssion. Resolution of input transmission first:
+        min_wav,max_wav = np.min(wT),np.max(wT)
+        resT = self.get_resolution(wT, TT) 
+        # Resolution of input spectra in the same wavelength range:
+        idx = np.where((input_w>=min_wav-10)&(input_w<=max_wav+10))[0]
+        res = self.get_resolution(input_w[idx],input_f[idx])
+        # If input spetrum resolution is larger, degrade:
+        if res>resT:
+            # This can be way quicker if we just take the gaussian weight *at* the evaluated 
+            # points in the interpolation. TODO: make faster.
+            f = ndimage.gaussian_filter(input_f[idx],int(np.double(len(idx))/np.double(len(wT))))
+            w = input_w[idx]
+        else:
+            w, f = input_w, input_f
         interp_spectra = interpolate.interp1d(w,f)
         numerator = np.trapz(wT*interp_spectra(wT)*TT, x = wT)
         denominator = np.trapz(wT*TT, x = wT)
@@ -1575,11 +1573,11 @@ class ModelTSO(TSO):
         w_vega,f_vega = self.get_vega()
         # Use those two to get the absolute flux calibration for Vega (left-most term in equation (9) in Casagrande et al., 2014).
         # Multiply wavelengths by 1e4 as they are in microns (i.e., transform back to angstroms both wavelength ranges):
-        vega_weighted_flux = self.spec_integral(w_vega*1e4, f_vega, wT*1e4, TT)
+        vega_weighted_flux = self.spec_integral(np.array(w_vega.to(q.AA)), np.array(f_vega), wT*1e4, TT)
         # J-band zero-point is thus (maginutde of Vega, m_*, obtained from Table 1 in Casagrande et al, 2014):
         ZP = -0.001 + 2.5*np.log10(vega_weighted_flux)
         # Now compute (inverse?) bolometric correction for target star. For this, compute same integral as for vega, but for target:
-        target_weighted_flux = self.spec_integral(w*1e4, f, wT*1e4, TT)
+        target_weighted_flux = self.spec_integral(np.array(w)*1e4, f, np.array(wT)*1e4, TT)
         # Get scaling factor for target spectrum (this ommits any extinction):
         scaling_factor = 10**(-((jmag + 2.5*np.log10(target_weighted_flux) - ZP)/2.5))
         # Return scaled spectrum:
