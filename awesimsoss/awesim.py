@@ -1549,7 +1549,7 @@ class ModelTSO(TSO):
         flux = (flux * (q.erg/q.s/q.cm**2/q.cm)).to(q.erg/q.s/q.cm**2/q.AA)
         return wav, flux
 
-    def get_atlas_model(self, feh, vturb, teff, logg):
+    def get_atlas_model(self, feh, teff, logg):
         """
         This function gets you the closest ATLAS9 Castelli and Kurucz model to the input stellar parameters
         from the STScI website (http://www.stsci.edu/hst/instrumentation/reference-data-for-calibration-and-tools/astronomical-catalogs/castelli-and-kurucz-atlas). 
@@ -1688,8 +1688,8 @@ class ModelTSO(TSO):
         # Return scaled spectrum:
         return f*scaling_factor
 
-    """Generate a test object with a blackbody spectrum"""
-    def __init__(self, ngrps=2, nints=2, teff=5700.0, logg = 4.0, feh = 0.0, vturb = 2.0, alpha = 0.0, jmag = 9.0, stellar_model = 'ATLAS', filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
+    """Generate an object with an ATLAS or PHOENIX stellar spectrum"""
+    def __init__(self, ngrps=2, nints=2, teff=5700.0, logg = 4.0, feh = 0.0, alpha = 0.0, jmag = 9.0, stellar_model = 'ATLAS', filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
         """Get the test data and load the object
 
         Parmeters
@@ -1704,14 +1704,12 @@ class ModelTSO(TSO):
             The log-gravity of the stellar source
         feh: double
             The [Fe/H] of the stellar source
-        vturb: double
-            The microturbulent velocity of the stellar source in km/s
         alpha: double
             The alpha enhancement of the stellar source
         jmag: double
-            The J magnitude of the source
+            The J magnitude of the source. This will be used to scale the model stellar flux to Earth-values.
         stellar_model: str
-            The stellar model grid to use. Can either be 'ATLAS' or 'PHOENIX'. Default is 'PHOENIX'
+            The stellar model grid to use. Can either be 'ATLAS' or 'PHOENIX'. Default is 'ATLAS'
         filter: str
             The name of the filter to use, ['CLEAR', 'F277W']
         subarray: str
@@ -1727,7 +1725,7 @@ class ModelTSO(TSO):
         if stellar_model.lower() == 'phoenix':
             w,f = self.get_phoenix_model(feh, alpha, teff, logg)
         elif stellar_model.lower() == 'atlas':
-            w,f = self.get_atlas_model(feh, vturb, teff, logg)
+            w,f = self.get_atlas_model(feh, teff, logg)
 
         # Now scale model spectrum to user-input J-band:
         f = self.scale_spectrum(w,f,jmag)
