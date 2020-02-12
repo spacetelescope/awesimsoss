@@ -1388,6 +1388,23 @@ class ModelTSO(TSO):
         idx = np.where(distance == np.min(distance))[0]
         return possible_values[idx[0]]
 
+    def get_atlas_folder(self, feh):
+        """
+        Given input metallicity, this function defines the first part of the URL that will define what
+        file to download from the STScI website.
+        """
+        # Define closest possible metallicity from ATLAS models:
+        model_metallicity = self.closest_value(feh, np.array([-2.5,-2.0,-1.5,-1.0,-0.5,0.0,0.2,0.5]))
+        met_sign = 'm'
+        # Define the sign before the filename, obtain absolute value if needed:
+        if model_metallicity >= 0.0:
+            met_sign = 'p'
+        else:
+            model_metallicity = np.abs(model_metallicity)
+        model_metallicity = ''.join(str(model_metallicity).split('.'))
+        fname = 'https://archive.stsci.edu/hlsps/reference-atlases/cdbs/grid/ck04models/ck{0:}{1:}/'.format(met_sign,model_metallicity)
+        return fname
+
     def get_phoenix_folder(self, feh, alpha):
         """
         Given input metallicity and alpha-enhancement, this function defines the first part of the URL that will define what 
@@ -1449,6 +1466,12 @@ class ModelTSO(TSO):
         return fnames, teffs, loggs
     
     def get_phoenix_model(self, feh, alpha, teff, logg):
+        """
+        This function gets you the closest PHOENIX high-resolution model to the input stellar parameters 
+        from the Goettingen website (ftp://phoenix.astro.physik.uni-goettingen.de). Outputs are two arrays, one 
+        containing the wavelength in um and the other containing the (surface) flux (in f-lambda) of the 
+        star in units of erg/s/cm**2/angstroms.
+        """
         # First get grid corresponding to input Fe/H and alpha:
         url_folder = self.get_phoenix_folder(feh, alpha)
         # Now define details for filenames and folders. First, extract metallicity and alpha-enhancement in 
@@ -1524,6 +1547,88 @@ class ModelTSO(TSO):
         # Change units in order to match what is expected by the TSO modules:
         wav = (wavelengths * q.angstrom).to(q.um)
         flux = (flux * (q.erg/q.s/q.cm**2/q.cm)).to(q.erg/q.s/q.cm**2/q.AA)
+        return wav, flux
+
+    def get_atlas_model(self, feh, vturb, teff, logg):
+        """
+        This function gets you the closest ATLAS9 Castelli and Kurucz model to the input stellar parameters
+        from the STScI website (http://www.stsci.edu/hst/instrumentation/reference-data-for-calibration-and-tools/astronomical-catalogs/castelli-and-kurucz-atlas). 
+        Outputs are two arrays, one containing the wavelength in um and the other containing the (surface) flux (in f-lambda) of the
+        star in units of erg/s/cm**2/angstroms.
+        """
+        # First get grid corresponding to input Fe/H:
+        url_folder = self.get_atlas_folder(feh)
+        # Now define details for filenames and folders. Extract foldername with the metallicity info from the url_folder:
+        atlas_met = url_folder.split('/')[-2]
+        # Define folders where we will save (1) all stellar model data and (2) all atlas models:
+        stellarmodels_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
+        atlas_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/atlas/')
+        model_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/atlas/'+atlas_met+'/')
+
+        # Check if we even have stellarmodels folder created. Create it if not:
+        if not os.path.exists(stellarmodels_folder_path):
+            os.mkdir(stellarmodels_folder_path)
+        # Same for phoenix folder:
+        if not os.path.exists(atlas_folder_path):
+            os.mkdir(atlas_folder_path)
+        # Check if the current metallicity-alpha folder exists as well:
+        if not os.path.exists(model_folder_path):
+            os.mkdir(model_folder_path)
+
+        # Define possible teff and loggs (thankfully, this is easier for ATLAS models):
+        possible_teffs, possible_loggs = np.append(np.arange(3500,13250,250),np.arange(14000,51000,1000)), np.arange(0.0,5.5,0.5)
+
+        # Check the closest teff and logg to input ones:
+        atlas_teff = self.closest_value(teff, possible_teffs)
+        atlas_logg = self.closest_value(logg, possible_loggs)
+
+        # Raise a warning in case the found teff is outside the ATLAS model range, give some
+        # guidance on how to proceed:
+        if np.abs(atlas_teff-teff)>200.:
+            print('\t Warning: the input stellar effective temperature is outside the {0:}-{1:} K model range of ATLAS models for {2:}.'.format(np.min(possible_teffs),\
+                    np.max(possible_teffs),atlas_met))
+            print('\t Modelling using a {0:} K model.'.format(atlas_teff))
+
+        # Now, if not already in the system, download the model corresponding to the chosen teff:
+        atlas_fname = model_folder_path+atlas_met+'_{0:}.fits'.format(atlas_teff)
+        if not os.path.exists(atlas_fname):
+            self.download(url_folder+atlas_met+'_{0:}.fits'.format(atlas_teff), atlas_fname)
+
+        # Read the file:
+        d = fits.getdata(atlas_fname)
+
+        # This variable will save non-zero logg at the given temperatures. Only useful to report back to the user and/or input logg 
+        # doesn't have data:
+        real_possible_loggs = np.array([])
+        # Check if the closest requested logg has any data. If not, check all possible loggs for non-zero data, and select the closest 
+        # to the input logg that has data:
+        s_logg = 'g'+''.join('{0:.1f}'.format(atlas_logg).split('.'))
+        if np.count_nonzero(d[s_logg]) != 0:
+            w,f = d['WAVELENGTH'],d[s_logg]
+        else:
+            real_possible_loggs = np.array([])
+            for loggs in possible_loggs:
+                s_logg = 'g'+''.join('{0:.1f}'.format(loggs).split('.'))
+                if np.count_nonzero(d[s_logg]) != 0:
+                    real_possible_loggs = np.append(real_possible_loggs, loggs)
+            atlas_logg = self.closest_value(logg, real_possible_loggs)
+            s_logg = 'g'+''.join('{0:.1f}'.format(atlas_logg).split('.'))
+            w,f = d['WAVELENGTH'],d[s_logg]
+
+        # Raise warning for logg as well:
+        if np.abs(atlas_logg - logg)>0.5:
+            # If real_possible_loggs is empty, calculate it:
+            if len(real_possible_loggs) == 0:
+                for loggs in possible_loggs:
+                    s_logg = 'g'+''.join('{0:.1f}'.format(loggs).split('.'))
+                    if np.count_nonzero(d[s_logg]) != 0:
+                        real_possible_loggs = np.append(real_possible_loggs, loggs)
+            print('\t Warning: the input stellar log-gravity is outside the {0:}-{1:} model range of ATLAS models for {2:} and Teff {3:}.'.format(\
+                   np.min(real_possible_loggs),np.max(real_possible_loggs),atlas_met,atlas_teff))
+
+        # Change units in order to match what is expected by the TSO modules:
+        wav = (w * q.angstrom).to(q.um)
+        flux = f * q.erg/q.s/q.cm**2/q.AA
         return wav, flux
 
     def get_resolution(self, w, f):
@@ -1618,9 +1723,11 @@ class ModelTSO(TSO):
         scale: int, float
             Scale the flux by the given factor
         """
-        # Retrieve PHOENIX stellar model:
+        # Retrieve PHOENIX or ATLAS stellar models:
         if stellar_model.lower() == 'phoenix':
             w,f = self.get_phoenix_model(feh, alpha, teff, logg)
+        elif stellar_model.lower() == 'atlas':
+            w,f = self.get_atlas_model(feh, vturb, teff, logg)
 
         # Now scale model spectrum to user-input J-band:
         f = self.scale_spectrum(w,f,jmag)
