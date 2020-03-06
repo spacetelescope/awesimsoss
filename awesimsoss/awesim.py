@@ -1373,7 +1373,62 @@ class BlackbodyTSO(TSO):
 
 
 class ModelTSO(TSO):
-    """Generate a test object with a theoretical stellar spectrum of choice"""
+    """Generate a test object with a theoretical ATLAS or PHOENIX stellar spectrum of choice"""
+    def __init__(self, ngrps=2, nints=2, teff=5700.0, logg=4.0, feh=0.0, alpha=0.0, jmag=9.0, stellar_model='ATLAS', filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
+        """Get the test data and load the object
+
+        Parmeters
+        ---------
+        ngrps: int
+            The number of groups per integration
+        nints: int
+            The number of integrations for the exposure
+        teff: double
+            The effective temperature in kelvins of the stellar source
+        logg: double
+            The log-gravity of the stellar source
+        feh: double
+            The [Fe/H] of the stellar source
+        alpha: double
+            The alpha enhancement of the stellar source
+        jmag: double
+            The J magnitude of the source. This will be used to scale the model stellar flux to Earth-values.
+        stellar_model: str
+            The stellar model grid to use. Can either be 'ATLAS' or 'PHOENIX'. Default is 'ATLAS'
+        filter: str
+            The name of the filter to use, ['CLEAR', 'F277W']
+        subarray: str
+            The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
+        run: bool
+            Run the simulation after initialization
+        add_planet: bool
+            Add a transiting exoplanet
+        scale: int, float
+            Scale the flux by the given factor
+        """
+        # Retrieve PHOENIX or ATLAS stellar models:
+        if stellar_model.lower() == 'phoenix':
+            w, f = self.get_phoenix_model(feh, alpha, teff, logg)
+        elif stellar_model.lower() == 'atlas':
+            w, f = self.get_atlas_model(feh, teff, logg)
+
+        # Now scale model spectrum to user-input J-band:
+        f = self.scale_spectrum(w, f, jmag)
+
+        self.stellar_spectrum_wav = w
+        self.stellar_spectrum_flux = f
+        # Initialize base class
+        super().__init__(ngrps=ngrps, nints=nints, star=[w, f], subarray=subarray, filter=filter, **kwargs)
+
+        # Add planet
+        if add_planet:
+            self.planet = utils.PLANET_DATA
+            self.tmodel = utils.transit_params(self.time)
+
+        # Run the simulation
+        if run:
+            self.simulate()
+
     def closest_value(self, input_value, possible_values):
         """
         This function calculates, given an input_value and an array of possible_values,
@@ -1683,59 +1738,3 @@ class ModelTSO(TSO):
         scaling_factor = 10**(-((jmag + 2.5 * np.log10(target_weighted_flux) - ZP) / 2.5))
         # Return scaled spectrum:
         return f * scaling_factor
-
-    """Generate an object with an ATLAS or PHOENIX stellar spectrum"""
-    def __init__(self, ngrps=2, nints=2, teff=5700.0, logg=4.0, feh=0.0, alpha=0.0, jmag=9.0, stellar_model='ATLAS', filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
-        """Get the test data and load the object
-
-        Parmeters
-        ---------
-        ngrps: int
-            The number of groups per integration
-        nints: int
-            The number of integrations for the exposure
-        teff: double
-            The effective temperature in kelvins of the stellar source
-        logg: double
-            The log-gravity of the stellar source
-        feh: double
-            The [Fe/H] of the stellar source
-        alpha: double
-            The alpha enhancement of the stellar source
-        jmag: double
-            The J magnitude of the source. This will be used to scale the model stellar flux to Earth-values.
-        stellar_model: str
-            The stellar model grid to use. Can either be 'ATLAS' or 'PHOENIX'. Default is 'ATLAS'
-        filter: str
-            The name of the filter to use, ['CLEAR', 'F277W']
-        subarray: str
-            The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
-        run: bool
-            Run the simulation after initialization
-        add_planet: bool
-            Add a transiting exoplanet
-        scale: int, float
-            Scale the flux by the given factor
-        """
-        # Retrieve PHOENIX or ATLAS stellar models:
-        if stellar_model.lower() == 'phoenix':
-            w, f = self.get_phoenix_model(feh, alpha, teff, logg)
-        elif stellar_model.lower() == 'atlas':
-            w, f = self.get_atlas_model(feh, teff, logg)
-
-        # Now scale model spectrum to user-input J-band:
-        f = self.scale_spectrum(w, f, jmag)
-
-        self.stellar_spectrum_wav = w
-        self.stellar_spectrum_flux = f
-        # Initialize base class
-        super().__init__(ngrps=ngrps, nints=nints, star=[w, f], subarray=subarray, filter=filter, **kwargs)
-
-        # Add planet
-        if add_planet:
-            self.planet = utils.PLANET_DATA
-            self.tmodel = utils.transit_params(self.time)
-
-        # Run the simulation
-        if run:
-            self.simulate()
