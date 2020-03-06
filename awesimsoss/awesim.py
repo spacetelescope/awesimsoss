@@ -9,8 +9,11 @@ import datetime
 from functools import partial, wraps
 from multiprocessing.pool import ThreadPool
 from multiprocessing import cpu_count
+import numpy as np
 import os
 from pkg_resources import resource_filename
+from scipy import interpolate, ndimage
+import shutil
 import time
 import warnings
 
@@ -26,8 +29,9 @@ import batman
 from bokeh.plotting import figure, show
 # from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
+from contextlib import closing
 from hotsoss import utils, plotting, locate_trace
-import numpy as np
+import urllib.request as request
 
 try:
     from jwst.datamodels import RampModel
@@ -36,15 +40,6 @@ except ImportError:
 
 from . import generate_darks as gd
 from . import make_trace as mt
-
-# Some extra imports for PHOENIX model downloads:
-import shutil
-import urllib.request as request
-from contextlib import closing
-
-# Interpolation tools:
-from scipy import interpolate, ndimage
-
 
 warnings.simplefilter('ignore')
 
