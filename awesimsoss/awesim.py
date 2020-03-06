@@ -1433,6 +1433,18 @@ class ModelTSO(TSO):
         """
         This function calculates, given an input_value and an array of possible_values,
         the closest value to input_value in the array.
+
+        Parameters
+        ----------
+        input_value: double
+             Input value to compare against possible_values.
+        possible_values: np.ndarray
+             Array of possible values to compare against input_value.
+
+        Returns
+        -------
+        double
+            Closest value on possible_values to input_value.
         """
         distance = np.abs(possible_values - input_value)
         idx = np.where(distance == np.min(distance))[0]
@@ -1442,6 +1454,17 @@ class ModelTSO(TSO):
         """
         Given input metallicity, this function defines the first part of the URL that will define what
         file to download from the STScI website.
+
+        Parameters
+        ----------
+        feh: np.double
+             [Fe/H] of the desired spectrum.
+
+        Returns
+        -------
+        string
+            URL of ATLAS models closer to the input metallicity.
+
         """
         # Define closest possible metallicity from ATLAS models:
         model_metallicity = self.closest_value(feh, np.array([-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.2, 0.5]))
@@ -1459,6 +1482,19 @@ class ModelTSO(TSO):
         """
         Given input metallicity and alpha-enhancement, this function defines the first part of the URL that will define what
         file to download from the PHOENIX site.
+
+        Parameters
+        ----------
+        feh: np.double
+             [Fe/H] of the desired spectrum.
+        alpha: np.double
+             Alpha-enhancement of the desired spectrum.
+
+        Returns
+        -------
+        string
+            FTP URL of PHOENIX file with the closest properties to the input properties.
+
         """
         # Define closest possible metallicity from PHOENIX models:
         model_metallicity = self.closest_value(feh, np.array([-4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0]))
@@ -1484,6 +1520,13 @@ class ModelTSO(TSO):
     def download(self, url, fname):
         """
         Download files from ftp server at url in filename fname. Obtained/modified from jfs here: https://stackoverflow.com/questions/11768214/python-download-a-file-over-an-ftp-server
+
+        Parameters
+        ----------
+        url: string
+            URL pointing to the file to download.
+        fname: string
+            Output filename of the file to download.
         """
         with closing(request.urlopen(url)) as r:
             with open(fname, 'wb') as f:
@@ -1492,6 +1535,13 @@ class ModelTSO(TSO):
     def get_vega(self):
         """
         This functions reads in the spectrum of Vega (Alpha Lyr) from CALSPEC
+
+        Returns
+        -------
+        astropy.units.quantity.Quantity
+            Wavelength in um of Vega spectrum.
+        astropy.units.quantity.Quantity
+            Flux in erg/s/cm2/A of Vega spectrum.
         """
         data = fits.getdata(resource_filename('awesimsoss', 'files/alpha_lyr_stis_009.fits'), header=False)
         # Wavelength is in Angstroms, convert to microns to match the get_phoenix_model function.
@@ -1499,6 +1549,22 @@ class ModelTSO(TSO):
         return (data['WAVELENGTH'] * q.angstrom).to(q.um), data['FLUX'] * (q.erg / q.s / q.cm**2 / q.AA)
 
     def read_phoenix_list(self, phoenix_model_list):
+        """  
+        This function extracts filenames, effective temperatures and log-gs given a filename that contains a list of PHOENIX model filenames.
+
+        Parameters
+        ----------
+        phoenix_model_list: string
+             Filename of file containing, on each row, a PHOENIX model filename.
+        Returns
+        -------
+        np.ndarray
+            Array of PHOENIX model filenames
+        np.ndarray
+            Array containing the effective temperatures (K) of each PHOENIX model filename.
+        np.nadarray
+            Array containing the log-g (cgs) of each PHOENIX model filename.
+        """
         fin = open(phoenix_model_list, 'r')
         fnames = np.array([])
         teffs = np.array([])
@@ -1516,12 +1582,27 @@ class ModelTSO(TSO):
         return fnames, teffs, loggs
 
     def get_phoenix_model(self, feh, alpha, teff, logg):
+        """  
+        This function gets you the closest PHOENIX high-resolution model to the input stellar parameters from the Goettingen website (ftp://phoenix.astro.physik.uni-goettingen.de).
+
+        Parameters
+        ----------
+        feh: np.double
+             [Fe/H] of the desired spectrum.
+        alpha: np.double
+             Alpha-enhancement of the desired spectrum.
+        teff: np.double
+             Effective temperature (K) of the desired spectrum.
+        logg: np.double
+             Log-gravity (cgs) of the desired spectrum. 
+        Returns
+        -------
+        np.ndarray
+            Wavelength in um of the closest spectrum to input properties.
+        np.ndarray
+            Surface flux in f-lambda of the closest spectrum to input properties in units of erg/s/cm**2/angstroms.
         """
-        This function gets you the closest PHOENIX high-resolution model to the input stellar parameters
-        from the Goettingen website (ftp://phoenix.astro.physik.uni-goettingen.de). Outputs are two arrays, one
-        containing the wavelength in um and the other containing the (surface) flux (in f-lambda) of the
-        star in units of erg/s/cm**2/angstroms.
-        """
+        
         # First get grid corresponding to input Fe/H and alpha:
         url_folder = self.get_phoenix_folder(feh, alpha)
         # Now define details for filenames and folders. First, extract metallicity and alpha-enhancement in
@@ -1601,12 +1682,26 @@ class ModelTSO(TSO):
         return wav, flux
 
     def get_atlas_model(self, feh, teff, logg):
+        """  
+        This function gets you the closest ATLAS9 Castelli and Kurucz model to the input stellar parameters from the STScI website 
+        (http://www.stsci.edu/hst/instrumentation/reference-data-for-calibration-and-tools/astronomical-catalogs/castelli-and-kurucz-atlas).
+
+        Parameters
+        ----------
+        feh: np.double
+             [Fe/H] of the desired spectrum.
+        teff: np.double
+             Effective temperature (K) of the desired spectrum.
+        logg: np.double
+             Log-gravity (cgs) of the desired spectrum. 
+        Returns
+        -------
+        np.ndarray
+            Wavelength in um of the closest spectrum to input properties.
+        np.ndarray
+            Surface flux in f-lambda of the closest spectrum to input properties in units of erg/s/cm**2/angstroms.
         """
-        This function gets you the closest ATLAS9 Castelli and Kurucz model to the input stellar parameters
-        from the STScI website (http://www.stsci.edu/hst/instrumentation/reference-data-for-calibration-and-tools/astronomical-catalogs/castelli-and-kurucz-atlas).
-        Outputs are two arrays, one containing the wavelength in um and the other containing the (surface) flux (in f-lambda) of the
-        star in units of erg/s/cm**2/angstroms.
-        """
+
         # First get grid corresponding to input Fe/H:
         url_folder = self.get_atlas_folder(feh)
         # Now define details for filenames and folders. Extract foldername with the metallicity info from the url_folder:
@@ -1683,6 +1778,22 @@ class ModelTSO(TSO):
         return wav, flux
 
     def get_resolution(self, w, f):
+        """  
+        This function returns the (w) wavelength (median) resolution of input spectra (f)
+
+        Parameters
+        ----------
+        w: np.ndarray
+            Wavelengths of the spectrum
+        f: np.ndarray
+            Value at the given wavelength (can be flux, transmission, etc.)
+
+        Returns
+        -------
+        np.double
+            The median resolution of the spectrum.
+        """
+
         eff_wav = np.sum(w * f) / np.sum(f)
         delta_wav = np.median(np.abs(np.diff(w)))
         return eff_wav / delta_wav
@@ -1692,8 +1803,25 @@ class ModelTSO(TSO):
         This function computes the integral of lambda*f*T divided by the integral of lambda*T, where
         lambda is the wavelength, f the flux (in f-lambda) and T the transmission function. The input
         stellar spectrum is given by wavelength w and flux f. The input filter response wavelengths
-        are given by wT and transmission curve by TT. It is assumed both w and wT are in the same wavelength
-        units.
+        are given by wT and transmission curve by TT. It is assumed both w and wT are in the same 
+        wavelength units.
+
+        Parameters
+        ----------
+        input_w: np.ndarray
+            Wavelengths of the input spectrum
+        input_f: np.ndarray
+            Flux (in f-lambda) of the input spectrum
+        wT: np.ndarray
+            Wavelength of the input transmission function
+        TT: np.ndarray
+            Spectral response function of the transmission function
+
+        Returns
+        -------
+        np.double
+            Value of the integral (over dlambda) of lambda*f*T divided by the integral (over dlambda) of lambda*T.
+
         """
 
         # If resolution of input spectra in the wavelength range of the response function
@@ -1719,10 +1847,23 @@ class ModelTSO(TSO):
         return numerator / denominator
 
     def scale_spectrum(self, w, f, jmag):
+        """  
+        This function scales an input spectrum to a given jmag. This follows eq. (8) in Casagrande et al. (2014, MNRAS, 444, 392).
+
+        Parameters
+        ----------
+        w: np.ndarray
+            Wavelengths of the spectrum in microns.
+        f: np.ndarray
+            Flux of the spectrum in erg/s/cm2/A.
+        jmag: np.double
+            2MASS J-magnitude to which we wish to re-scale the spectrum.
+        Returns
+        -------
+        np.ndarray
+            Rescaled spectrum at wavelength w.
         """
-        Function expects input wavelength (w) in um, flux (f) in erg/s/cm2/A. To scale the spectra, we use equation (8) in
-        Casagrande et al. (2014, MNRAS, 444, 392).
-        """
+
         # Get filter response (note wT is in microns):
         wT, TT = np.loadtxt(resource_filename('awesimsoss', 'files/jband_transmission.dat'), unpack=True, usecols=(0, 1))
         # Get spectrum of vega:
