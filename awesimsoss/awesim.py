@@ -767,13 +767,16 @@ class TSO(object):
                 time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
                 time = time*q.s.to('d')
 
+                # Generate transit model
                 tmodel = batman.TransitModel(self.tmodel, time)
                 tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve)/max(theory)
 
+                # Convert time
                 time = time*q.d.to(time_unit)
 
+                # Add to figure
                 lc.line(time, theory, legend=label+' model', color=color, alpha=0.8)
 
             # Convert datatime
