@@ -5,7 +5,7 @@ python:
   - 3.6
 
 install:
-  - pip install git+https://github.com/astropy/astropy.git@4.0
+  - pip install git+https://github.com/astropy/astropy.git@763f069058cb1ee2038fa1cfa485452ec94b726e
   - pip install git+https://github.com/spacetelescope/jwst@0.15.0
   - pip install -r requirements_dev.txt
   - pip install -e .
