@@ -6,7 +6,7 @@ python:
   - 3.5
 
 install:
-  - conda install -c anaconda astropy
+  - pip install git+https://github.com/astropy/astropy.git@763f069058cb1ee2038fa1cfa485452ec94b726e
   - pip install -r requirements_dev.txt
   - pip install -e .
   - pip install pytest pytest-cov coveralls
