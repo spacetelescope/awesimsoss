@@ -12,8 +12,20 @@ import astropy.constants as ac
 import batman
 from hotsoss import STAR_DATA, PLANET_DATA
 
-from awesimsoss import TSO, BlackbodyTSO, TestTSO
+from awesimsoss import TSO, BlackbodyTSO, ModelTSO, TestTSO
 
+class test_ModelTSO(unittest.TestCase):
+    """A test of the ModelTSO class"""
+    def setUp(self):
+        pass
+
+    def test_run_no_planet(self):
+        """A test of the ModelTSO class with no planet"""
+        tso = ModelTSO()
+
+    def test_run_with_planet(self):
+        """A test of the ModelTSO class with a planet"""
+        tso = ModelTSO(add_planet=True)
 
 class test_BlackbodyTSO(unittest.TestCase):
     """A test of the BlackbodyTSO class"""
@@ -51,15 +63,47 @@ class test_TSO(unittest.TestCase):
         self.star = STAR_DATA
         self.planet = PLANET_DATA
 
+    def test_add_lines(self):
+        """Test the add_lines method"""
+        # Make the TSO object
+        tso = TSO(ngrps=2, nints=2, star=self.star)
+        amp = 1e-14*q.erg/q.s/q.cm**2/q.AA
+        x_0 = 1.*q.um
+        fwhm = 0.01*q.um
+
+        # Add a bad profile name
+        kwargs = {'amplitude': 1e-14*q.erg/q.s/q.cm**2/q.AA, 'x_0': 1.*q.um, 'fwhm': 0.01*q.um, 'profile': 'foo'}
+        self.assertRaises(ValueError, tso.add_line, **kwargs)
+
+        # Add a Lorentzian line
+        kwargs = {'amplitude': amp, 'x_0': x_0, 'fwhm': fwhm, 'profile': 'lorentz'}
+        tso.add_line(**kwargs)
+
+        # Add a Gaussian line
+        kwargs = {'amplitude': amp, 'x_0': x_0, 'fwhm': fwhm, 'profile': 'gaussian'}
+        tso.add_line(**kwargs)
+
+        # Add a Voigt line
+        kwargs = {'amplitude': amp, 'x_0': x_0, 'fwhm': (fwhm, fwhm), 'profile': 'voigt'}
+        tso.add_line(**kwargs)
+
+        # Add a bad Voigt fwhm
+        kwargs = {'amplitude': amp, 'x_0': x_0, 'fwhm': fwhm, 'profile': 'voigt'}
+        self.assertRaises(TypeError, tso.add_line, **kwargs)
+
+        # Check that the 3 good lines have been added
+        self.assertEqual(len(tso.lines), 3)
+
     def test_export(self):
         """Test the export method"""
         # Make the TSO object and save
-        test_tso = TSO(ngrps=2, nints=2, star=self.star, subarray='SUBSTRIP256')
-        test_tso.simulate()
-        try:
-            test_tso.export('outfile.fits')
-        except NameError:
-            pass
+        test_tso = TestTSO(add_planet=True)
+
+        # Good filename
+        test_tso.export('outfile_uncal.fits')
+
+        # Bad filename (no '_uncal')
+        self.assertRaises(ValueError, test_tso.export, 'outfile.fits')
 
     def test_init(self):
         """Test that the TSO class is generated properly"""
@@ -210,7 +254,7 @@ class test_TSO(unittest.TestCase):
         # Make the TSO object
         tso = TSO(ngrps=2, nints=2, star=self.star)
 
-        # Bad fiilter
+        # Bad filter
         self.assertRaises(ValueError, setattr, tso, 'filter', 'foo')
 
         # Bad ncols

@@ -2,9 +2,9 @@
 awesimsoss
 ==========
 
-
-.. image:: https://img.shields.io/pypi/v/awesimsoss.svg
-        :target: https://pypi.python.org/pypi/awesimsoss
+.. image:: https://img.shields.io/github/v/release/spacetelescope/awesimsoss?label=awesimsoss
+        :alt: GitHub release
+        :target: https://github.com/spacetelescope/awesimsoss/releases
 
 .. image:: https://img.shields.io/travis/hover2pi/awesimsoss.svg
         :target: https://travis-ci.com/hover2pi/awesimsoss
@@ -17,8 +17,8 @@ awesimsoss
         :target: https://coveralls.io/github/spacetelescope/awesimsoss
 
 .. image:: https://pyup.io/repos/github/hover2pi/awesimsoss/shield.svg
-     :target: https://pyup.io/repos/github/hover2pi/awesimsoss/
-     :alt: Updates
+        :target: https://pyup.io/repos/github/hover2pi/awesimsoss/
+        :alt: Updates
 
 
 
@@ -41,6 +41,12 @@ Installation
 ~~~~~~~~~~~~
 
 The best way to install ``awesimsoss`` is
+
+.. code-block:: bash
+
+   conda install -c jfilippazzo awesimsoss
+
+You can also do it with
 
 .. code-block:: bash
 

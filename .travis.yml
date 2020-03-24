@@ -3,9 +3,11 @@
 language: python
 python:
   - 3.6
-  - 3.5
 
 install:
+  - pip install git+https://github.com/astropy/astropy.git@763f069058cb1ee2038fa1cfa485452ec94b726e
+  - pip install git+https://github.com/spacetelescope/jwst@0.15.0
+  - pip install git+https://github.com/pypa/twine.git@68dc617bafbc8a32adbe41c12055efe6ba6d0e1e
   - pip install -r requirements_dev.txt
   - pip install -e .
   - pip install pytest pytest-cov coveralls
@@ -17,16 +19,3 @@ script:
 
 after_success:
   - coveralls
-
-# deploy new versions to PyPI
-deploy:
-  provider: pypi
-  distributions: "sdist bdist_wheel"
-  user: "__token__"
-  password:
-    secure: "pypi-AgEIcHlwaS5vcmcCJDk1YWM2MWJiLWJkY2YtNDZmMC05YWNlLTAzNDYyZTgxZGVlYwACO3sicGVybWlzc2lvbnMiOiB7InByb2plY3RzIjogWyJhd2VzaW1zb3NzIl19LCAidmVyc2lvbiI6IDF9AAAGIMtrbKrXoSda3BcSs59WkNb8gdiTvfeGosbRn1GA7FQD"
-    tags: true
-    repo: spacetelescope/awesimsoss
-    python: 3.5
-  on:
-    tags: true

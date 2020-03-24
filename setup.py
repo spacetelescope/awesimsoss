@@ -25,9 +25,7 @@ setup(
         'Intended Audience :: Developers',
         'License :: OSI Approved :: MIT License',
         'Natural Language :: English',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.6'
     ],
     description="Advanced Webb Exposure SIMulator for SOSS",
     entry_points={
@@ -47,6 +45,6 @@ setup(
     test_suite='tests',
     tests_require=test_requirements,
     url='https://github.com/hover2pi/awesimsoss',
-    version='0.3.1',
+    version='0.3.2',
     zip_safe=False,
 )

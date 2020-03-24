@@ -4,28 +4,34 @@ A module to generate simulated 2D time-series SOSS data
 
 Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
 """
+from copy import copy
 import datetime
 from functools import partial, wraps
 from multiprocessing.pool import ThreadPool
 from multiprocessing import cpu_count
+import numpy as np
 import os
 from pkg_resources import resource_filename
+from scipy import interpolate, ndimage
+import shutil
 import time
 import warnings
 
 import astropy.units as q
 import astropy.constants as ac
 from astropy.io import fits
-from astropy.modeling.models import BlackBody1D
+from astropy.modeling.models import BlackBody1D, Voigt1D, Gaussian1D, Lorentz1D
 from astropy.modeling.blackbody import FLAM
+import astropy.table as at
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 import batman
 from bokeh.plotting import figure, show
-from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
+# from bokeh.models import HoverTool, LogColorMapper, LogTicker, LinearColorMapper, ColorBar, Span
 from bokeh.layouts import column
+from contextlib import closing
 from hotsoss import utils, plotting, locate_trace
-import numpy as np
+import urllib.request as request
 
 try:
     from jwst.datamodels import RampModel
@@ -34,7 +40,6 @@ except ImportError:
 
 from . import generate_darks as gd
 from . import make_trace as mt
-
 
 warnings.simplefilter('ignore')
 
@@ -133,9 +138,9 @@ class TSO(object):
         self.ngrps = ngrps
         self.nints = nints
         self.nresets = nresets
-        self.nframes = (self.nresets+self.ngrps)*self.nints
-        self.obs_date = datetime.datetime.now().strftime('%x')
-        self.obs_time = datetime.datetime.now().strftime('%X')
+        self.nframes = (self.nresets + self.ngrps) * self.nints
+        self.obs_date = datetime.datetime.now().strftime("%Y-%m-%d")
+        self.obs_time = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
         self.orders = orders
         self.filter = filter
         self.header = ''
@@ -144,6 +149,7 @@ class TSO(object):
         self.subarray = subarray
 
         # Set instance attributes for the target
+        self.lines = at.Table(names=('name', 'profile', 'x_0', 'amp', 'fwhm', 'flux'), dtype=('S20', 'S20', float, float, 'O', 'O'))
         self.star = star
         self.tmodel = tmodel
         self.ld_coeffs = np.zeros((3, 2048, 2))
@@ -153,6 +159,61 @@ class TSO(object):
         # Reset data based on subarray and observation settings
         self._reset_data()
         self._reset_time()
+
+    def add_line(self, x_0, amplitude, fwhm, profile='lorentz', name='Line I'):
+        """
+        Add an emission or absorption line to the spectrum
+
+        Parameters
+        ----------
+        x_0: astropy.units.quantity.Quantity
+            The rest wavelength of the line
+        amplitude: astropy.units.quantity.Quantity
+            The amplitude of the line relative to the continuum,
+            with negative value for absorption and positive for emission
+        fwhm: astropy.units.quantity.Quantity, sequence
+            The full-width-half-max(s) of the line ('voigt' requires 2)
+        profile: str
+            The profile to use, ['voigt', 'lorentz', 'gaussian']
+        name: str
+            A name for the line
+        """
+        # Check the profile
+        profiles = {'voigt': Voigt1D, 'gaussian': Gaussian1D, 'lorentz': Lorentz1D}
+        if profile not in profiles:
+            raise ValueError("'{}' profile not supported. Please select from {}".format(profile, list(profiles.keys())))
+
+        # Select the profile
+        prof = profiles[profile]
+
+        # Convert to match star units and remove units
+        x_0 = x_0.to(self.star[0].unit).value
+        amplitude = amplitude.to(self.star[1].unit).value
+
+        # Generate the line function
+        if profile == 'voigt':
+            if len(fwhm) != 2:
+                raise TypeError("fwhm must be sequence of two values for Voigt profile.")
+            else:
+                fwhm_L, fwhm_G = [fw.to(self.star[0].unit).value for fw in fwhm]
+            func = prof(amplitude_L=amplitude, x_0=x_0, fwhm_L=fwhm_L, fwhm_G=fwhm_G)
+
+        elif profile == 'lorentz':
+            fwhm = fwhm.to(self.star[0].unit).value
+            func = prof(amplitude=amplitude, x_0=x_0, fwhm=fwhm)
+
+        elif profile == 'gaussian':
+            fwhm = fwhm.to(self.star[0].unit).value
+            func = prof(amplitude=amplitude, mean=x_0, stddev=fwhm / 2.355)
+
+        # Evaluate the profile
+        line = func(self.star[0].value) * self.star[1].unit
+
+        # Add the line to the line list
+        self.lines.add_row([name, profile, x_0, amplitude, fwhm, line])
+
+        # Reset the psfs
+        self._reset_psfs()
 
     @run_required
     def add_noise(self, zodi_scale=1., offset=500):
@@ -170,7 +231,11 @@ class TSO(object):
         start = time.time()
 
         # Get the separated orders
-        orders = np.asarray([getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders])
+        orders = [getattr(self, 'tso_order{}_ideal'.format(i)) for i in self.orders]
+
+        # Put into 3D
+        orders = np.array([order.reshape(self.dims3) for order in orders])
+        tso_ideal = self.tso_ideal.reshape(self.dims3)
 
         # Load the reference files
         pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
@@ -178,7 +243,7 @@ class TSO(object):
         pedestal = fits.getdata(resource_filename('awesimsoss', 'files/pedestaldms.fits'))
         photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photonyieldfullframe.fits'))
         zodi = fits.getdata(resource_filename('awesimsoss', 'files/background_detectorfield_normalized.fits'))
-        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/signaldms.fits'))*self.gain
+        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/signaldms.fits')) * self.gain
 
         # Slice of FULL frame reference files
         slc = slice(1792, 1888) if self.subarray == 'SUBSTRIP96' else slice(1792, 2048) if self.subarray == 'SUBSTRIP256' else slice(0, 2048)
@@ -200,10 +265,11 @@ class TSO(object):
         RAMP = gd.make_exposure(1, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
 
         # Iterate over integrations
+        tso = copy(tso_ideal)
         for n in range(self.nints):
 
             # Add in the SOSS signal
-            ramp = gd.add_signal(self.tso_ideal[self.ngrps*n:self.ngrps*n+self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+            ramp = gd.add_signal(tso_ideal[self.ngrps * n:self.ngrps * n + self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
 
             # Apply the non-linearity function
             ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
@@ -212,12 +278,15 @@ class TSO(object):
             ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
 
             # Update the TSO with one containing noise
-            self.tso[self.ngrps*n:self.ngrps*n+self.ngrps] = ramp
+            tso[self.ngrps * n:self.ngrps * n + self.ngrps] = ramp
+
+        # Put into 4D
+        self.tso = tso.reshape(self.dims)
 
         # Memory cleanup
-        del RAMP, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
+        del RAMP, tso, tso_ideal, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
 
-        print('Noise model finished:', round(time.time()-start, 3), 's')
+        print('Noise model finished:', round(time.time() - start, 3), 's')
 
     @run_required
     def add_refpix(self, counts=0):
@@ -250,8 +319,11 @@ class TSO(object):
         outfile: str
             The path of the output file
         """
+        if not outfile.endswith('_uncal.fits'):
+            raise ValueError("Filename must end with '_uncal.fits'")
+
         # Make a RampModel
-        data = self.tso
+        data = copy(self.tso)
         mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
         pix = utils.subarray_specs(self.subarray)
 
@@ -269,7 +341,9 @@ class TSO(object):
         mod.meta.exposure.groupgap = 0
         mod.meta.exposure.frame_time = self.frame_time
         mod.meta.exposure.group_time = self.group_time
-        mod.meta.exposure.duration = self.time[-1]-self.time[0]
+        mod.meta.exposure.duration = self.time[-1] - self.time[0]
+        mod.meta.exposure.nresets_at_start = 1
+        mod.meta.exposure.nresets_between_ints = 1
         mod.meta.subarray.name = self.subarray
         mod.meta.subarray.xsize = data.shape[3]
         mod.meta.subarray.ysize = data.shape[2]
@@ -306,7 +380,7 @@ class TSO(object):
                         hdul['PLANET'].header.set(param.upper(), '')
                     elif param == 'u':
                         for n, v in enumerate(val):
-                            hdul['PLANET'].header.set('U{}'.format(n+1), v)
+                            hdul['PLANET'].header.set('U{}'.format(n + 1), v)
                     else:
                         print(param, val, type(val))
 
@@ -394,7 +468,7 @@ class TSO(object):
 
             # Generate the coefficients
             else:
-                coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order-1], self.tmodel.limb_dark, [getattr(self.tmodel, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
+                coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], self.tmodel.limb_dark, [getattr(self.tmodel, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
 
         # Check the coefficient type
         if not isinstance(coeffs, np.ndarray) or not coeffs.ndim == 3:
@@ -565,8 +639,8 @@ class TSO(object):
             # Check the wavelength range
             spec_min = np.nanmin(spectrum[0][spectrum[0] > 0.])
             spec_max = np.nanmax(spectrum[0][spectrum[0] > 0.])
-            sim_min = np.nanmin(self.wave[self.wave > 0.])*q.um
-            sim_max = np.nanmax(self.wave[self.wave > 0.])*q.um
+            sim_min = np.nanmin(self.wave[self.wave > 0.]) * q.um
+            sim_max = np.nanmax(self.wave[self.wave > 0.]) * q.um
             if spec_min > sim_min or spec_max < sim_max:
                 print("Wavelength range of input spectrum ({} - {} um) does not cover the {} - {} um range needed for a complete simulation. Interpolation will be used at the edges.".format(spec_min, spec_max, sim_min, sim_max))
 
@@ -574,8 +648,7 @@ class TSO(object):
             self._planet = spectrum
 
     @run_required
-    def plot(self, idx=0, scale='linear', order=None, noise=True,
-                   traces=False, saturation=0.8, draw=True):
+    def plot(self, idx=0, scale='linear', order=None, noise=True, traces=False, saturation=0.8, draw=True):
         """
         Plot a TSO frame
 
@@ -585,7 +658,7 @@ class TSO(object):
             The frame index to plot
         scale: str
             Plot scale, ['linear', 'log']
-        order: sequence
+        order: int (optional)
             The order to isolate
         noise: bool
             Plot with the noise model
@@ -597,16 +670,7 @@ class TSO(object):
             Render the figure instead of returning it
         """
         # Get the data cube
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Reshape data
-        tso.shape = self.dims3
+        tso = self._select_data(order, noise)
 
         # Set the plot args
         wavecal = self.wave
@@ -636,16 +700,7 @@ class TSO(object):
             Render the figure instead of returning it
         """
         # Get the data cube
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
-
-        # Reshape data
-        tso.shape = self.dims3
+        tso = self._select_data(order, noise)
 
         # Make the figure
         fig = plotting.plot_ramp(tso)
@@ -679,8 +734,8 @@ class TSO(object):
 
         # Get the scaled flux in each column for the last group in
         # each integration
-        flux_cols = np.nansum(self.tso_ideal.reshape(self.dims3)[self.ngrps-1::self.ngrps], axis=1)
-        flux_cols = flux_cols/np.nanmax(flux_cols, axis=1)[:, None]
+        flux_cols = np.nansum(self.tso_ideal.reshape(self.dims3)[self.ngrps - 1::self.ngrps], axis=1)
+        flux_cols = flux_cols / np.nanmax(flux_cols, axis=0)[None, :]
 
         # Make it into an array
         if isinstance(column, (int, float)):
@@ -712,19 +767,24 @@ class TSO(object):
             if str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
 
                 # Make time axis and convert to desired units
-                time = np.linspace(min(self.time), max(self.time), self.ngrps*self.nints*resolution_mult)
-                time = time*q.d.to(time_unit)
+                time = np.linspace(min(self.time), max(self.time), self.ngrps * self.nints * resolution_mult)
+                time = time * q.s.to('d')
 
+                # Generate transit model
                 tmodel = batman.TransitModel(self.tmodel, time)
                 tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
-                theory *= max(lightcurve)/max(theory)
+                theory *= max(lightcurve) / max(theory)
 
-                lc.line(time, theory, legend=label+' model', color=color, alpha=0.1)
+                # Convert time
+                time = time*q.d.to(time_unit)
 
-            # Convert datetime
-            data_time = self.time[self.ngrps-1::self.ngrps].copy()
-            data_time*q.d.to(time_unit)
+                # Add to figure
+                lc.line(time, theory, legend=label+' model', color=color, alpha=0.8)
+
+            # Convert datatime
+            data_time = self.time[self.ngrps - 1::self.ngrps].copy()
+            data_time = data_time * q.s.to(time_unit)
 
             # Plot the lightcurve
             lc.circle(data_time, lightcurve, legend=label, color=color)
@@ -740,6 +800,8 @@ class TSO(object):
     @run_required
     def plot_spectrum(self, frame=0, order=None, noise=False, scale='log', draw=True):
         """
+        Plot a column sum of counts converted to flux density as a function of the mean column wavelength
+
         Parameters
         ----------
         frame: int
@@ -753,22 +815,17 @@ class TSO(object):
         draw: bool
             Render the figure instead of returning it
         """
-        if order in [1, 2]:
-            tso = getattr(self, 'tso_order{}_ideal'.format(order))
-        else:
-            if noise:
-                tso = self.tso
-            else:
-                tso = self.tso_ideal
+        # Get the data cube
+        tso = self._select_data(order, noise)
 
-        # Get extracted spectrum (Column sum for now)
+        # Get counts per wavelength (Column sum for now)
         wave = np.mean(self.wave[0], axis=0)
-        flux_out = np.sum(tso.reshape(self.dims3)[frame].data, axis=0)
-        response = 1./self.order1_response
+        counts = np.sum(tso[frame].data, axis=0)
+        response = self.order1_response
 
         # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
         # that we can convert the flux at each wavelegth into [ADU/s]
-        flux_out *= response/self.time[np.mod(self.ngrps, frame)]
+        flux_out = (counts/response/(self.time[np.mod(self.ngrps, frame)]*q.s)).value
 
         # Trim wacky extracted edges
         flux_out[0] = flux_out[-1] = np.nan
@@ -784,7 +841,7 @@ class TSO(object):
 
         # Get the residuals
         res = figure(x_axis_type=scale, x_range=spec.x_range, width=1024, height=150)
-        res.step(wave, flux_out-flux_in, mode='center')
+        res.step(wave, flux_out - flux_in, mode='center')
         res.xaxis.axis_label = 'Wavelength [{}]'.format(self.star[0].unit)
         res.yaxis.axis_label = 'Residuals'
 
@@ -800,10 +857,10 @@ class TSO(object):
 
             # Update the dimensions
             self.dims = (self.nints, self.ngrps, self.nrows, self.ncols)
-            self.dims3 = (self.nints*self.ngrps, self.nrows, self.ncols)
+            self.dims3 = (self.nints * self.ngrps, self.nrows, self.ncols)
 
             # Reset the results
-            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+            for arr in ['tso', 'tso_ideal'] + ['tso_order{}_ideal'.format(n) for n in self.orders]:
                 setattr(self, arr, None)
 
     def _reset_time(self):
@@ -817,10 +874,10 @@ class TSO(object):
 
             # Generate the time axis, removing reset frames
             time_axis = []
-            t = self.t0+self.frame_time
+            t = self.t0 + self.frame_time
             for _ in range(self.nints):
-                times = t+np.arange(self.nresets+self.ngrps)*self.frame_time
-                t = times[-1]+self.frame_time
+                times = t + np.arange(self.nresets + self.ngrps) * self.frame_time
+                t = times[-1] + self.frame_time
                 time_axis.append(times[self.nresets:])
 
             self.time = np.concatenate(time_axis)
@@ -834,7 +891,7 @@ class TSO(object):
             for order in self.orders:
 
                 # Get the wavelength map
-                wave = self.avg_wave[order-1]
+                wave = self.avg_wave[order - 1]
 
                 # Get relative spectral response for the order
                 throughput = self.photom[self.photom['order'] == order]
@@ -842,13 +899,50 @@ class TSO(object):
                 ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
                 response = np.interp(wave, ph_wave, ph_resp)
 
+                # Add spectral lines if necessary
+                for line in self.lines:
+                    self.star[1] += line['flux']
+
                 # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
                 # that we can convert the flux at each wavelegth into [ADU/s]
-                response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit).value
-                flux = np.interp(self.avg_wave[order-1], self.star[0], self.star[1], left=0, right=0)*response
+                response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit)
+                flux = np.interp(wave, self.star[0].value, self.star[1].value, left=0, right=0)*self.star[1].unit*response
                 cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux[:, None, None]
                 setattr(self, 'order{}_response'.format(order), response)
                 setattr(self, 'order{}_psfs'.format(order), cube)
+
+    @run_required
+    def _select_data(self, order, noise, reshape=True):
+        """
+        Select the data given the order and noise args
+
+        Parameters
+        ----------
+        order: int (optional)
+            The order to use, [1, 2, 3]
+        noise: bool
+            Include noise model
+        reshape: bool
+            Reshape to 3 dimensions
+
+        Returns
+        -------
+        np.ndarray
+            The selected data
+        """
+        if order in [1, 2]:
+            tso = copy(getattr(self, 'tso_order{}_ideal'.format(order)))
+        else:
+            if noise:
+                tso = copy(self.tso)
+            else:
+                tso = copy(self.tso_ideal)
+
+        # Reshape data
+        if reshape:
+            tso.shape = self.dims3
+
+        return tso
 
     def simulate(self, ld_coeffs=None, noise=True, model_grid=None, n_jobs=-1, **kwargs):
         """
@@ -874,12 +968,11 @@ class TSO(object):
 
         # Simulate star with transiting exoplanet by including transmission spectrum and orbital params
         import batman
-        import astropy.constants as ac
-        planet1D = np.genfromtxt(resource_filename('awesimsoss', '/files/WASP107b_pandexo_input_spectrum.dat'), unpack=True)
+        from hotsoss import PLANET_DATA
         params = batman.TransitParams()
         params.t0 = 0.                                # time of inferior conjunction
         params.per = 5.7214742                        # orbital period (days)
-        params.a = 0.0558*q.AU.to(ac.R_sun)*0.66      # semi-major axis (in units of stellar radii)
+        params.a = 3.5                                # semi-major axis (in units of stellar radii)
         params.inc = 89.8                             # orbital inclination (in degrees)
         params.ecc = 0.                               # eccentricity
         params.w = 90.                                # longitude of periastron (in degrees)
@@ -889,7 +982,7 @@ class TSO(object):
         tmodel.teff = 3500                            # effective temperature of the host star
         tmodel.logg = 5                               # log surface gravity of the host star
         tmodel.feh = 0                                # metallicity of the host star
-        tso.simulate(planet=planet1D, tmodel=tmodel)
+        tso.simulate(planet=PLANET_DATA, tmodel=tmodel)
         """
         # Check that there is star data
         if self.star is None:
@@ -915,21 +1008,22 @@ class TSO(object):
         for order in self.orders:
 
             # Get the wavelength map
-            wave = self.avg_wave[order-1]
+            wave = self.avg_wave[order - 1]
 
             # Get the psf cube and filter response function
             psfs = getattr(self, 'order{}_psfs'.format(order))
 
             # Get limb darkening coeffs and make into a list
-            ld_coeffs = self.ld_coeffs[order-1]
+            ld_coeffs = self.ld_coeffs[order - 1]
             ld_coeffs = list(map(list, ld_coeffs))
 
             # Set the radius at the given wavelength from the transmission
             # spectrum (Rp/R*)**2... or an array of ones
             if self.planet is not None:
-                tdepth = np.interp(wave, self.planet[0], self.planet[1])
+                tdepth = np.interp(wave, self.planet[0].to(q.um).value, self.planet[1])
             else:
                 tdepth = np.ones_like(wave)
+            tdepth[tdepth < 0] = np.nan
             self.rp = np.sqrt(tdepth)
 
             # Run multiprocessing to generate lightcurves
@@ -954,7 +1048,7 @@ class TSO(object):
 
             # Generate TSO frames
             if self.verbose:
-                print('Lightcurves finished:', round(time.time()-start, 3), 's')
+                print('Lightcurves finished:', round(time.time() - start, 3), 's')
                 print('Constructing order {} traces...'.format(order))
                 start = time.time()
 
@@ -967,7 +1061,7 @@ class TSO(object):
 
             if self.verbose:
                 # print('Total flux after warp:', np.nansum(all_frames[0]))
-                print('Order {} traces finished:'.format(order), round(time.time()-start, 3), 's')
+                print('Order {} traces finished:'.format(order), round(time.time() - start, 3), 's')
 
             # Add it to the individual order
             setattr(self, 'tso_order{}_ideal'.format(order), frames)
@@ -981,33 +1075,31 @@ class TSO(object):
 
         # Trim SUBSTRIP256 array if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
-            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+            for arr in ['tso', 'tso_ideal'] + ['tso_order{}_ideal'.format(n) for n in self.orders]:
                 setattr(self, arr, getattr(self, arr)[:, :self.nrows, :])
 
         # Expand SUBSTRIP256 array if FULL frame
         if self.subarray == 'FULL':
-            for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
+            for arr in ['tso', 'tso_ideal'] + ['tso_order{}_ideal'.format(n) for n in self.orders]:
                 full = np.zeros(self.dims3)
                 full[:, -256:, :] = getattr(self, arr)
                 setattr(self, arr, full)
                 del full
+
+        # Reshape into (nints, ngrps, y, x)
+        for arr in ['tso', 'tso_ideal'] + ['tso_order{}_ideal'.format(n) for n in self.orders]:
+            setattr(self, arr, getattr(self, arr).reshape(self.dims))
 
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
         if noise:
             self.add_noise()
 
-        # Reshape into (nints, ngrps, y, x)
-        for arr in ['tso', 'tso_ideal']+['tso_order{}_ideal'.format(n) for n in self.orders]:
-            data = getattr(self, arr).reshape(self.dims)
-            setattr(self, arr, data)
-            del data
-
         # Simulate reference pixels
         self.add_refpix()
 
         if self.verbose:
-            print('\nTotal time:', round(time.time()-begin, 3), 's')
+            print('\nTotal time:', round(time.time() - begin, 3), 's')
 
     @property
     def star(self):
@@ -1044,14 +1136,14 @@ class TSO(object):
             if not spectrum[0].unit.is_equivalent(q.um):
                 raise ValueError(spectrum[0].unit, ': Wavelength must be in units of distance')
 
-            if not all([i.unit.is_equivalent(q.erg/q.s/q.cm**2/q.AA) for i in spectrum[1:]]):
+            if not all([i.unit.is_equivalent(q.erg / q.s / q.cm**2 / q.AA) for i in spectrum[1:]]):
                 raise ValueError(spectrum[1].unit, ': Flux density must be in units of F_lambda')
 
             # Check the wavelength range
             spec_min = np.nanmin(spectrum[0][spectrum[0] > 0.])
             spec_max = np.nanmax(spectrum[0][spectrum[0] > 0.])
-            sim_min = np.nanmin(self.wave[self.wave > 0.])*q.um
-            sim_max = np.nanmax(self.wave[self.wave > 0.])*q.um
+            sim_min = np.nanmin(self.wave[self.wave > 0.]) * q.um
+            sim_max = np.nanmax(self.wave[self.wave > 0.]) * q.um
             if spec_min > sim_min or spec_max < sim_max:
                 print("Wavelength range of input spectrum ({} - {} um) does not cover the {} - {} um range needed for a complete simulation. Interpolation will be used at the edges.".format(spec_min, spec_max, sim_min, sim_max))
 
@@ -1249,7 +1341,7 @@ class TestTSO(TSO):
 
 class BlackbodyTSO(TSO):
     """Generate a test object with a blackbody spectrum"""
-    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, **kwargs):
+    def __init__(self, ngrps=2, nints=2, teff=1800, filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
         """Get the test data and load the object
 
         Parmeters
@@ -1268,11 +1360,13 @@ class BlackbodyTSO(TSO):
             Run the simulation after initialization
         add_planet: bool
             Add a transiting exoplanet
+        scale: int, float
+            Scale the flux by the given factor
         """
         # Generate a blackbody at the given temperature
-        bb = BlackBody1D(temperature=teff*q.K)
+        bb = BlackBody1D(temperature=teff * q.K)
         wav = np.linspace(0.5, 2.9, 1000) * q.um
-        flux = bb(wav).to(FLAM, q.spectral_density(wav))*1E-8
+        flux = bb(wav).to(FLAM, q.spectral_density(wav)) * 1E-8 * scale
 
         # Initialize base class
         super().__init__(ngrps=ngrps, nints=nints, star=[wav, flux], subarray=subarray, filter=filter, **kwargs)
@@ -1285,3 +1379,512 @@ class BlackbodyTSO(TSO):
         # Run the simulation
         if run:
             self.simulate()
+
+
+class ModelTSO(TSO):
+    """Generate a test object with a theoretical ATLAS or PHOENIX stellar spectrum of choice"""
+    def __init__(self, ngrps=2, nints=2, teff=5700.0, logg=4.0, feh=0.0, alpha=0.0, jmag=9.0, stellar_model='ATLAS', filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
+        """Get the test data and load the object
+
+        Parmeters
+        ---------
+        ngrps: int
+            The number of groups per integration
+        nints: int
+            The number of integrations for the exposure
+        teff: double
+            The effective temperature in kelvins of the stellar source
+        logg: double
+            The log-gravity of the stellar source
+        feh: double
+            The [Fe/H] of the stellar source
+        alpha: double
+            The alpha enhancement of the stellar source
+        jmag: double
+            The J magnitude of the source. This will be used to scale the model stellar flux to Earth-values.
+        stellar_model: str
+            The stellar model grid to use. Can either be 'ATLAS' or 'PHOENIX'. Default is 'ATLAS'
+        filter: str
+            The name of the filter to use, ['CLEAR', 'F277W']
+        subarray: str
+            The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
+        run: bool
+            Run the simulation after initialization
+        add_planet: bool
+            Add a transiting exoplanet
+        scale: int, float
+            Scale the flux by the given factor
+        """
+        # Retrieve PHOENIX or ATLAS stellar models:
+        if stellar_model.lower() == 'phoenix':
+            w, f = self.get_phoenix_model(feh, alpha, teff, logg)
+        elif stellar_model.lower() == 'atlas':
+            w, f = self.get_atlas_model(feh, teff, logg)
+
+        # Now scale model spectrum to user-input J-band:
+        f = self.scale_spectrum(w, f, jmag)
+
+        self.stellar_spectrum_wav = w
+        self.stellar_spectrum_flux = f
+        # Initialize base class
+        super().__init__(ngrps=ngrps, nints=nints, star=[w, f], subarray=subarray, filter=filter, **kwargs)
+
+        # Add planet
+        if add_planet:
+            self.planet = utils.PLANET_DATA
+            self.tmodel = utils.transit_params(self.time)
+
+        # Run the simulation
+        if run:
+            self.simulate()
+
+    def closest_value(self, input_value, possible_values):
+        """
+        This function calculates, given an input_value and an array of possible_values,
+        the closest value to input_value in the array.
+
+        Parameters
+        ----------
+        input_value: double
+             Input value to compare against possible_values.
+        possible_values: np.ndarray
+             Array of possible values to compare against input_value.
+
+        Returns
+        -------
+        double
+            Closest value on possible_values to input_value.
+        """
+        distance = np.abs(possible_values - input_value)
+        idx = np.where(distance == np.min(distance))[0]
+        return possible_values[idx[0]]
+
+    def get_atlas_folder(self, feh):
+        """
+        Given input metallicity, this function defines the first part of the URL that will define what
+        file to download from the STScI website.
+
+        Parameters
+        ----------
+        feh: np.double
+             [Fe/H] of the desired spectrum.
+
+        Returns
+        -------
+        string
+            URL of ATLAS models closer to the input metallicity.
+
+        """
+        # Define closest possible metallicity from ATLAS models:
+        model_metallicity = self.closest_value(feh, np.array([-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.2, 0.5]))
+        met_sign = 'm'
+        # Define the sign before the filename, obtain absolute value if needed:
+        if model_metallicity >= 0.0:
+            met_sign = 'p'
+        else:
+            model_metallicity = np.abs(model_metallicity)
+        model_metallicity = ''.join(str(model_metallicity).split('.'))
+        fname = 'https://archive.stsci.edu/hlsps/reference-atlases/cdbs/grid/ck04models/ck{0:}{1:}/'.format(met_sign, model_metallicity)
+        return fname
+
+    def get_phoenix_folder(self, feh, alpha):
+        """
+        Given input metallicity and alpha-enhancement, this function defines the first part of the URL that will define what
+        file to download from the PHOENIX site.
+
+        Parameters
+        ----------
+        feh: np.double
+             [Fe/H] of the desired spectrum.
+        alpha: np.double
+             Alpha-enhancement of the desired spectrum.
+
+        Returns
+        -------
+        string
+            FTP URL of PHOENIX file with the closest properties to the input properties.
+
+        """
+        # Define closest possible metallicity from PHOENIX models:
+        model_metallicity = self.closest_value(feh, np.array([-4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0]))
+        # Same for alpha-enhancement:
+        model_alpha = self.closest_value(alpha, np.array([-0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.20]))
+        met_sign, alpha_sign = '-', '-'
+        # Define the sign before the filename, obtain absolute value if needed:
+        if model_metallicity > 0.0:
+            met_sign = '+'
+        else:
+            model_metallicity = np.abs(model_metallicity)
+        if model_alpha > 0.0:
+            alpha_sign = '+'
+        else:
+            model_alpha = np.abs(model_alpha)
+        # Create the folder name
+        if alpha == 0.0:
+            fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/Z{0:}{1:.1f}/'.format(met_sign, model_metallicity)
+        else:
+            fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/Z{0:}{1:.1f}.Alpha={2:}{3:.2f}/'.format(met_sign, model_metallicity, alpha_sign, model_alpha)
+        return fname
+
+    def download(self, url, fname):
+        """
+        Download files from ftp server at url in filename fname. Obtained/modified from jfs here: https://stackoverflow.com/questions/11768214/python-download-a-file-over-an-ftp-server
+
+        Parameters
+        ----------
+        url: string
+            URL pointing to the file to download.
+        fname: string
+            Output filename of the file to download.
+        """
+        with closing(request.urlopen(url)) as r:
+            with open(fname, 'wb') as f:
+                shutil.copyfileobj(r, f)
+
+    def get_vega(self):
+        """
+        This functions reads in the spectrum of Vega (Alpha Lyr) from CALSPEC
+
+        Returns
+        -------
+        astropy.units.quantity.Quantity
+            Wavelength in um of Vega spectrum.
+        astropy.units.quantity.Quantity
+            Flux in erg/s/cm2/A of Vega spectrum.
+        """
+        data = fits.getdata(resource_filename('awesimsoss', 'files/alpha_lyr_stis_009.fits'), header=False)
+        # Wavelength is in Angstroms, convert to microns to match the get_phoenix_model function.
+        # Flux is in Flambda (same as Phoenix; i.e., erg/s/cm2/A):
+        return (data['WAVELENGTH'] * q.angstrom).to(q.um), data['FLUX'] * (q.erg / q.s / q.cm**2 / q.AA)
+
+    def read_phoenix_list(self, phoenix_model_list):
+        """  
+        This function extracts filenames, effective temperatures and log-gs given a filename that contains a list of PHOENIX model filenames.
+
+        Parameters
+        ----------
+        phoenix_model_list: string
+             Filename of file containing, on each row, a PHOENIX model filename.
+        Returns
+        -------
+        np.ndarray
+            Array of PHOENIX model filenames
+        np.ndarray
+            Array containing the effective temperatures (K) of each PHOENIX model filename.
+        np.nadarray
+            Array containing the log-g (cgs) of each PHOENIX model filename.
+        """
+        fin = open(phoenix_model_list, 'r')
+        fnames = np.array([])
+        teffs = np.array([])
+        loggs = np.array([])
+        while True:
+            line = fin.readline()
+            if line != '':
+                fname = line.split()[-1]
+                teff, logg = fname.split('-')[:2]
+                fnames = np.append(fnames, fname)
+                teffs = np.append(teffs, np.double(teff[3:]))
+                loggs = np.append(loggs, np.double(logg))
+            else:
+                break
+        return fnames, teffs, loggs
+
+    def get_phoenix_model(self, feh, alpha, teff, logg):
+        """  
+        This function gets you the closest PHOENIX high-resolution model to the input stellar parameters from the Goettingen website (ftp://phoenix.astro.physik.uni-goettingen.de).
+
+        Parameters
+        ----------
+        feh: np.double
+             [Fe/H] of the desired spectrum.
+        alpha: np.double
+             Alpha-enhancement of the desired spectrum.
+        teff: np.double
+             Effective temperature (K) of the desired spectrum.
+        logg: np.double
+             Log-gravity (cgs) of the desired spectrum. 
+        Returns
+        -------
+        np.ndarray
+            Wavelength in um of the closest spectrum to input properties.
+        np.ndarray
+            Surface flux in f-lambda of the closest spectrum to input properties in units of erg/s/cm**2/angstroms.
+        """
+        
+        # First get grid corresponding to input Fe/H and alpha:
+        url_folder = self.get_phoenix_folder(feh, alpha)
+        # Now define details for filenames and folders. First, extract metallicity and alpha-enhancement in
+        # the PHOENIX filename format (and get rid of the "Z" in, e.g., "Z-1.0.Alpha=-0.20"):
+        phoenix_met_and_alpha = url_folder.split('/')[-2][1:]
+        # Define folders where we will save (1) all stellar model data and (2) all phoenix models:
+        stellarmodels_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
+        phoenix_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/phoenix/')
+        model_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/phoenix/' + phoenix_met_and_alpha + '/')
+
+        # Check if we even have stellarmodels folder created. Create it if not:
+        if not os.path.exists(stellarmodels_folder_path):
+            os.mkdir(stellarmodels_folder_path)
+        # Same for phoenix folder:
+        if not os.path.exists(phoenix_folder_path):
+            os.mkdir(phoenix_folder_path)
+        # Check if the current metallicity-alpha folder exists as well:
+        if not os.path.exists(model_folder_path):
+            os.mkdir(model_folder_path)
+
+        # Check if we have the PHOENIX wavelength solution. If not, download it:
+        if not os.path.exists(phoenix_folder_path + 'wavsol.fits'):
+            self.download('ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/WAVE_PHOENIX-ACES-AGSS-COND-2011.fits', phoenix_folder_path + 'wavsol.fits')
+
+        # Extract wavelength solution:
+        wavelengths = fits.getdata(phoenix_folder_path + 'wavsol.fits')
+
+        # Now, figure out the closest model to the input stellar parameters. For this, first figure out the range of teff and logg
+        # for the current metallicity and alpha. For this, either retrieve from the system or download the full list of PHOENIX models
+        # for the current metallicity and alpha. If not already here, save it on the system:
+        phoenix_model_list = model_folder_path + 'model_list.txt'
+        if not os.path.exists(phoenix_model_list):
+            self.download(url_folder, phoenix_model_list)
+        # Extract information from this list:
+        model_names, possible_teffs, possible_loggs = self.read_phoenix_list(model_folder_path + 'model_list.txt')
+
+        # Search the closest to the input teff:
+        phoenix_teff = self.closest_value(teff, possible_teffs)
+
+        # Raise a warning in case the found teff is outside the PHOENIX model range, give some
+        # guidance on how to proceed:
+        if np.abs(phoenix_teff - teff) > 200.:
+            print('\t Warning: the input stellar effective temperature is outside the {0:}-{1:} K model range of PHOENIX models for {2:}.'.format(np.min(possible_teffs),
+                  np.max(possible_teffs), phoenix_met_and_alpha))
+
+            if 'Alpha' in phoenix_met_and_alpha:
+                print('\t Modelling using a {0:} K model. Using models without alpha-enhancement (alpha = 0.0), which range from 2300 to 12000 K would perhaps help find more suitable temperature models.'.format(phoenix_teff))
+
+            else:
+                print('\t Modelling using a {0:} K model.'.format(phoenix_teff))
+
+        # Same excercise for logg, given the teffs:
+        idx_logg = np.where(np.abs(phoenix_teff - possible_teffs) == 0.)[0]
+        phoenix_logg = self.closest_value(logg, possible_loggs[idx_logg])
+
+        # Select final model:
+        idx = np.where((np.abs(phoenix_teff - possible_teffs) == 0.) & (np.abs(possible_loggs == phoenix_logg)))[0]
+        phoenix_model, phoenix_logg = model_names[idx][0], possible_loggs[idx][0]
+
+        # Raise warning for logg as well:
+        if np.abs(phoenix_logg - logg) > 0.5:
+            print('\t Warning: the input stellar log-gravity is outside the {0:}-{1:} model range of PHOENIX models for {2:} and Teff {3:}.'.format(
+                  np.min(possible_loggs[idx_logg]), np.max(possible_loggs[idx_logg]), phoenix_met_and_alpha, phoenix_teff))
+
+        # Check if we already have the downloaded model. If not, download the corresponding file:
+        if not os.path.exists(model_folder_path + phoenix_model):
+            print('\t PHOENIX stellar models for {0:} not found in {1:}. Downloading...'.format(phoenix_met_and_alpha, model_folder_path))
+            self.download(url_folder + phoenix_model, model_folder_path + phoenix_model)
+
+        # Once we have the file, simply extract the data:
+        print('\t Using the {0:} PHOENIX model (Teff {1:}, logg {2:}).'.format(phoenix_model, phoenix_teff, phoenix_logg))
+        flux = fits.getdata(model_folder_path + phoenix_model, header=False)
+
+        # Change units in order to match what is expected by the TSO modules:
+        wav = (wavelengths * q.angstrom).to(q.um)
+        flux = (flux * (q.erg / q.s / q.cm**2 / q.cm)).to(q.erg / q.s / q.cm**2 / q.AA)
+        return wav, flux
+
+    def get_atlas_model(self, feh, teff, logg):
+        """  
+        This function gets you the closest ATLAS9 Castelli and Kurucz model to the input stellar parameters from the STScI website 
+        (http://www.stsci.edu/hst/instrumentation/reference-data-for-calibration-and-tools/astronomical-catalogs/castelli-and-kurucz-atlas).
+
+        Parameters
+        ----------
+        feh: np.double
+             [Fe/H] of the desired spectrum.
+        teff: np.double
+             Effective temperature (K) of the desired spectrum.
+        logg: np.double
+             Log-gravity (cgs) of the desired spectrum. 
+        Returns
+        -------
+        np.ndarray
+            Wavelength in um of the closest spectrum to input properties.
+        np.ndarray
+            Surface flux in f-lambda of the closest spectrum to input properties in units of erg/s/cm**2/angstroms.
+        """
+
+        # First get grid corresponding to input Fe/H:
+        url_folder = self.get_atlas_folder(feh)
+        # Now define details for filenames and folders. Extract foldername with the metallicity info from the url_folder:
+        atlas_met = url_folder.split('/')[-2]
+        # Define folders where we will save (1) all stellar model data and (2) all atlas models:
+        stellarmodels_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
+        atlas_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/atlas/')
+        model_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/atlas/' + atlas_met + '/')
+
+        # Check if we even have stellarmodels folder created. Create it if not:
+        if not os.path.exists(stellarmodels_folder_path):
+            os.mkdir(stellarmodels_folder_path)
+        # Same for phoenix folder:
+        if not os.path.exists(atlas_folder_path):
+            os.mkdir(atlas_folder_path)
+        # Check if the current metallicity-alpha folder exists as well:
+        if not os.path.exists(model_folder_path):
+            os.mkdir(model_folder_path)
+
+        # Define possible teff and loggs (thankfully, this is easier for ATLAS models):
+        possible_teffs, possible_loggs = np.append(np.arange(3500, 13250, 250), np.arange(14000, 51000, 1000)), np.arange(0.0, 5.5, 0.5)
+
+        # Check the closest teff and logg to input ones:
+        atlas_teff = self.closest_value(teff, possible_teffs)
+        atlas_logg = self.closest_value(logg, possible_loggs)
+
+        # Raise a warning in case the found teff is outside the ATLAS model range, give some
+        # guidance on how to proceed:
+        if np.abs(atlas_teff - teff) > 200.:
+            print('\t Warning: the input stellar effective temperature is outside the {0:}-{1:} K model range of ATLAS models for {2:}.'.format(np.min(possible_teffs),
+                  np.max(possible_teffs), atlas_met))
+            print('\t Modelling using a {0:} K model.'.format(atlas_teff))
+
+        # Now, if not already in the system, download the model corresponding to the chosen teff:
+        atlas_fname = model_folder_path + atlas_met + '_{0:}.fits'.format(atlas_teff)
+        if not os.path.exists(atlas_fname):
+            self.download(url_folder + atlas_met + '_{0:}.fits'.format(atlas_teff), atlas_fname)
+
+        # Read the file:
+        d = fits.getdata(atlas_fname)
+
+        # This variable will save non-zero logg at the given temperatures. Only useful to report back to the user and/or input logg
+        # doesn't have data:
+        real_possible_loggs = np.array([])
+        # Check if the closest requested logg has any data. If not, check all possible loggs for non-zero data, and select the closest
+        # to the input logg that has data:
+        s_logg = 'g' + ''.join('{0:.1f}'.format(atlas_logg).split('.'))
+        if np.count_nonzero(d[s_logg]) != 0:
+            w, f = d['WAVELENGTH'], d[s_logg]
+        else:
+            real_possible_loggs = np.array([])
+            for loggs in possible_loggs:
+                s_logg = 'g' + ''.join('{0:.1f}'.format(loggs).split('.'))
+                if np.count_nonzero(d[s_logg]) != 0:
+                    real_possible_loggs = np.append(real_possible_loggs, loggs)
+            atlas_logg = self.closest_value(logg, real_possible_loggs)
+            s_logg = 'g' + ''.join('{0:.1f}'.format(atlas_logg).split('.'))
+            w, f = d['WAVELENGTH'], d[s_logg]
+
+        # Raise warning for logg as well:
+        if np.abs(atlas_logg - logg) > 0.5:
+            # If real_possible_loggs is empty, calculate it:
+            if len(real_possible_loggs) == 0:
+                for loggs in possible_loggs:
+                    s_logg = 'g' + ''.join('{0:.1f}'.format(loggs).split('.'))
+                    if np.count_nonzero(d[s_logg]) != 0:
+                        real_possible_loggs = np.append(real_possible_loggs, loggs)
+            print('\t Warning: the input stellar log-gravity is outside the {0:}-{1:} model range of ATLAS models for {2:} and Teff {3:}.'.format(
+                  np.min(real_possible_loggs), np.max(real_possible_loggs), atlas_met, atlas_teff))
+
+        # Change units in order to match what is expected by the TSO modules:
+        wav = (w * q.angstrom).to(q.um)
+        flux = f * q.erg / q.s / q.cm**2 / q.AA
+        return wav, flux
+
+    def get_resolution(self, w, f):
+        """  
+        This function returns the (w) wavelength (median) resolution of input spectra (f)
+
+        Parameters
+        ----------
+        w: np.ndarray
+            Wavelengths of the spectrum
+        f: np.ndarray
+            Value at the given wavelength (can be flux, transmission, etc.)
+
+        Returns
+        -------
+        np.double
+            The median resolution of the spectrum.
+        """
+
+        eff_wav = np.sum(w * f) / np.sum(f)
+        delta_wav = np.median(np.abs(np.diff(w)))
+        return eff_wav / delta_wav
+
+    def spec_integral(self, input_w, input_f, wT, TT):
+        """
+        This function computes the integral of lambda*f*T divided by the integral of lambda*T, where
+        lambda is the wavelength, f the flux (in f-lambda) and T the transmission function. The input
+        stellar spectrum is given by wavelength w and flux f. The input filter response wavelengths
+        are given by wT and transmission curve by TT. It is assumed both w and wT are in the same 
+        wavelength units.
+
+        Parameters
+        ----------
+        input_w: np.ndarray
+            Wavelengths of the input spectrum
+        input_f: np.ndarray
+            Flux (in f-lambda) of the input spectrum
+        wT: np.ndarray
+            Wavelength of the input transmission function
+        TT: np.ndarray
+            Spectral response function of the transmission function
+
+        Returns
+        -------
+        np.double
+            Value of the integral (over dlambda) of lambda*f*T divided by the integral (over dlambda) of lambda*T.
+
+        """
+
+        # If resolution of input spectra in the wavelength range of the response function
+        # is higher than it, degrade it to match the transmission function resolution. First,
+        # check that resolution of input spectra is indeed higher than the one of the
+        # transmisssion. Resolution of input transmission first:
+        min_wav, max_wav = np.min(wT), np.max(wT)
+        resT = self.get_resolution(wT, TT)
+        # Resolution of input spectra in the same wavelength range:
+        idx = np.where((input_w >= min_wav - 10) & (input_w <= max_wav + 10))[0]
+        res = self.get_resolution(input_w[idx], input_f[idx])
+        # If input spetrum resolution is larger, degrade:
+        if res > resT:
+            # This can be way quicker if we just take the gaussian weight *at* the evaluated
+            # points in the interpolation. TODO: make faster.
+            f = ndimage.gaussian_filter(input_f[idx], int(np.double(len(idx)) / np.double(len(wT))))
+            w = input_w[idx]
+        else:
+            w, f = input_w, input_f
+        interp_spectra = interpolate.interp1d(w, f)
+        numerator = np.trapz(wT * interp_spectra(wT) * TT, x=wT)
+        denominator = np.trapz(wT * TT, x=wT)
+        return numerator / denominator
+
+    def scale_spectrum(self, w, f, jmag):
+        """  
+        This function scales an input spectrum to a given jmag. This follows eq. (8) in Casagrande et al. (2014, MNRAS, 444, 392).
+
+        Parameters
+        ----------
+        w: np.ndarray
+            Wavelengths of the spectrum in microns.
+        f: np.ndarray
+            Flux of the spectrum in erg/s/cm2/A.
+        jmag: np.double
+            2MASS J-magnitude to which we wish to re-scale the spectrum.
+        Returns
+        -------
+        np.ndarray
+            Rescaled spectrum at wavelength w.
+        """
+
+        # Get filter response (note wT is in microns):
+        wT, TT = np.loadtxt(resource_filename('awesimsoss', 'files/jband_transmission.dat'), unpack=True, usecols=(0, 1))
+        # Get spectrum of vega:
+        w_vega, f_vega = self.get_vega()
+        # Use those two to get the absolute flux calibration for Vega (left-most term in equation (9) in Casagrande et al., 2014).
+        # Multiply wavelengths by 1e4 as they are in microns (i.e., transform back to angstroms both wavelength ranges):
+        vega_weighted_flux = self.spec_integral(np.array(w_vega.to(q.AA)), np.array(f_vega), wT * 1e4, TT)
+        # J-band zero-point is thus (maginutde of Vega, m_*, obtained from Table 1 in Casagrande et al, 2014):
+        ZP = -0.001 + 2.5 * np.log10(vega_weighted_flux)
+        # Now compute (inverse?) bolometric correction for target star. For this, compute same integral as for vega, but for target:
+        target_weighted_flux = self.spec_integral(np.array(w) * 1e4, f, np.array(wT) * 1e4, TT)
+        # Get scaling factor for target spectrum (this ommits any extinction):
+        scaling_factor = 10**(-((jmag + 2.5 * np.log10(target_weighted_flux) - ZP) / 2.5))
+        # Return scaled spectrum:
+        return f * scaling_factor
