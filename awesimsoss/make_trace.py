@@ -14,7 +14,7 @@ import warnings
 import numpy as np
 from astropy.io import fits
 from bokeh.plotting import figure, show
-from hotsoss import utils
+from hotsoss import utils, locate_trace
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
@@ -50,7 +50,7 @@ def calculate_psf_tilts():
 
         # Get the y-coordinate of the trace polynomial in this column
         # (center of the trace)
-        coeffs = trace_polynomials(subarray=subarray, order=order)
+        coeffs = locate_trace.trace_polynomial(subarray=subarray, order=order)
         trace = np.polyval(coeffs, X)
 
         # Interpolate to get the wavelength value at the center
@@ -502,7 +502,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
 
         # Get the wavelengths
         wavelengths = np.mean(utils.wave_solutions(subarray), axis=1)[:2 if filt == 'CLEAR' else 1]
-        coeffs = trace_polynomials(subarray)
+        coeffs = locate_trace.trace_polynomial(subarray)
 
         # Get the file
         psf_path = 'files/SOSS_{}_PSF.fits'.format(filt)
