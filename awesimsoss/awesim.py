@@ -43,7 +43,6 @@ from . import make_trace as mt
 
 warnings.simplefilter('ignore')
 
-
 def check_psf_files():
     """Function to run on import to verify that the PSF files have been precomputed"""
     if not os.path.isfile(resource_filename('awesimsoss', 'files/SOSS_CLEAR_PSF_order1_1.npy')):
@@ -52,7 +51,11 @@ def check_psf_files():
         compute = input("Would you like to do it now? [y] ")
 
         if compute is None or compute.lower() in ['y', 'yes']:
-            mt.nuke_psfs()
+            multip = input("Do you want to run this using multiprocessing? [y]")
+            if multip is None or multip.lower() in ['y', 'yes']:
+                mt.nuke_psfs(mprocessing = True)
+            else:
+                mt.nuke_psfs(mprocessing = False)
 
 
 def run_required(func):

@@ -104,7 +104,7 @@ def calculate_psf_tilts():
         print('Angles saved to', psf_file)
 
 
-def nuke_psfs(tilts=True, raw=True, final=True):
+def nuke_psfs(tilts=True, raw=True, final=True, mprocessing = True):
     """Generate all the psf cubes from scratch"""
     # Calculate the psf tilts
     if tilts:
@@ -118,7 +118,7 @@ def nuke_psfs(tilts=True, raw=True, final=True):
 
         # Generate the rotated and interpolated psfs ready for trace assembly
         if final:
-            SOSS_psf_cube(filt=filt, generate=True)
+            SOSS_psf_cube(filt=filt, generate=True, mprocessing = mprocessing)
 
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
@@ -472,8 +472,7 @@ def put_psf_on_subarray(psf, y, frame_height=256):
 
     return frame
 
-
-def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False):
+def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False, mprocessing = True):
     """
     Generate/retrieve a data cube of shape (3, 2048, 76, 76) which is a
     76x76 pixel psf for 2048 wavelengths for each trace order. The PSFs
@@ -531,12 +530,22 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
                 # Get the psf for each column
                 print('Calculating order {} SOSS psfs for {} filter...'.format(n+1, filt))
                 start = time.time()
-                pool = multiprocessing.Pool(8)
-                func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
-                raw_psfs = np.array(pool.map(func, wavelength))
-                pool.close()
-                pool.join()
-                del pool
+
+                # Multi-processing here should be optional, as some systems have problems with the forks created to 
+                # perform multi-processing when importing a library in for loops, which is how this piece of code is ran:
+                if mprocessing:
+                    pool = multiprocessing.Pool(8)
+                    func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
+                    raw_psfs = np.array(pool.map(func, wavelength))
+                    pool.close()
+                    pool.join()
+                    del pool
+                else:
+                    func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
+                    raw_psfs = []
+                    for i in range(len(wavelength)):
+                        raw_psfs.append(func(wavelength[i]))
+                    raw_psfs = np.array(raw_psfs)
                 print('Finished in {} seconds.'.format(time.time()-start))
 
                 # Get the PSF tilt at each column
@@ -569,12 +578,19 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
                     # Interpolate the psfs onto the subarray
                     print('Interpolating chunk {}/4 for order {} SOSS psfs for {} filter onto subarray...'.format(N+1, n+1, filt))
                     start = time.time()
-                    pool = multiprocessing.Pool(8)
-                    data = zip(chunk, centers)
-                    subarray_psfs = pool.starmap(put_psf_on_subarray, data)
-                    pool.close()
-                    pool.join()
-                    del pool
+                    if mprocessing:
+                        pool = multiprocessing.Pool(8)
+                        data = zip(chunk, centers)
+                        subarray_psfs = pool.starmap(put_psf_on_subarray, data)
+                        pool.close()
+                        pool.join()
+                        del pool
+                    else:
+                        subarray_psfs = []
+                        print('chunk.shape:',chunk.shape,'centers.shape:',centers.shape)
+                        data = zip(chunk, centers)
+                        for ch,ce in data:
+                            subarray_psfs.append(put_psf_on_subarray(ch,ce))
                     print('Finished in {} seconds.'.format(time.time()-start))
 
                     # Get the filepath
