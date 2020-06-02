@@ -1002,7 +1002,7 @@ class TSO(object):
             n_jobs = max_cores
 
         # Chunk along the time axis so results can be dumped into a file and then deleted
-        max_frames = 2
+        max_frames = 50
         nints_per_chunk = max_frames // self.ngrps
         nframes_per_chunk = self.ngrps * nints_per_chunk
 
