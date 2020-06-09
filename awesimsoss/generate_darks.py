@@ -290,6 +290,6 @@ def add_pedestal(cube, pedestal, offset=500):
     # Iterate over each integration
     for n in range(dims[0]):
         newcube[n,:,:] = cube[n,:,:]+ped1
-    newcube = newcube.astype(np.uint16)
+    newcube = newcube.astype(np.uint32)
 
     return newcube
