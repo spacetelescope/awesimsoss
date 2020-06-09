@@ -321,7 +321,7 @@ class TSO(object):
             raise ValueError("Filename must end with '_uncal.fits'")
 
         # Make a RampModel
-        data = copy(self.tso) or np.ones((1, 1, self.nrows, self.ncols))
+        data = copy(self.tso) if self.tso is not None else np.ones((1, 1, self.nrows, self.ncols))
         mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
         pix = utils.subarray_specs(self.subarray)
 
@@ -1076,12 +1076,12 @@ class TSO(object):
 
         # Trim SUBSTRIP256 array if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
-            for order in orders:
+            for order in self.orders:
                 setattr(self, order_name, self.tso_order1_ideal[:, :self.nrows, :])
 
         # Expand SUBSTRIP256 array if FULL frame
         if self.subarray == 'FULL':
-            for order in orders:
+            for order in self.orders:
                 order_name = 'tso_order{}_ideal'.format(order)
                 full = np.zeros((self.nframes, self.nrows, self.ncols))
                 full[:, -256:, :] = self.tso_order1_ideal
