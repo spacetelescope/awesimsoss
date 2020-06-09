@@ -1077,21 +1077,22 @@ class TSO(object):
         # Trim SUBSTRIP256 array if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
             for order in self.orders:
-                setattr(self, order_name, self.tso_order1_ideal[:, :self.nrows, :])
+                order_name = 'tso_order{}_ideal'.format(order)
+                setattr(self, order_name, getattr(self, order_name)[:, :96, :])
 
         # Expand SUBSTRIP256 array if FULL frame
         if self.subarray == 'FULL':
             for order in self.orders:
                 order_name = 'tso_order{}_ideal'.format(order)
-                full = np.zeros((self.nframes, self.nrows, self.ncols))
-                full[:, -256:, :] = self.tso_order1_ideal
+                full = np.zeros((self.nframes, 2048, 2048))
+                full[:, -256:, :] = getattr(self, order_name)
                 setattr(self, order_name, full)
                 del full
 
         # Reshape into (nints, ngrps, y, x)
-        self.tso_order1_ideal = self.tso_order1_ideal.reshape(self.dims).astype(np.float64)
-        if 2 in self.orders:
-            self.tso_order2_ideal = self.tso_order2_ideal.reshape(self.dims).astype(np.float64)
+        for order in self.orders:
+            order_name = 'tso_order{}_ideal'.format(order)
+            setattr(self, order_name, getattr(self, order_name).reshape(self.dims).astype(np.float64))
 
         # Make ramps and add noise to the observations
         self.add_noise()
