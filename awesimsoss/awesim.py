@@ -1386,7 +1386,7 @@ class BlackbodyTSO(TSO):
 
 class ModelTSO(TSO):
     """Generate a test object with a theoretical ATLAS or PHOENIX stellar spectrum of choice"""
-    def __init__(self, ngrps=2, nints=2, teff=5700.0, logg=4.0, feh=0.0, alpha=0.0, jmag=9.0, stellar_model='ATLAS', filter='CLEAR', subarray='SUBSTRIP256', run=False, add_planet=False, scale=1., **kwargs):
+    def __init__(self, ngrps=2, nints=2, teff=5700.0, logg=4.0, feh=0.0, alpha=0.0, jmag=9.0, stellar_model='ATLAS', filter='CLEAR', subarray='SUBSTRIP256', run=True, add_planet=False, scale=1., **kwargs):
         """Get the test data and load the object
 
         Parmeters
