@@ -19,6 +19,7 @@ import warnings
 
 import astropy.units as q
 import astropy.constants as ac
+from astropy.time import Time as apytime
 from astropy.io import fits
 from astropy.modeling.models import BlackBody1D, Voigt1D, Gaussian1D, Lorentz1D
 from astropy.modeling.blackbody import FLAM
@@ -142,8 +143,13 @@ class TSO(object):
         self.nints = nints
         self.nresets = nresets
         self.nframes = (self.nresets + self.ngrps) * self.nints
-        self.obs_date = datetime.datetime.now().strftime("%Y-%m-%d")
-        self.obs_time = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        if self.t0 == 0:
+            self.obs_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            self.obs_time = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        else:
+            t0_apytime = apytime(t0,scale='tdb',format='jd')
+            self.obs_date = t0_apytime.datetime.strftime("%Y-%m-%d")
+            self.obs_time = t0_apytime.datetime.strftime("%H:%M:%S.%f")[:-3]
         self.orders = orders
         self.filter = filter
         self.header = ''
