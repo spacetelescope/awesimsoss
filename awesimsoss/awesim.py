@@ -351,7 +351,7 @@ class TSO(object):
         mod.meta.exposure.frame_time = self.frame_time.to(q.s).value
         mod.meta.exposure.group_time = self.group_time.to(q.s).value
         # Duration accounts from the very start (i.e., before the initial reset) to the very end (end of very last integration).
-        mod.meta.exposure.duration = ((self.time[-1]+(self.frame_time/2.)) - self.t0*q.d).to(q.s).value # -> Why this doesnt account for resets? (it gives 32.9 secs, should be 43.92 accounting for resets)
+        mod.meta.exposure.duration = ((self.time[-1]+(self.frame_time/2.)) - self.t0*q.d).to(q.s).value
         mod.meta.exposure.nresets_at_start = 1
         mod.meta.exposure.nresets_between_ints = 1
         mod.meta.subarray.name = self.subarray
