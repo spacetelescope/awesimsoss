@@ -272,7 +272,7 @@ class TSO(object):
         for n in range(self.nints):
 
             # Add in the SOSS signal
-            ramp = gd.add_signal(tso_ideal[self.ngrps * n:self.ngrps * n + self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+            ramp = gd.add_signal(tso_ideal[self.ngrps * n:self.ngrps * n + self.ngrps], RAMP.copy(), pyf, self.frame_time.to(q.s).value, self.gain, zodi, zodi_scale, photon_yield=False)
 
             # Apply the non-linearity function
             ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
@@ -342,9 +342,9 @@ class TSO(object):
         mod.meta.exposure.nframes = self.nframes
         mod.meta.exposure.readpatt = 'NISRAPID'
         mod.meta.exposure.groupgap = 0
-        mod.meta.exposure.frame_time = self.frame_time
-        mod.meta.exposure.group_time = self.group_time
-        mod.meta.exposure.duration = self.time[-1] - self.time[0]
+        mod.meta.exposure.frame_time = self.frame_time.to(q.s).value
+        mod.meta.exposure.group_time = self.group_time.to(q.s).value
+        mod.meta.exposure.duration = (self.time[-1] - self.time[0]).to(q.s).value
         mod.meta.exposure.nresets_at_start = 1
         mod.meta.exposure.nresets_between_ints = 1
         mod.meta.subarray.name = self.subarray
@@ -770,11 +770,11 @@ class TSO(object):
             if str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
 
                 # Make time axis and convert to desired units
-                time = np.linspace(min(self.time), max(self.time), self.ngrps * self.nints * resolution_mult)
-                time = time * q.s.to('d')
+                time = np.linspace(min(self.time.to(q.d).value), max(self.time.to(q.d).value), self.ngrps * self.nints * resolution_mult)*q.d
+                #time = time * q.s.to('d')
 
                 # Generate transit model
-                tmodel = batman.TransitModel(self.tmodel, time)
+                tmodel = batman.TransitModel(self.tmodel, time.value)
                 tmodel.rp = self.rp[col]
                 theory = tmodel.light_curve(tmodel)
                 theory *= max(lightcurve) / max(theory)
@@ -787,10 +787,10 @@ class TSO(object):
 
             # Convert datatime
             data_time = self.time[self.ngrps - 1::self.ngrps].copy()
-            data_time = data_time * q.s.to(time_unit)
+            #data_time = data_time * q.s.to(time_unit)
 
             # Plot the lightcurve
-            lc.circle(data_time, lightcurve, legend=label, color=color)
+            lc.circle(data_time.to(time_unit), lightcurve, legend=label, color=color)
 
         lc.xaxis.axis_label = 'Time [{}]'.format(time_unit)
         lc.yaxis.axis_label = 'Transit Depth'
@@ -828,7 +828,7 @@ class TSO(object):
 
         # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
         # that we can convert the flux at each wavelegth into [ADU/s]
-        flux_out = (counts/response/(self.time[np.mod(self.ngrps, frame)]*q.s)).value
+        flux_out = (counts/response/((self.time[np.mod(self.ngrps, frame)] - self.t0).to(q.s))).value
 
         # Trim wacky extracted edges
         flux_out[0] = flux_out[-1] = np.nan
@@ -872,19 +872,21 @@ class TSO(object):
         if all([i in self.info for i in ['subarray', 'nints', 'ngrps', 't0', 'nresets']]):
 
             # Get frame time based on the subarray
-            self.frame_time = self.subarray_specs.get('tfrm')
-            self.group_time = self.subarray_specs.get('tgrp')
+            self.frame_time = self.subarray_specs.get('tfrm')*q.s
+            self.group_time = self.subarray_specs.get('tgrp')*q.s
 
-            # Generate the time axis, removing reset frames
+            # Generate the time axis, removing reset frames. Note self.t0 is expected to be in days:
             time_axis = []
-            t = self.t0 + self.frame_time
+            t = self.t0*q.d + self.frame_time
             for _ in range(self.nints):
                 times = t + np.arange(self.nresets + self.ngrps) * self.frame_time
                 t = times[-1] + self.frame_time
-                time_axis.append(times[self.nresets:])
+                time_axis.append(times[self.nresets:].value)
 
-            self.time = np.concatenate(time_axis)
-            self.inttime = np.tile(self.time[:self.ngrps], self.nints)
+            # The self.time variable saves the end times of each photon-counting frame-read:
+            self.time = np.concatenate(time_axis)*q.d
+            # Now get inttime, which saves the time spent on each of the frame-reads on each of the groups:
+            self.inttime = np.tile((1+np.arange(self.ngrps))*self.frame_time, self.nints)#np.tile(self.time[:self.ngrps], self.nints)
 
     def _reset_psfs(self):
         """Scale the psf for each detector column to the flux from the 1D spectrum"""
@@ -1036,7 +1038,7 @@ class TSO(object):
 
             # Generate the lightcurves at each wavelength
             pool = ThreadPool(n_jobs)
-            func = partial(mt.psf_lightcurve, time=self.time, tmodel=self.tmodel)
+            func = partial(mt.psf_lightcurve, time=self.time.to(q.d).value, tmodel=self.tmodel)
             data = list(zip(psfs, ld_coeffs, self.rp))
             lightcurves = np.asarray(pool.starmap(func, data), dtype=np.float64)
             pool.close()
@@ -1047,7 +1049,7 @@ class TSO(object):
             lightcurves = lightcurves.swapaxes(0, 1)
 
             # Multiply by the integration time to convert to [ADU]
-            lightcurves *= self.inttime[:, None, None, None]
+            lightcurves *= self.inttime[:, None, None, None].to(q.s).value
 
             # Generate TSO frames
             if self.verbose:
@@ -1092,7 +1094,6 @@ class TSO(object):
         # Reshape into (nints, ngrps, y, x)
         for arr in ['tso', 'tso_ideal'] + ['tso_order{}_ideal'.format(n) for n in self.orders]:
             setattr(self, arr, getattr(self, arr).reshape(self.dims))
-
         # Make ramps and add noise to the observations using Kevin Volk's
         # dark ramp simulator
         if noise:
@@ -1335,7 +1336,7 @@ class TestTSO(TSO):
         # Add planet
         if add_planet:
             self.planet = utils.PLANET_DATA
-            self.tmodel = utils.transit_params(self.time)
+            self.tmodel = utils.transit_params(self.time.to(q.s).value)
 
         # Run the simulation
         if run:
@@ -1377,7 +1378,7 @@ class BlackbodyTSO(TSO):
         # Add planet
         if add_planet:
             self.planet = utils.PLANET_DATA
-            self.tmodel = utils.transit_params(self.time)
+            self.tmodel = utils.transit_params(self.time.to(q.d).value)
 
         # Run the simulation
         if run:
@@ -1435,7 +1436,7 @@ class ModelTSO(TSO):
         # Add planet
         if add_planet:
             self.planet = utils.PLANET_DATA
-            self.tmodel = utils.transit_params(self.time)
+            self.tmodel = utils.transit_params(self.time.to(q.d).value)
 
         # Run the simulation
         if run:
