@@ -350,7 +350,8 @@ class TSO(object):
         mod.meta.exposure.groupgap = 0
         mod.meta.exposure.frame_time = self.frame_time.to(q.s).value
         mod.meta.exposure.group_time = self.group_time.to(q.s).value
-        mod.meta.exposure.duration = (self.time[-1] - self.time[0]).to(q.s).value
+        # Duration accounts from the very start (i.e., before the initial reset) to the very end (end of very last integration).
+        mod.meta.exposure.duration = ((self.time[-1]+(self.frame_time/2.)) - self.t0*q.d).to(q.s).value # -> Why this doesnt account for resets? (it gives 32.9 secs, should be 43.92 accounting for resets)
         mod.meta.exposure.nresets_at_start = 1
         mod.meta.exposure.nresets_between_ints = 1
         mod.meta.subarray.name = self.subarray
@@ -889,8 +890,8 @@ class TSO(object):
                 t = times[-1] + self.frame_time
                 time_axis.append(times[self.nresets:].value)
 
-            # The self.time variable saves the end times of each photon-counting frame-read:
-            self.time = np.concatenate(time_axis)*q.d
+            # The self.time variable will save the middle time of each photon-counting frame-read:
+            self.time = np.concatenate(time_axis)*q.d - (self.frame_time/2.)
             # Now get inttime, which saves the time spent on each of the frame-reads on each of the groups:
             self.inttime = np.tile((1+np.arange(self.ngrps))*self.frame_time, self.nints)#np.tile(self.time[:self.ngrps], self.nints)
 
