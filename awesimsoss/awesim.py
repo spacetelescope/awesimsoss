@@ -23,6 +23,7 @@ from astropy.io import fits
 from astropy.modeling.models import BlackBody1D, Voigt1D, Gaussian1D, Lorentz1D
 from astropy.modeling.blackbody import FLAM
 import astropy.table as at
+from astropy.time import Time, TimeDelta
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 import batman
@@ -76,8 +77,8 @@ class TSO(object):
     Generate NIRISS SOSS time series observations
     """
     def __init__(self, ngrps, nints, star=None, planet=None, tmodel=None, snr=700,
-                 filter='CLEAR', subarray='SUBSTRIP256', orders=[1, 2], t0=0, nresets=0,
-                 target='New Target', title=None, verbose=True):
+                 filter='CLEAR', subarray='SUBSTRIP256', orders=[1, 2], nresets=0,
+                 obs_date=None, target='New Target', title=None, verbose=True):
         """
         Initialize the TSO object and do all pre-calculations
 
@@ -99,10 +100,10 @@ class TSO(object):
             The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         orders: int, list
             The orders to simulate, [1], [1, 2], [1, 2, 3]
-        t0: float
-            The start time of the exposure [days]
         nresets: int
             The number of resets before each integration
+        obs_date: str, datetime.datetime, astropy.time.Time
+            The datetime of the start of the observation
         target: str (optional)
             The name of the target
         title: str (optionl)
@@ -133,13 +134,11 @@ class TSO(object):
         self._star = None
 
         # Set instance attributes for the exposure
-        self.t0 = t0
+        self.obs_date = obs_date or Time.now()
         self.ngrps = ngrps
         self.nints = nints
         self.nresets = nresets
         self.nframes = (self.nresets + self.ngrps) * self.nints
-        self.obs_date = datetime.datetime.now().strftime("%Y-%m-%d")
-        self.obs_time = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
         self.orders = orders
         self.filter = filter
         self.header = ''
@@ -154,10 +153,6 @@ class TSO(object):
         self.ld_coeffs = np.zeros((3, 2048, 2))
         self.ld_profile = 'quadratic'
         self.planet = planet
-
-        # Reset data based on subarray and observation settings
-        self._reset_data()
-        self._reset_time()
 
     def add_line(self, x_0, amplitude, fwhm, profile='lorentz', name='Line I'):
         """
@@ -349,8 +344,8 @@ class TSO(object):
         mod.meta.subarray.ystart = pix.get('yloc', 1)
         mod.meta.subarray.fastaxis = -2
         mod.meta.subarray.slowaxis = -1
-        mod.meta.observation.date = self.obs_date
-        mod.meta.observation.time = self.obs_time
+        mod.meta.observation.date = self.obs_date.iso.split()[0]
+        mod.meta.observation.time = self.obs_date.iso.split()[1]
         mod.meta.target.ra = self.ra
         mod.meta.target.dec = self.dec
         mod.meta.target.source_type = 'POINT'
@@ -432,7 +427,7 @@ class TSO(object):
     def info(self):
         """Summary table for the observation settings"""
         # Pull out relevant attributes
-        track = ['_ncols', '_nrows', '_nints', '_ngrps', '_nresets', '_subarray', '_filter', '_t0', '_orders', 'ld_profile', '_target', 'title', 'ra', 'dec']
+        track = ['_ncols', '_nrows', '_nints', '_ngrps', '_nresets', '_subarray', '_filter', '_obs_date', '_orders', 'ld_profile', '_target', 'title', 'ra', 'dec']
         settings = {key.strip('_'): val for key, val in self.__dict__.items() if key in track}
         return settings
 
@@ -571,6 +566,34 @@ class TSO(object):
         """Error when trying to change the number of rows
         """
         raise TypeError("The number of rows is fixed by setting the 'subarray' attribute.")
+
+    @property
+    def obs_date(self):
+        """Getter for observation start date"""
+        return self._obs_date
+
+    @obs_date.setter
+    def obs_date(self, obsdate):
+        """Setter for observation start date
+
+        Properties
+        ----------
+        obsdate: str, datetime.datetime, astropy.time.Time
+            The datetime of the start of the observation
+        """
+        # Acceptible time formats
+        good_dtypes = str, datetime.datetime, Time
+
+        # Try to make an astropy.time object
+        if not isinstance(obsdate, good_dtypes):
+            raise ValueError("'{}' not a supported obs_date. Try a dtype of {}".format(obsdate, good_dtypes))
+
+        # Set the transit midpoint
+        self._obs_date = Time(obsdate)
+
+        # Reset the data and time arrays
+        self._reset_data()
+        self._reset_time()
 
     @property
     def orders(self):
@@ -864,22 +887,20 @@ class TSO(object):
     def _reset_time(self):
         """Reset the time axis based on the observation settings"""
         # Check that all the appropriate values have been initialized
-        if all([i in self.info for i in ['subarray', 'nints', 'ngrps', 't0', 'nresets']]):
+        if all([i in self.info for i in ['subarray', 'nints', 'ngrps', 'obs_date', 'nresets']]):
 
             # Get frame time based on the subarray
             self.frame_time = self.subarray_specs.get('tfrm')
             self.group_time = self.subarray_specs.get('tgrp')
 
-            # Generate the time axis, removing reset frames
-            time_axis = []
-            t = self.t0 + self.frame_time
-            for _ in range(self.nints):
-                times = t + np.arange(self.nresets + self.ngrps) * self.frame_time
-                t = times[-1] + self.frame_time
-                time_axis.append(times[self.nresets:])
+            # Datetime of each frame
+            dt = TimeDelta(self.frame_time, format='sec')
+            self.time = self.obs_date + dt * np.arange((self.nresets + self.ngrps) * self.nints)
 
-            self.time = np.concatenate(time_axis)
-            self.inttime = np.tile(self.time[:self.ngrps], self.nints)
+            # Integration time of each frame in seconds
+            self.inttime = np.tile(self.frame_time * np.arange(self.nresets + self.ngrps), self.nints)
+
+            # TODO: Fix for nresets != 0 by masking or removing reset frames
 
     def _reset_psfs(self):
         """Scale the psf for each detector column to the flux from the 1D spectrum"""
@@ -903,9 +924,9 @@ class TSO(object):
 
                 # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
                 # that we can convert the flux at each wavelegth into [ADU/s]
-                response = self.frame_time/(response*q.mJy*ac.c/(wave*q.um)**2).to(self.star[1].unit)
-                flux = np.interp(wave, self.star[0].value, self.star[1].value, left=0, right=0)*self.star[1].unit*response
-                cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray)*flux[:, None, None]
+                response = self.frame_time / (response * q.mJy * ac.c / (wave * q.um)**2).to(self.star[1].unit)
+                flux = np.interp(wave, self.star[0].value, self.star[1].value, left=0, right=0) * self.star[1].unit * response
+                cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray) * flux[:, None, None]
                 setattr(self, 'order{}_response'.format(order), response.astype(np.float16))
                 setattr(self, 'order{}_psfs'.format(order), cube.astype(np.float16))
 
@@ -942,7 +963,7 @@ class TSO(object):
 
         return tso
 
-    def simulate(self, ld_coeffs=None, noise=True, model_grid=None, n_jobs=-1, **kwargs):
+    def simulate(self, ld_coeffs=None, noise=True, model_grid=None, n_jobs=-1, params=None, supersample_factor=None, **kwargs):
         """
         Generate the simulated 4D ramp data given the initialized TSO object
 
@@ -1005,8 +1026,8 @@ class TSO(object):
         nframes_per_chunk = self.ngrps * nints_per_chunk
 
         # Chunk the time arrays
-        time_chunks = [self.time[i:i + nframes_per_chunk] for i in range(0, len(self.time), nframes_per_chunk)]
-        inttime_chunks = [self.inttime[i:i + nframes_per_chunk] for i in range(0, len(self.inttime), nframes_per_chunk)]
+        time_chunks = [self.time[i:i + nframes_per_chunk] for i in range(0, self.nframes, nframes_per_chunk)]
+        inttime_chunks = [self.inttime[i:i + nframes_per_chunk] for i in range(0, self.nframes, nframes_per_chunk)]
         n_chunks = len(time_chunks)
 
         # Iterate over chunks
@@ -1016,6 +1037,16 @@ class TSO(object):
             if self.verbose:
                 print('Constructing frames for chunk {}/{}...'.format(chunk + 1, n_chunks))
                 start = time.time()
+
+            # Re-define lightcurve model for the current chunk
+            if params is not None:
+                if supersample_factor is None:
+                    c_tmodel = batman.TransitModel(params, time_chunk.jd)
+                else:
+                    frame_days = (self.frame_time * q.s).to(q.d).value
+                    c_tmodel = batman.TransitModel(params, time_chunk.jd, supersample_factor=supersample_factor, exp_time=frame_days)
+            else:
+                c_tmodel = self.tmodel
 
             # Generate simulation for each order
             for order in self.orders:
@@ -1041,7 +1072,7 @@ class TSO(object):
 
                 # Generate the lightcurves at each wavelength
                 pool = ThreadPool(n_jobs)
-                func = partial(mt.psf_lightcurve, time=time_chunk, tmodel=self.tmodel)
+                func = partial(mt.psf_lightcurve, time=time_chunk, tmodel=c_tmodel)
                 data = list(zip(psfs, ld_coeffs, self.rp))
                 lightcurves = np.asarray(pool.starmap(func, data), dtype=np.float16)
                 pool.close()
@@ -1193,31 +1224,6 @@ class TSO(object):
 
         # Reset the psfs
         self._reset_psfs()
-
-    @property
-    def t0(self):
-        """Getter for transit midpoint"""
-        return self._t0
-
-    @t0.setter
-    def t0(self, tmid):
-        """Setter for transit midpoint
-
-        Properties
-        ----------
-        tmid: str
-            The transit midpoint
-        """
-        # Check the value
-        if not isinstance(tmid, (float, int)):
-            raise ValueError("'{}' not a supported transit midpoint. Try a float or integer value.".format(tmid))
-
-        # Set the transit midpoint
-        self._t0 = tmid
-
-        # Reset the data and time arrays
-        self._reset_data()
-        self._reset_time()
 
     @property
     def target(self):
