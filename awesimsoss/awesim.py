@@ -334,7 +334,7 @@ class TSO(object):
         mod.meta.exposure.groupgap = 0
         mod.meta.exposure.frame_time = self.frame_time
         mod.meta.exposure.group_time = self.group_time
-        mod.meta.exposure.duration = (self.time.max() - self.time.min()).to(q.s).value 
+        mod.meta.exposure.duration = self.duration.to(q.s).value 
         mod.meta.exposure.nresets_at_start = 1
         mod.meta.exposure.nresets_between_ints = 1
         mod.meta.subarray.name = self.subarray
@@ -731,146 +731,6 @@ class TSO(object):
         else:
             return fig
 
-    @run_required
-    def plot_lightcurve(self, column, time_unit='s', resolution_mult=20, draw=True):
-        """
-        Plot a lightcurve for each column index given
-
-        Parameters
-        ----------
-        column: int, float, sequence
-            The integer column index(es) or float wavelength(s) in microns
-            to plot as a light curve
-        time_unit: string
-            The string indicator for the units that the self.time array is in
-            ['s', 'min', 'h', 'd' (default)]
-        resolution_mult: int
-            The number of theoretical points to plot for each data point
-        draw: bool
-            Render the figure instead of returning it
-        """
-        # Check time_units
-        if time_unit not in ['s', 'min', 'h', 'd']:
-            raise ValueError("time_unit must be 's', 'min', 'h' or 'd']")
-
-        # Get the scaled flux in each column for the last group in
-        # each integration
-        flux_cols = np.nansum(self.tso_ideal.reshape(self.dims3)[self.ngrps - 1::self.ngrps], axis=1)
-        flux_cols = flux_cols / np.nanmax(flux_cols, axis=0)[None, :]
-
-        # Make it into an array
-        if isinstance(column, (int, float)):
-            column = [column]
-
-        # Make the figure
-        lc = figure()
-
-        for kcol, col in enumerate(column):
-
-            color = next(utils.COLORS)
-
-            # If it is an index
-            if isinstance(col, (int, np.integer)):
-                lightcurve = flux_cols[:, col]
-                label = 'Column {}'.format(col)
-
-            # Or assumed to be a wavelength in microns
-            elif isinstance(col, float):
-                waves = np.mean(self.wave[0], axis=0)
-                lightcurve = [np.interp(col, waves, flux_col) for flux_col in flux_cols]
-                label = '{} um'.format(col)
-
-            else:
-                print('Please enter an index, astropy quantity, or array thereof.')
-                return
-
-            # Plot the theoretical light curve
-            if str(type(self.tmodel)) == "<class 'batman.transitmodel.TransitModel'>":
-
-                # Make time axis and convert to desired units
-                time = np.linspace(min(self.time), max(self.time), self.ngrps * self.nints * resolution_mult)
-                time = time * q.s.to('d')
-
-                # Generate transit model
-                tmodel = batman.TransitModel(self.tmodel, time)
-                tmodel.rp = self.rp[col]
-                theory = tmodel.light_curve(tmodel)
-                theory *= max(lightcurve) / max(theory)
-
-                # Convert time
-                time = time*q.d.to(time_unit)
-
-                # Add to figure
-                lc.line(time, theory, legend=label+' model', color=color, alpha=0.8)
-
-            # Convert datatime
-            data_time = self.time[self.ngrps - 1::self.ngrps].copy()
-            data_time = data_time * q.s.to(time_unit)
-
-            # Plot the lightcurve
-            lc.circle(data_time, lightcurve, legend=label, color=color)
-
-        lc.xaxis.axis_label = 'Time [{}]'.format(time_unit)
-        lc.yaxis.axis_label = 'Transit Depth'
-
-        if draw:
-            show(lc)
-        else:
-            return lc
-
-    @run_required
-    def plot_spectrum(self, frame=0, order=None, noise=False, scale='log', draw=True):
-        """
-        Plot a column sum of counts converted to flux density as a function of the mean column wavelength
-
-        Parameters
-        ----------
-        frame: int
-            The frame number to plot
-        order: sequence
-            The order to isolate
-        noise: bool
-            Plot with the noise model
-        scale: str
-            Plot scale, ['linear', 'log']
-        draw: bool
-            Render the figure instead of returning it
-        """
-        # Get the data cube
-        tso = self._select_data(order, noise)
-
-        # Get counts per wavelength (Column sum for now)
-        wave = np.mean(self.wave[0], axis=0)
-        counts = np.sum(tso[frame].data, axis=0)
-        response = self.order1_response
-
-        # Convert response in [mJy/ADU/s] to [Flam/ADU/s] then invert so
-        # that we can convert the flux at each wavelegth into [ADU/s]
-        flux_out = (counts/response/(self.time[np.mod(self.ngrps, frame)]*q.s)).value
-
-        # Trim wacky extracted edges
-        flux_out[0] = flux_out[-1] = np.nan
-
-        # Plot it along with input spectrum
-        flux_in = np.interp(wave, self.star[0], self.star[1])
-
-        # Make the spectrum plot
-        spec = figure(x_axis_type=scale, y_axis_type=scale, width=1024, height=500)
-        spec.step(wave, flux_out, mode='center', legend='Extracted', color='red')
-        spec.step(wave, flux_in, mode='center', legend='Injected', alpha=0.5)
-        spec.yaxis.axis_label = 'Flux Density [{}]'.format(self.star[1].unit)
-
-        # Get the residuals
-        res = figure(x_axis_type=scale, x_range=spec.x_range, width=1024, height=150)
-        res.step(wave, flux_out - flux_in, mode='center')
-        res.xaxis.axis_label = 'Wavelength [{}]'.format(self.star[0].unit)
-        res.yaxis.axis_label = 'Residuals'
-
-        if draw:
-            show(column(spec, res))
-        else:
-            return column(spec, res)
-
     def _reset_data(self):
         """Reset the results to all zeros"""
         # Check that all the appropriate values have been initialized
@@ -896,6 +756,7 @@ class TSO(object):
             # Datetime of each frame
             dt = TimeDelta(self.frame_time, format='sec')
             self.time = self.obs_date + dt * np.arange((self.nresets + self.ngrps) * self.nints)
+            self.duration = self.time.max() - self.time.min()
 
             # Integration time of each frame in seconds
             self.inttime = np.tile(self.frame_time * np.arange(self.nresets + self.ngrps), self.nints)
