@@ -334,7 +334,7 @@ class TSO(object):
         mod.meta.exposure.groupgap = 0
         mod.meta.exposure.frame_time = self.frame_time
         mod.meta.exposure.group_time = self.group_time
-        mod.meta.exposure.duration = self.time[-1] - self.time[0]
+        mod.meta.exposure.duration = (self.time.max() - self.time.min()).to(q.s).value 
         mod.meta.exposure.nresets_at_start = 1
         mod.meta.exposure.nresets_between_ints = 1
         mod.meta.subarray.name = self.subarray
