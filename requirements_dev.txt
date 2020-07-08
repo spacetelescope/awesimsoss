@@ -19,5 +19,5 @@ hotsoss==0.1.7
 webbpsf
 batman-package==2.4.6
 
-pytest==4.0.0
+pytest==4.6
 pytest-runner==4.2

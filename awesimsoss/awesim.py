@@ -850,18 +850,19 @@ class TSO(object):
         import batman
         from hotsoss import PLANET_DATA
         params = batman.TransitParams()
-        params.t0 = 0.                                # time of inferior conjunction
-        params.per = 5.7214742                        # orbital period (days)
-        params.a = 3.5                                # semi-major axis (in units of stellar radii)
-        params.inc = 89.8                             # orbital inclination (in degrees)
-        params.ecc = 0.                               # eccentricity
-        params.w = 90.                                # longitude of periastron (in degrees)
-        params.limb_dark = 'quadratic'                # limb darkening profile to use
-        params.u = [0.1, 0.1]                         # limb darkening coefficients
-        tmodel = batman.TransitModel(params, tso.time)
-        tmodel.teff = 3500                            # effective temperature of the host star
-        tmodel.logg = 5                               # log surface gravity of the host star
-        tmodel.feh = 0                                # metallicity of the host star
+        params.t0 = 0.                                      # time of inferior conjunction
+        params.per = 5.7214742                              # orbital period (days)
+        params.a = 3.5                                      # semi-major axis (in units of stellar radii)
+        params.inc = 89.8                                   # orbital inclination (in degrees)
+        params.ecc = 0.                                     # eccentricity
+        params.w = 90.                                      # longitude of periastron (in degrees)
+        params.limb_dark = 'quadratic'                      # limb darkening profile to use
+        params.u = [0.1, 0.1]                               # limb darkening coefficients
+        params.rp = 1.                                      # planet radius (placeholder)
+        tmodel = batman.TransitModel(params, tso.time.jd)
+        tmodel.teff = 3500                                  # effective temperature of the host star
+        tmodel.logg = 5                                     # log surface gravity of the host star
+        tmodel.feh = 0                                      # metallicity of the host star
         tso.simulate(planet=PLANET_DATA, tmodel=tmodel)
         """
         # Check that there is star data
@@ -872,6 +873,9 @@ class TSO(object):
         # Check kwargs for updated attrs
         for key, val in kwargs.items():
             setattr(self, key, val)
+
+        # Clear out old simulation
+        self._reset_data()
 
         if self.verbose:
             begin = time.time()
