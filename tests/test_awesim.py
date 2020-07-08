@@ -199,7 +199,7 @@ class test_TSO(unittest.TestCase):
         params.limb_dark = 'quadratic'
         params.u = [0.1, 0.1]
         params.rp = 0.
-        tmodel = batman.TransitModel(params, tso.time)
+        tmodel = batman.TransitModel(params, tso.time.jd)
         tmodel.teff = 3500
         tmodel.logg = 5
         tmodel.feh = 0
@@ -280,7 +280,7 @@ class test_TSO(unittest.TestCase):
         self.assertRaises(ValueError, setattr, tso, 'subarray', 'three')
 
         # Bad t0
-        self.assertRaises(ValueError, setattr, tso, 't0', 'three')
+        self.assertRaises(ValueError, setattr, tso, 'obs_date', 123)
 
         # Bad target
         self.assertRaises(TypeError, setattr, tso, 'target', 3)

@@ -1217,7 +1217,7 @@ class TestTSO(TSO):
         # Add planet
         if add_planet:
             self.planet = utils.PLANET_DATA
-            self.tmodel = utils.transit_params(self.time)
+            self.tmodel = utils.transit_params(self.time.jd)
 
         # Run the simulation
         if run:
@@ -1236,7 +1236,7 @@ class BlackbodyTSO(TSO):
         nints: int
             The number of integrations for the exposure
         teff: int
-            The effective temperature of the test source
+            The effective temperature [K] of the test source
         filter: str
             The name of the filter to use, ['CLEAR', 'F277W']
         subarray: str
@@ -1259,7 +1259,7 @@ class BlackbodyTSO(TSO):
         # Add planet
         if add_planet:
             self.planet = utils.PLANET_DATA
-            self.tmodel = utils.transit_params(self.time)
+            self.tmodel = utils.transit_params(self.time.jd)
 
         # Run the simulation
         if run:
@@ -1278,7 +1278,7 @@ class ModelTSO(TSO):
         nints: int
             The number of integrations for the exposure
         teff: double
-            The effective temperature in kelvins of the stellar source
+            The effective temperature [K] of the stellar source
         logg: double
             The log-gravity of the stellar source
         feh: double
@@ -1308,16 +1308,16 @@ class ModelTSO(TSO):
 
         # Now scale model spectrum to user-input J-band:
         f = self.scale_spectrum(w, f, jmag)
-
         self.stellar_spectrum_wav = w
         self.stellar_spectrum_flux = f
+
         # Initialize base class
         super().__init__(ngrps=ngrps, nints=nints, star=[w, f], subarray=subarray, filter=filter, **kwargs)
 
         # Add planet
         if add_planet:
             self.planet = utils.PLANET_DATA
-            self.tmodel = utils.transit_params(self.time)
+            self.tmodel = utils.transit_params(self.time.jd)
 
         # Run the simulation
         if run:
@@ -1342,6 +1342,7 @@ class ModelTSO(TSO):
         """
         distance = np.abs(possible_values - input_value)
         idx = np.where(distance == np.min(distance))[0]
+
         return possible_values[idx[0]]
 
     def get_atlas_folder(self, feh):
@@ -1358,18 +1359,20 @@ class ModelTSO(TSO):
         -------
         string
             URL of ATLAS models closer to the input metallicity.
-
         """
         # Define closest possible metallicity from ATLAS models:
         model_metallicity = self.closest_value(feh, np.array([-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.2, 0.5]))
         met_sign = 'm'
+
         # Define the sign before the filename, obtain absolute value if needed:
         if model_metallicity >= 0.0:
             met_sign = 'p'
         else:
             model_metallicity = np.abs(model_metallicity)
+
         model_metallicity = ''.join(str(model_metallicity).split('.'))
         fname = 'https://archive.stsci.edu/hlsps/reference-atlases/cdbs/grid/ck04models/ck{0:}{1:}/'.format(met_sign, model_metallicity)
+
         return fname
 
     def get_phoenix_folder(self, feh, alpha):
@@ -1392,9 +1395,11 @@ class ModelTSO(TSO):
         """
         # Define closest possible metallicity from PHOENIX models:
         model_metallicity = self.closest_value(feh, np.array([-4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0]))
+
         # Same for alpha-enhancement:
         model_alpha = self.closest_value(alpha, np.array([-0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.20]))
         met_sign, alpha_sign = '-', '-'
+
         # Define the sign before the filename, obtain absolute value if needed:
         if model_metallicity > 0.0:
             met_sign = '+'
@@ -1404,11 +1409,13 @@ class ModelTSO(TSO):
             alpha_sign = '+'
         else:
             model_alpha = np.abs(model_alpha)
+
         # Create the folder name
         if alpha == 0.0:
             fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/Z{0:}{1:.1f}/'.format(met_sign, model_metallicity)
         else:
             fname = 'ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/PHOENIX-ACES-AGSS-COND-2011/Z{0:}{1:.1f}.Alpha={2:}{3:.2f}/'.format(met_sign, model_metallicity, alpha_sign, model_alpha)
+
         return fname
 
     def download(self, url, fname):
@@ -1438,6 +1445,7 @@ class ModelTSO(TSO):
             Flux in erg/s/cm2/A of Vega spectrum.
         """
         data = fits.getdata(resource_filename('awesimsoss', 'files/alpha_lyr_stis_009.fits'), header=False)
+
         # Wavelength is in Angstroms, convert to microns to match the get_phoenix_model function.
         # Flux is in Flambda (same as Phoenix; i.e., erg/s/cm2/A):
         return (data['WAVELENGTH'] * q.angstrom).to(q.um), data['FLUX'] * (q.erg / q.s / q.cm**2 / q.AA)
@@ -1463,16 +1471,20 @@ class ModelTSO(TSO):
         fnames = np.array([])
         teffs = np.array([])
         loggs = np.array([])
+
         while True:
             line = fin.readline()
+
             if line != '':
                 fname = line.split()[-1]
                 teff, logg = fname.split('-')[:2]
                 fnames = np.append(fnames, fname)
                 teffs = np.append(teffs, np.double(teff[3:]))
                 loggs = np.append(loggs, np.double(logg))
+
             else:
                 break
+
         return fnames, teffs, loggs
 
     def get_phoenix_model(self, feh, alpha, teff, logg):
@@ -1496,12 +1508,13 @@ class ModelTSO(TSO):
         np.ndarray
             Surface flux in f-lambda of the closest spectrum to input properties in units of erg/s/cm**2/angstroms.
         """
-        
         # First get grid corresponding to input Fe/H and alpha:
         url_folder = self.get_phoenix_folder(feh, alpha)
+
         # Now define details for filenames and folders. First, extract metallicity and alpha-enhancement in
         # the PHOENIX filename format (and get rid of the "Z" in, e.g., "Z-1.0.Alpha=-0.20"):
         phoenix_met_and_alpha = url_folder.split('/')[-2][1:]
+
         # Define folders where we will save (1) all stellar model data and (2) all phoenix models:
         stellarmodels_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
         phoenix_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/phoenix/')
@@ -1510,9 +1523,11 @@ class ModelTSO(TSO):
         # Check if we even have stellarmodels folder created. Create it if not:
         if not os.path.exists(stellarmodels_folder_path):
             os.mkdir(stellarmodels_folder_path)
+
         # Same for phoenix folder:
         if not os.path.exists(phoenix_folder_path):
             os.mkdir(phoenix_folder_path)
+
         # Check if the current metallicity-alpha folder exists as well:
         if not os.path.exists(model_folder_path):
             os.mkdir(model_folder_path)
@@ -1530,6 +1545,7 @@ class ModelTSO(TSO):
         phoenix_model_list = model_folder_path + 'model_list.txt'
         if not os.path.exists(phoenix_model_list):
             self.download(url_folder, phoenix_model_list)
+
         # Extract information from this list:
         model_names, possible_teffs, possible_loggs = self.read_phoenix_list(model_folder_path + 'model_list.txt')
 
@@ -1573,6 +1589,7 @@ class ModelTSO(TSO):
         # Change units in order to match what is expected by the TSO modules:
         wav = (wavelengths * q.angstrom).to(q.um)
         flux = (flux * (q.erg / q.s / q.cm**2 / q.cm)).to(q.erg / q.s / q.cm**2 / q.AA)
+
         return wav, flux
 
     def get_atlas_model(self, feh, teff, logg):
@@ -1595,11 +1612,12 @@ class ModelTSO(TSO):
         np.ndarray
             Surface flux in f-lambda of the closest spectrum to input properties in units of erg/s/cm**2/angstroms.
         """
-
         # First get grid corresponding to input Fe/H:
         url_folder = self.get_atlas_folder(feh)
+
         # Now define details for filenames and folders. Extract foldername with the metallicity info from the url_folder:
         atlas_met = url_folder.split('/')[-2]
+
         # Define folders where we will save (1) all stellar model data and (2) all atlas models:
         stellarmodels_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/')
         atlas_folder_path = resource_filename('awesimsoss', 'files/stellarmodels/atlas/')
@@ -1608,9 +1626,11 @@ class ModelTSO(TSO):
         # Check if we even have stellarmodels folder created. Create it if not:
         if not os.path.exists(stellarmodels_folder_path):
             os.mkdir(stellarmodels_folder_path)
+
         # Same for phoenix folder:
         if not os.path.exists(atlas_folder_path):
             os.mkdir(atlas_folder_path)
+
         # Check if the current metallicity-alpha folder exists as well:
         if not os.path.exists(model_folder_path):
             os.mkdir(model_folder_path)
@@ -1640,6 +1660,7 @@ class ModelTSO(TSO):
         # This variable will save non-zero logg at the given temperatures. Only useful to report back to the user and/or input logg
         # doesn't have data:
         real_possible_loggs = np.array([])
+
         # Check if the closest requested logg has any data. If not, check all possible loggs for non-zero data, and select the closest
         # to the input logg that has data:
         s_logg = 'g' + ''.join('{0:.1f}'.format(atlas_logg).split('.'))
@@ -1657,12 +1678,14 @@ class ModelTSO(TSO):
 
         # Raise warning for logg as well:
         if np.abs(atlas_logg - logg) > 0.5:
+
             # If real_possible_loggs is empty, calculate it:
             if len(real_possible_loggs) == 0:
                 for loggs in possible_loggs:
                     s_logg = 'g' + ''.join('{0:.1f}'.format(loggs).split('.'))
                     if np.count_nonzero(d[s_logg]) != 0:
                         real_possible_loggs = np.append(real_possible_loggs, loggs)
+
             print('\t Warning: the input stellar log-gravity is outside the {0:}-{1:} model range of ATLAS models for {2:} and Teff {3:}.'.format(
                   np.min(real_possible_loggs), np.max(real_possible_loggs), atlas_met, atlas_teff))
 
@@ -1687,9 +1710,9 @@ class ModelTSO(TSO):
         np.double
             The median resolution of the spectrum.
         """
-
         eff_wav = np.sum(w * f) / np.sum(f)
         delta_wav = np.median(np.abs(np.diff(w)))
+
         return eff_wav / delta_wav
 
     def spec_integral(self, input_w, input_f, wT, TT):
@@ -1717,27 +1740,31 @@ class ModelTSO(TSO):
             Value of the integral (over dlambda) of lambda*f*T divided by the integral (over dlambda) of lambda*T.
 
         """
-
         # If resolution of input spectra in the wavelength range of the response function
         # is higher than it, degrade it to match the transmission function resolution. First,
         # check that resolution of input spectra is indeed higher than the one of the
         # transmisssion. Resolution of input transmission first:
         min_wav, max_wav = np.min(wT), np.max(wT)
         resT = self.get_resolution(wT, TT)
+
         # Resolution of input spectra in the same wavelength range:
         idx = np.where((input_w >= min_wav - 10) & (input_w <= max_wav + 10))[0]
         res = self.get_resolution(input_w[idx], input_f[idx])
+
         # If input spetrum resolution is larger, degrade:
         if res > resT:
+
             # This can be way quicker if we just take the gaussian weight *at* the evaluated
             # points in the interpolation. TODO: make faster.
             f = ndimage.gaussian_filter(input_f[idx], int(np.double(len(idx)) / np.double(len(wT))))
             w = input_w[idx]
         else:
             w, f = input_w, input_f
+
         interp_spectra = interpolate.interp1d(w, f)
         numerator = np.trapz(wT * interp_spectra(wT) * TT, x=wT)
         denominator = np.trapz(wT * TT, x=wT)
+
         return numerator / denominator
 
     def scale_spectrum(self, w, f, jmag):
@@ -1757,19 +1784,23 @@ class ModelTSO(TSO):
         np.ndarray
             Rescaled spectrum at wavelength w.
         """
-
         # Get filter response (note wT is in microns):
         wT, TT = np.loadtxt(resource_filename('awesimsoss', 'files/jband_transmission.dat'), unpack=True, usecols=(0, 1))
+
         # Get spectrum of vega:
         w_vega, f_vega = self.get_vega()
+
         # Use those two to get the absolute flux calibration for Vega (left-most term in equation (9) in Casagrande et al., 2014).
         # Multiply wavelengths by 1e4 as they are in microns (i.e., transform back to angstroms both wavelength ranges):
         vega_weighted_flux = self.spec_integral(np.array(w_vega.to(q.AA)), np.array(f_vega), wT * 1e4, TT)
+
         # J-band zero-point is thus (maginutde of Vega, m_*, obtained from Table 1 in Casagrande et al, 2014):
         ZP = -0.001 + 2.5 * np.log10(vega_weighted_flux)
+
         # Now compute (inverse?) bolometric correction for target star. For this, compute same integral as for vega, but for target:
         target_weighted_flux = self.spec_integral(np.array(w) * 1e4, f, np.array(wT) * 1e4, TT)
+
         # Get scaling factor for target spectrum (this ommits any extinction):
         scaling_factor = 10**(-((jmag + 2.5 * np.log10(target_weighted_flux) - ZP) / 2.5))
-        # Return scaled spectrum:
+
         return f * scaling_factor
