@@ -156,11 +156,6 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, params, model_grid='ACES', subar
     from exoctk import modelgrid
     from exoctk.limb_darkening import limb_darkening_fit as lf
 
-    # Abort if no stellar dict
-    if not isinstance(params, (list, tuple, np.ndarray)):
-        print('Please provide the stellar params argument as a list of [Teff, logg, FeH]')
-        return
-
     # Break the bandpass up into n_bins pieces
     bandpass = svo.Filter('NIRISS.GR700XD.1', n_bins=n_bins, verbose=False)
 

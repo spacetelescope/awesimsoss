@@ -155,7 +155,6 @@ class TSO(object):
         self.star = star
         self.tmodel = tmodel
         self.ld_coeffs = np.zeros((3, 2048, 2))
-        self.ld_profile = 'quadratic'
         self.planet = planet
 
     def add_line(self, x_0, amplitude, fwhm, profile='lorentz', name='Line I'):
@@ -435,45 +434,45 @@ class TSO(object):
         settings = {key.strip('_'): val for key, val in self.__dict__.items() if key in track}
         return settings
 
-    @property
-    def ld_coeffs(self):
-        """Get the limb darkening coefficients"""
-        return self._ld_coeffs
-
-    @ld_coeffs.setter
-    def ld_coeffs(self, coeffs):
-        """Set the limb darkening coefficients
-
-        Parameters
-        ----------
-        coeffs: str, sequence
-            The limb darkening coefficients or 'update'
-        """
-        # Default message
-        msg = "Limb darkening coefficients must be an array of 3 dimensions"
-
-        # Update the coeffs based on the transit model parameters
-        if coeffs == 'update':
-
-            # Check the transit model
-            if self.tmodel is None:
-                msg = "Please set a transit model with the 'tmodel' attribute to update the limb darkening coefficients"
-
-            # Check the model grid
-            elif self.model_grid is None:
-                msg = "Please set a stellar intensity model grid with the 'model_grid' attribute to update the limb darkening coefficients"
-
-            # Generate the coefficients
-            else:
-                coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], self.tmodel.limb_dark, [getattr(self.tmodel, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
-
-        # Check the coefficient type
-        if not isinstance(coeffs, np.ndarray) or not coeffs.ndim == 3:
-            if self.verbose:
-                print(msg)
-
-        else:
-            self._ld_coeffs = coeffs
+    # @property
+    # def ld_coeffs(self):
+    #     """Get the limb darkening coefficients"""
+    #     return self._ld_coeffs
+    #
+    # @ld_coeffs.setter
+    # def ld_coeffs(self, coeffs):
+    #     """Set the limb darkening coefficients
+    #
+    #     Parameters
+    #     ----------
+    #     coeffs: str, sequence
+    #         The limb darkening coefficients or 'update'
+    #     """
+    #     # Default message
+    #     msg = "Limb darkening coefficients must be an array of 3 dimensions"
+    #
+    #     # Update the coeffs based on the transit model parameters
+    #     if coeffs == 'update':
+    #
+    #         # Check the transit model
+    #         if self.tmodel is None:
+    #             msg = "Please set a transit model with the 'tmodel' attribute to update the limb darkening coefficients"
+    #
+    #         # Check the model grid
+    #         elif self.model_grid is None:
+    #             msg = "Please set a stellar intensity model grid with the 'model_grid' attribute to update the limb darkening coefficients"
+    #
+    #         # Generate the coefficients
+    #         else:
+    #             coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], self.tmodel.limb_dark, [getattr(self.tmodel, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
+    #
+    #     # Check the coefficient type
+    #     if not isinstance(coeffs, np.ndarray) or not coeffs.ndim == 3:
+    #         if self.verbose:
+    #             print(msg)
+    #
+    #     else:
+    #         self._ld_coeffs = coeffs
 
     @property
     def ncols(self):
@@ -1136,7 +1135,7 @@ class TSO(object):
         return self._tmodel
 
     @tmodel.setter
-    def tmodel(self, model, time_unit='days'):
+    def tmodel(self, model, time_unit='days', model_grid='ACES'):
         """Setter for the transit model
 
         Parameters
@@ -1162,23 +1161,20 @@ class TSO(object):
             if time_unit not in time_units:
                 raise ValueError("{}: time_unit must be {}".format(time_unit, time_units.keys()))
 
-            # Check if the stellar params have changed
-            plist = ['teff', 'logg', 'feh', 'limb_dark']
-            old_params = [getattr(self.tmodel, p, None) for p in plist]
-            new_params = [getattr(model, p) for p in plist]
-
-            # Update the LD profile
-            self.ld_profile = model.limb_dark
-
             # Convert seconds to days in order to match the Period and T0 parameters
             model.t /= time_units[time_unit]
+
+            # Get the stellar parameters
+            params = [model['teff'], model['logg'], model['feh']]
 
             # Update the transit model
             self._tmodel = model
 
-            # Update ld_coeffs if necessary
-            if new_params != old_params:
-                self.ld_coeffs = 'update'
+            # Update ld_coeffs
+            try:
+                self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], model.limb_dark, params) for order in self.orders]
+            except:
+                self.ld_coeffs = np.zeros((3, 2048, 2))
 
     @property
     def tso_ideal(self):

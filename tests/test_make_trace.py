@@ -24,7 +24,3 @@ def test_generate_SOSS_ldcs():
     # Make sure 2 coefficients are returned (for quadratic profile)
     assert len(lookup[0]) == 2
 
-    # Bad params returns None
-    assert not mt.generate_SOSS_ldcs(np.linspace(1., 2., 3), 'quadratic', 'FOO')
-
-
