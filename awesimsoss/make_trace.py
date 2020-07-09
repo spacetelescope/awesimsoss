@@ -13,8 +13,9 @@ import warnings
 
 import numpy as np
 from astropy.io import fits
+import astropy.units as q
 from bokeh.plotting import figure, show
-from hotsoss import utils
+from hotsoss import utils, locate_trace
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
@@ -50,7 +51,7 @@ def calculate_psf_tilts():
 
         # Get the y-coordinate of the trace polynomial in this column
         # (center of the trace)
-        coeffs = trace_polynomials(subarray=subarray, order=order)
+        coeffs = locate_trace.trace_polynomials(subarray=subarray, order=order)
         trace = np.polyval(coeffs, X)
 
         # Interpolate to get the wavelength value at the center
@@ -121,7 +122,7 @@ def nuke_psfs(tilts=True, raw=True, final=True):
             SOSS_psf_cube(filt=filt, generate=True)
 
 
-def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
+def generate_SOSS_ldcs(wavelengths, ld_profile, params, model_grid='ACES', subarray='SUBSTRIP256', n_bins=100):
     """
     Generate a lookup table of limb darkening coefficients for full
     SOSS wavelength range
@@ -133,55 +134,49 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
     ld_profile: str
         A limb darkening profile name supported by
         `ExoCTK.ldc.ldcfit.ld_profile()`
-    grid_point: dict, sequence
-        The stellar parameters [Teff, logg, FeH] or stellar model
-        dictionary from `ExoCTK.modelgrid.ModelGrid.get()`
+    params: sequence
+        The stellar parameters [Teff, logg, FeH]
+    model_grid: modelgrid.ModelGrid
+        The grid of stellar intensity models to calculate LDCs from
+    subarray: str
+        The name of the subarray to use, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
     n_bins: int
         The number of bins to break up the grism into
-    save: str
-        The path to save to file to
+
+    Returns
+    -------
+    np.ndarray
+        An array of limb darkening coefficients for each wavelength
 
     Example
     -------
-    from awesimsoss.sim2D import awesim
-    lookup = awesim.soss_ldc('quadratic', [3300, 4.5, 0])
+    from awesimsoss import make_trace as mt
+    lookup = mt.generate_SOSS_ldcs(np.linspace(1., 2., 3), 'quadratic', [3300, 4.5, 0])
     """
-    try:
-        from exoctk import modelgrid
-        from exoctk.limb_darkening import limb_darkening_fit as lf
-    except ImportError:
-        return
-
-    # Get the model grid
-    if not isinstance(model_grid, modelgrid.ModelGrid):
-        model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700)
-
-    # Load the model grid
-    model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6, 2.8))
-
-    # Get the grid point
-    if isinstance(grid_point, (list, tuple, np.ndarray)):
-        grid_point = model_grid.get(*grid_point)
+    from exoctk import modelgrid
+    from exoctk.limb_darkening import limb_darkening_fit as lf
 
     # Abort if no stellar dict
-    if not isinstance(grid_point, dict):
-        print('Please provide the grid_point argument as [Teff, logg, FeH] or ExoCTK.modelgrid.ModelGrid.get(Teff, logg, FeH).')
+    if not isinstance(params, (list, tuple, np.ndarray)):
+        print('Please provide the stellar params argument as a list of [Teff, logg, FeH]')
         return
 
     # Break the bandpass up into n_bins pieces
-    bandpass = svo.Filter('NIRISS.GR700XD', n_bins=n_bins, verbose=False)
+    bandpass = svo.Filter('NIRISS.GR700XD.1', n_bins=n_bins, verbose=False)
 
     # Calculate the LDCs
-    ldc_results = lf.ldc(None, None, None, model_grid, [ld_profile],
-                         bandpass=bandpass, grid_point=grid_point.copy(),
-                         mu_min=0.08, verbose=False)
+    ldcs = lf.LDC(model_grid=model_grid)
+    ldcs.calculate(params[0], params[1], params[2], ld_profile, mu_min=0.08, bandpass=bandpass, verbose=False)
 
     # Interpolate the LDCs to the desired wavelengths
-    coeff_table = ldc_results[ld_profile]['coeffs']
-    coeff_cols = [c for c in coeff_table.colnames if c.startswith('c')]
-    coeffs = [np.interp(wavelengths, coeff_table['wavelength'], coeff_table[c]) for c in coeff_cols]
+    # TODO: Propagate errors
+    coeff_cols = [col for col in ldcs.results.colnames if col.startswith('c') and len(col) == 2]
+    coeff_errs = [err for err in ldcs.results.colnames if err.startswith('e') and len(err) == 2]
+    coeffs = [[np.interp(wav, list(ldcs.results['wave_eff']), list(ldcs.results[c])) for c in coeff_cols] for wav in wavelengths]
 
-    return np.array(coeffs).T
+    del ldcs
+
+    return np.array(coeffs)
 
 
 def generate_SOSS_psfs(filt):
@@ -502,7 +497,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
 
         # Get the wavelengths
         wavelengths = np.mean(utils.wave_solutions(subarray), axis=1)[:2 if filt == 'CLEAR' else 1]
-        coeffs = trace_polynomials(subarray)
+        coeffs = locate_trace.trace_polynomial(subarray)
 
         # Get the file
         psf_path = 'files/SOSS_{}_PSF.fits'.format(filt)

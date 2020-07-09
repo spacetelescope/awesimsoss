@@ -52,7 +52,11 @@ def check_psf_files():
         compute = input("Would you like to do it now? [y] ")
 
         if compute is None or compute.lower() in ['y', 'yes']:
-            mt.nuke_psfs()
+            multip = input("Do you want to run this using multiprocessing? [y]")
+            if multip is None or multip.lower() in ['y', 'yes']:
+                mt.nuke_psfs(mprocessing = True)
+            else:
+                mt.nuke_psfs(mprocessing = False)
 
 
 def run_required(func):
@@ -143,7 +147,7 @@ class TSO(object):
         self.filter = filter
         self.header = ''
         self.snr = snr
-        self.model_grid = None
+        self.model_grid = 'ACES'
         self.subarray = subarray
 
         # Set instance attributes for the target
@@ -754,12 +758,12 @@ class TSO(object):
             self.group_time = self.subarray_specs.get('tgrp')
 
             # Datetime of each frame
-            dt = TimeDelta(self.frame_time, format='sec')
+            dt = TimeDelta(self.frame_time / 2., format='sec')
             self.time = self.obs_date + dt * np.arange((self.nresets + self.ngrps) * self.nints)
             self.duration = self.time.max() - self.time.min()
 
             # Integration time of each frame in seconds
-            self.inttime = np.tile(self.frame_time * np.arange(self.nresets + self.ngrps), self.nints)
+            self.inttime = np.tile(self.frame_time * np.arange(1, self.nresets + self.ngrps + 1), self.nints)
 
             # TODO: Fix for nresets != 0 by masking or removing reset frames
 
@@ -824,7 +828,7 @@ class TSO(object):
 
         return tso
 
-    def simulate(self, ld_coeffs=None, noise=True, model_grid=None, n_jobs=-1, params=None, supersample_factor=None, **kwargs):
+    def simulate(self, ld_coeffs=None, noise=True, n_jobs=-1, params=None, supersample_factor=None, **kwargs):
         """
         Generate the simulated 4D ramp data given the initialized TSO object
 
@@ -836,8 +840,6 @@ class TSO(object):
             The limb darkening profile to use
         noise: bool
             Add noise model
-        model_grid: ExoCTK.modelgrid.ModelGrid (optional)
-            The model atmosphere grid to calculate LDCs
         n_jobs: int
             The number of cores to use in multiprocessing
 

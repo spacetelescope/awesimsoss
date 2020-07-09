@@ -14,6 +14,7 @@ from hotsoss import STAR_DATA, PLANET_DATA
 
 from awesimsoss import TSO, BlackbodyTSO, ModelTSO, TestTSO
 
+
 class test_ModelTSO(unittest.TestCase):
     """A test of the ModelTSO class"""
     def setUp(self):
@@ -26,6 +27,7 @@ class test_ModelTSO(unittest.TestCase):
     def test_run_with_planet(self):
         """A test of the ModelTSO class with a planet"""
         tso = ModelTSO(add_planet=True)
+
 
 class test_BlackbodyTSO(unittest.TestCase):
     """A test of the BlackbodyTSO class"""
