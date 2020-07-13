@@ -21,11 +21,6 @@ from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
 from scipy.interpolate import interp2d, RectBivariateSpline
 
-try:
-    import webbpsf
-except ImportError:
-    print("Could not import `webbpsf` package. Functionality limited.")
-
 warnings.simplefilter('ignore')
 
 
@@ -194,37 +189,44 @@ def generate_SOSS_psfs(filt):
     filt: str
         The filter to use, ['CLEAR', 'F277W']
     """
-    # Get the file
-    file = resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
+    try:
 
-    # Get the NIRISS class from webbpsf and set the filter
-    ns = webbpsf.NIRISS()
-    ns.filter = filt
-    ns.pupil_mask = 'GR700XD'
+        import webbpsf
 
-    # Get the min and max wavelengths
-    wavelengths = utils.wave_solutions('SUBSTRIP256').flatten()
-    wave_min = np.max([ns.SHORT_WAVELENGTH_MIN * 1E6, np.min(wavelengths[wavelengths > 0])])
-    wave_max = np.min([ns.LONG_WAVELENGTH_MAX * 1E6, np.max(wavelengths[wavelengths > 0])])
+        # Get the file
+        file = resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
 
-    # webbpsf.calc_datacube can only handle 100 but that's sufficient
-    W = np.linspace(wave_min, wave_max, 100)*1E-6
+        # Get the NIRISS class from webbpsf and set the filter
+        ns = webbpsf.NIRISS()
+        ns.filter = filt
+        ns.pupil_mask = 'GR700XD'
 
-    # Calculate the psfs
-    print("Generating SOSS psfs. This takes about 8 minutes...")
-    start = time.time()
-    PSF = ns.calc_datacube(W, oversample=1)[0].data
-    print("Finished in", time.time()-start)
+        # Get the min and max wavelengths
+        wavelengths = utils.wave_solutions('SUBSTRIP256').flatten()
+        wave_min = np.max([ns.SHORT_WAVELENGTH_MIN * 1E6, np.min(wavelengths[wavelengths > 0])])
+        wave_max = np.min([ns.LONG_WAVELENGTH_MAX * 1E6, np.max(wavelengths[wavelengths > 0])])
 
-    # Make the HDUList
-    psfhdu = fits.PrimaryHDU(data=PSF)
-    wavhdu = fits.ImageHDU(data=W*1E6, name='WAV')
-    hdulist = fits.HDUList([psfhdu, wavhdu])
+        # webbpsf.calc_datacube can only handle 100 but that's sufficient
+        W = np.linspace(wave_min, wave_max, 100) * 1E-6
 
-    # Write the file
-    hdulist.writeto(file, overwrite=True)
-    hdulist.close()
+        # Calculate the psfs
+        print("Generating SOSS psfs. This takes about 8 minutes...")
+        start = time.time()
+        PSF = ns.calc_datacube(W, oversample=1)[0].data
+        print("Finished in", time.time()-start)
 
+        # Make the HDUList
+        psfhdu = fits.PrimaryHDU(data=PSF)
+        wavhdu = fits.ImageHDU(data=W * 1E6, name='WAV')
+        hdulist = fits.HDUList([psfhdu, wavhdu])
+
+        # Write the file
+        hdulist.writeto(file, overwrite=True)
+        hdulist.close()
+
+    except (ImportError, OSError, IOError):
+
+        print("Could not import `webbpsf` package. Functionality limited. Generating dummy file 
 
 def get_angle(pf, p0=np.array([0, 0]), pi=None):
     """Compute angle (in degrees) for pf-p0-pi corner
