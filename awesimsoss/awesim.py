@@ -54,9 +54,9 @@ def check_psf_files():
         if compute is None or compute.lower() in ['y', 'yes']:
             multip = input("Do you want to run this using multiprocessing? [y]")
             if multip is None or multip.lower() in ['y', 'yes']:
-                mt.nuke_psfs(mprocessing = True)
+                mt.nuke_psfs(mprocessing=True)
             else:
-                mt.nuke_psfs(mprocessing = False)
+                mt.nuke_psfs(mprocessing=False)
 
 
 def run_required(func):
@@ -64,7 +64,7 @@ def run_required(func):
     @wraps(func)
     def _run_required(*args, **kwargs):
         """Check that the 'tso' attribute is not None"""
-        if args[0].tso_order1_ideal is None:
+        if args[0].tso is None:
             print("No simulation found! Please run the 'simulate' method first.")
 
         else:

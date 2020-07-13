@@ -11,6 +11,10 @@ from awesimsoss import make_trace as mt
 
 def test_nuke_psfs():
     """Test for nuke_psfs function. This invokes calculate_psf_tilts, generate_SOSS_psfs, and SOSS_psf_cube."""
+    # Without multiprocessing
+    mt.nuke_psfs(mprocessing=False)
+
+    # With multiprocessing
     mt.nuke_psfs()
 
 

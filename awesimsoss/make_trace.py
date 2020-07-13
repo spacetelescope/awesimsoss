@@ -100,7 +100,7 @@ def calculate_psf_tilts():
         print('Angles saved to', psf_file)
 
 
-def nuke_psfs(tilts=True, raw=True, final=True):
+def nuke_psfs(tilts=True, raw=True, final=True, mprocessing=True):
     """Generate all the psf cubes from scratch"""
     # Calculate the psf tilts
     if tilts:
@@ -114,7 +114,7 @@ def nuke_psfs(tilts=True, raw=True, final=True):
 
         # Generate the rotated and interpolated psfs ready for trace assembly
         if final:
-            SOSS_psf_cube(filt=filt, generate=True)
+            SOSS_psf_cube(filt=filt, generate=True, mprocessing=mprocessing)
 
 
 def generate_SOSS_ldcs(wavelengths, ld_profile, params, model_grid='ACES', subarray='SUBSTRIP256', n_bins=100):
@@ -299,7 +299,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005, plot=False):
 
     # Interpolate and scale psf
     psf = psfs(wavelength)
-    psf *= 1./np.sum(psf)
+    psf *= 1. / np.sum(psf)
 
     # Remove background
     # psf[psf < cutoff] = 0
@@ -333,7 +333,7 @@ def make_frame(psfs):
 
     # Add each psf
     for n, psf in enumerate(psfs):
-        frame[:, n:n+76] += psf
+        frame[:, n:n + 76] += psf
 
     return frame[:, 38:-38]
 
@@ -464,7 +464,7 @@ def put_psf_on_subarray(psf, y, frame_height=256):
 
     # Create output frame, shifted as necessary
     yg, xg = np.indices((frame_height, dim), dtype=np.float64)
-    yg += mid-y
+    yg += mid - y
 
     # Resample onto the subarray
     frame = spline.ev(xg, yg)
@@ -476,7 +476,7 @@ def put_psf_on_subarray(psf, y, frame_height=256):
     return frame
 
 
-def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False):
+def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False, mprocessing=True):
     """
     Generate/retrieve a data cube of shape (3, 2048, 76, 76) which is a
     76x76 pixel psf for 2048 wavelengths for each trace order. The PSFs
@@ -493,6 +493,8 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
         The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
     generate: bool
         Generate a new cube
+    mprocessing: bool
+        Use multiprocessing
 
     Returns
     -------
@@ -532,52 +534,76 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
             else:
 
                 # Get the psf for each column
-                print('Calculating order {} SOSS psfs for {} filter...'.format(n+1, filt))
+                print('Calculating order {} SOSS psfs for {} filter...'.format(n + 1, filt))
                 start = time.time()
-                pool = multiprocessing.Pool(8)
                 func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
-                raw_psfs = np.array(pool.map(func, wavelength))
-                pool.close()
-                pool.join()
-                del pool
+
+                if mprocessing:
+                    pool = multiprocessing.Pool(8)
+                    raw_psfs = np.array(pool.map(func, wavelength))
+                    pool.close()
+                    pool.join()
+                    del pool
+                else:
+                    raw_psfs = []
+                    for i in range(len(wavelength)):
+                        raw_psfs.append(func(wavelength[i]))
+                    raw_psfs = np.array(raw_psfs)
+
                 print('Finished in {} seconds.'.format(time.time()-start))
+
+                # Rotate the psfs
+                print('Rotating order {} SOSS psfs for {} filter...'.format(n + 1, filt))
+                start = time.time()
+                func = partial(rotate, reshape=False)
 
                 # Get the PSF tilt at each column
                 angles = psf_tilts(order)
 
-                # Rotate the psfs
-                print('Rotating order {} SOSS psfs for {} filter...'.format(n+1, filt))
-                start = time.time()
-                pool = multiprocessing.Pool(8)
-                func = partial(rotate, reshape=False)
-                rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
-                pool.close()
-                pool.join()
-                del pool
+                if mprocessing:
+                    pool = multiprocessing.Pool(8)
+                    rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
+                    pool.close()
+                    pool.join()
+                    del pool
+                else:
+                    rotated_psfs = []
+                    for rp, ang in zip(raw_psfs, angles):
+                        rotated_psfs.append(func(rp, ang))
+                    rotated_psfs = np.array(rotated_psfs)
+
                 print('Finished in {} seconds.'.format(time.time()-start))
 
                 # Scale psfs to 1
                 rotated_psfs = np.abs(rotated_psfs)
                 scale = np.nansum(rotated_psfs, axis=(1, 2))[:, None, None]
-                rotated_psfs = rotated_psfs/scale
+                rotated_psfs = rotated_psfs / scale
 
                 # Split it into 4 chunks to be below Github file size limit
                 chunks = rotated_psfs.reshape(4, 512, 76, 76)
                 for N, chunk in enumerate(chunks):
 
-                    idx0 = N*512
-                    idx1 = idx0+512
+                    idx0 = N * 512
+                    idx1 = idx0 + 512
                     centers = trace_centers[idx0:idx1]
 
                     # Interpolate the psfs onto the subarray
-                    print('Interpolating chunk {}/4 for order {} SOSS psfs for {} filter onto subarray...'.format(N+1, n+1, filt))
+                    print('Interpolating chunk {}/4 for order {} SOSS psfs for {} filter onto subarray...'.format(N + 1, n + 1, filt))
                     start = time.time()
-                    pool = multiprocessing.Pool(8)
-                    data = zip(chunk, centers)
-                    subarray_psfs = pool.starmap(put_psf_on_subarray, data)
-                    pool.close()
-                    pool.join()
-                    del pool
+                    func = put_psf_on_subarray
+
+                    if mprocessing:
+                        pool = multiprocessing.Pool(8)
+                        data = zip(chunk, centers)
+                        subarray_psfs = pool.starmap(func, data)
+                        pool.close()
+                        pool.join()
+                        del pool
+                    else:
+                        subarray_psfs = []
+                        for ch, ce in zip(chunk, centers):
+                            subarray_psfs.append(func(ch, ce))
+
                     print('Finished in {} seconds.'.format(time.time()-start))
 
                     # Get the filepath
