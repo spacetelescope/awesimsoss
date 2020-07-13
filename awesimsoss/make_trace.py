@@ -226,7 +226,7 @@ def generate_SOSS_psfs(filt):
 
     except (ImportError, OSError, IOError):
 
-        print("Could not import `webbpsf` package. Functionality limited. Generating dummy file 
+        print("Could not import `webbpsf` package. Functionality limited. Generating dummy file.")
 
 def get_angle(pf, p0=np.array([0, 0]), pi=None):
     """Compute angle (in degrees) for pf-p0-pi corner
