@@ -51,7 +51,7 @@ def calculate_psf_tilts():
 
         # Get the y-coordinate of the trace polynomial in this column
         # (center of the trace)
-        coeffs = locate_trace.trace_polynomials(subarray=subarray, order=order)
+        coeffs = locate_trace.trace_polynomial(subarray=subarray, order=order)
         trace = np.polyval(coeffs, X)
 
         # Interpolate to get the wavelength value at the center
