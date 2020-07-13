@@ -23,4 +23,3 @@ def test_generate_SOSS_ldcs():
 
     # Make sure 2 coefficients are returned (for quadratic profile)
     assert len(lookup[0]) == 2
-

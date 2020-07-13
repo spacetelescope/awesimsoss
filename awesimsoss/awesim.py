@@ -1165,16 +1165,13 @@ class TSO(object):
             model.t /= time_units[time_unit]
 
             # Get the stellar parameters
-            params = [model['teff'], model['logg'], model['feh']]
+            params = [model.teff, model.logg, model.feh]
 
             # Update the transit model
             self._tmodel = model
 
             # Update ld_coeffs
-            try:
-                self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], model.limb_dark, params) for order in self.orders]
-            except:
-                self.ld_coeffs = np.zeros((3, 2048, 2))
+            self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], model.limb_dark, params) for order in self.orders]
 
     @property
     def tso_ideal(self):

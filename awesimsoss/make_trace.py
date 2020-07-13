@@ -153,25 +153,36 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, params, model_grid='ACES', subar
     from awesimsoss import make_trace as mt
     lookup = mt.generate_SOSS_ldcs(np.linspace(1., 2., 3), 'quadratic', [3300, 4.5, 0])
     """
-    from exoctk import modelgrid
-    from exoctk.limb_darkening import limb_darkening_fit as lf
+    try:
 
-    # Break the bandpass up into n_bins pieces
-    bandpass = svo.Filter('NIRISS.GR700XD.1', n_bins=n_bins, verbose=False)
+        from exoctk import modelgrid
+        from exoctk.limb_darkening import limb_darkening_fit as lf
 
-    # Calculate the LDCs
-    ldcs = lf.LDC(model_grid=model_grid)
-    ldcs.calculate(params[0], params[1], params[2], ld_profile, mu_min=0.08, bandpass=bandpass, verbose=False)
+        # Break the bandpass up into n_bins pieces
+        bandpass = svo.Filter('NIRISS.GR700XD.1', n_bins=n_bins, verbose=False)
 
-    # Interpolate the LDCs to the desired wavelengths
-    # TODO: Propagate errors
-    coeff_cols = [col for col in ldcs.results.colnames if col.startswith('c') and len(col) == 2]
-    coeff_errs = [err for err in ldcs.results.colnames if err.startswith('e') and len(err) == 2]
-    coeffs = [[np.interp(wav, list(ldcs.results['wave_eff']), list(ldcs.results[c])) for c in coeff_cols] for wav in wavelengths]
+        # Calculate the LDCs
+        ldcs = lf.LDC(model_grid=model_grid)
+        ldcs.calculate(params[0], params[1], params[2], ld_profile, mu_min=0.08, bandpass=bandpass, verbose=False)
 
-    del ldcs
+        # Interpolate the LDCs to the desired wavelengths
+        # TODO: Propagate errors
+        coeff_cols = [col for col in ldcs.results.colnames if col.startswith('c') and len(col) == 2]
+        coeff_errs = [err for err in ldcs.results.colnames if err.startswith('e') and len(err) == 2]
+        coeffs = [[np.interp(wav, list(ldcs.results['wave_eff']), list(ldcs.results[c])) for c in coeff_cols] for wav in wavelengths]
+        coeffs = np.array(coeffs)
 
-    return np.array(coeffs)
+        del ldcs
+
+    except Exception as exc:
+
+        print(exc)
+        print('There was a problem computing those limb darkening coefficients. Using all zeros.')
+
+        n_coeffs = 1 if ld_profile in ['uniform', 'linear'] else 3 if ld_profile == '3-parameter' else 4 if ld_profile == '4-parameter' else 2
+        coeffs = np.zeros((3, len(wavelengths), n_coeffs))
+
+    return coeffs
 
 
 def generate_SOSS_psfs(filt):
