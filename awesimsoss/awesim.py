@@ -434,46 +434,6 @@ class TSO(object):
         settings = {key.strip('_'): val for key, val in self.__dict__.items() if key in track}
         return settings
 
-    # @property
-    # def ld_coeffs(self):
-    #     """Get the limb darkening coefficients"""
-    #     return self._ld_coeffs
-    #
-    # @ld_coeffs.setter
-    # def ld_coeffs(self, coeffs):
-    #     """Set the limb darkening coefficients
-    #
-    #     Parameters
-    #     ----------
-    #     coeffs: str, sequence
-    #         The limb darkening coefficients or 'update'
-    #     """
-    #     # Default message
-    #     msg = "Limb darkening coefficients must be an array of 3 dimensions"
-    #
-    #     # Update the coeffs based on the transit model parameters
-    #     if coeffs == 'update':
-    #
-    #         # Check the transit model
-    #         if self.tmodel is None:
-    #             msg = "Please set a transit model with the 'tmodel' attribute to update the limb darkening coefficients"
-    #
-    #         # Check the model grid
-    #         elif self.model_grid is None:
-    #             msg = "Please set a stellar intensity model grid with the 'model_grid' attribute to update the limb darkening coefficients"
-    #
-    #         # Generate the coefficients
-    #         else:
-    #             coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], self.tmodel.limb_dark, [getattr(self.tmodel, p) for p in ['teff', 'logg', 'feh']], model_grid=self.model_grid) for order in self.orders]
-    #
-    #     # Check the coefficient type
-    #     if not isinstance(coeffs, np.ndarray) or not coeffs.ndim == 3:
-    #         if self.verbose:
-    #             print(msg)
-    #
-    #     else:
-    #         self._ld_coeffs = coeffs
-
     @property
     def ncols(self):
         """Getter for the number of columns"""

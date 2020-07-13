@@ -180,7 +180,7 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, params, model_grid='ACES', subar
         print('There was a problem computing those limb darkening coefficients. Using all zeros.')
 
         n_coeffs = 1 if ld_profile in ['uniform', 'linear'] else 3 if ld_profile == '3-parameter' else 4 if ld_profile == '4-parameter' else 2
-        coeffs = np.zeros((3, len(wavelengths), n_coeffs))
+        coeffs = np.zeros((len(wavelengths), n_coeffs))
 
     return coeffs
 
