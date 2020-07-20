@@ -81,7 +81,7 @@ class TSO(object):
     Generate NIRISS SOSS time series observations
     """
     def __init__(self, ngrps, nints, star=None, planet=None, tmodel=None, snr=700,
-                 filter='CLEAR', subarray='SUBSTRIP256', orders=[1, 2], nresets=0,
+                 filter='CLEAR', subarray='SUBSTRIP256', orders=[1, 2], nresets=1,
                  obs_date=None, target='New Target', title=None, verbose=True):
         """
         Initialize the TSO object and do all pre-calculations
@@ -322,7 +322,9 @@ class TSO(object):
         mod.meta.instrument.name = 'NIRISS'
         mod.meta.instrument.detector = 'NIS'
         mod.meta.instrument.filter = self.filter
+        mod.meta.instrument.filter_position = self.filter_wheel
         mod.meta.instrument.pupil = 'GR700XD'
+        mod.meta.instrument.pupil_position = self.pupil_wheel
         mod.meta.exposure.type = 'NIS_SOSS'
         mod.meta.exposure.nints = self.nints
         mod.meta.exposure.ngroups = self.ngrps
@@ -332,8 +334,8 @@ class TSO(object):
         mod.meta.exposure.frame_time = self.frame_time
         mod.meta.exposure.group_time = self.group_time
         mod.meta.exposure.duration = self.duration.to(q.s).value 
-        mod.meta.exposure.nresets_at_start = 1
-        mod.meta.exposure.nresets_between_ints = 1
+        mod.meta.exposure.nresets_at_start = self.nresets
+        mod.meta.exposure.nresets_between_ints = self.nresets
         mod.meta.subarray.name = self.subarray
         mod.meta.subarray.xsize = data.shape[3]
         mod.meta.subarray.ysize = data.shape[2]
