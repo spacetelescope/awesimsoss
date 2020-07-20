@@ -118,26 +118,20 @@ class TSO(object):
         Example
         -------
         # Imports
-        import numpy as np
-        from awesimsoss import TSO, STAR_DATA
-        import astropy.units as q
-        from pkg_resources import resource_filename
-        star = np.genfromtxt(resource_filename('awesimsoss', 'files/scaled_spectrum.txt'), unpack=True)
-        star1D = [star[0]*q.um, (star[1]*q.W/q.m**2/q.um).to(q.erg/q.s/q.cm**2/q.AA)]
+        from awesimsoss import TSO
+        from hotsoss import utils
 
         # Initialize simulation
-        tso = TSO(ngrps=3, nints=10, star=star1D)
+        tso = TSO(ngrps=3, nints=10, star=utils.STAR_DATA)
         """
         # Metadata
         self.verbose = verbose
         self.target = target
         self.title = title or '{} Simulation'.format(self.target)
 
-        # Set static values
-        self.gain = 1.61
-        self._star = None
-
         # Set instance attributes for the exposure
+        self.gain = 1.61
+        self._pupil_wheel = 245.7600
         self.obs_date = obs_date or Time.now()
         self.ngrps = ngrps
         self.nints = nints
@@ -420,8 +414,35 @@ class TSO(object):
         caldata = fits.getdata(calfile)
         self.photom = caldata[(caldata['pupil'] == 'GR700XD') & (caldata['filter'] == filt)]
 
+        # Set filter wheel position to default value
+        self._filter_wheel = 314.8667 if filt == 'F277W' else 74.8667
+
         # Update the results
         self._reset_data()
+
+        # Reset relative response function
+        self._reset_psfs()
+
+    @property
+    def filter_wheel(self):
+        """Getter for the filter_wheel attribute"""
+        return self._filter_wheel
+
+    @filter_wheel.setter
+    def filter_wheel(self, pos):
+        """Setter for the filter_wheel attribute
+
+        Properties
+        ----------
+        pos: float
+            The filter wheel position to use
+        """
+        # Check the value
+        if not isinstance(pos, (float, int)) or not 0 <= pos <= 360:
+            raise ValueError("'{}' not a supported filter wheel position. Try a float or integer value between 0 and 360.".format(pos))
+
+        # Set it
+        self._filter_wheel = pos
 
         # Reset relative response function
         self._reset_psfs()
@@ -694,6 +715,30 @@ class TSO(object):
         else:
             return fig
 
+    @property
+    def pupil_wheel(self):
+        """Getter for the pupil_wheel attribute"""
+        return self._pupil_wheel
+
+    @pupil_wheel.setter
+    def pupil_wheel(self, pos):
+        """Setter for the pupil_wheel attribute
+
+        Properties
+        ----------
+        pos: float
+            The pupil wheel position to use
+        """
+        # Check the value
+        if not isinstance(pos, (float, int)) or not 0 <= pos <= 360:
+            raise ValueError("'{}' not a supported pupil wheel position. Try a float or integer value between 0 and 360.".format(pos))
+
+        # Set it
+        self._pupil_wheel = pos
+
+        # Reset relative response function
+        self._reset_psfs()
+
     def _reset_data(self):
         """Reset the results to all zeros"""
         # Check that all the appropriate values have been initialized
@@ -730,6 +775,12 @@ class TSO(object):
         """Scale the psf for each detector column to the flux from the 1D spectrum"""
         # Check that all the appropriate values have been initialized
         if all([i in self.info for i in ['filter', 'subarray']]) and self.star is not None:
+
+            # TODO: Change filter wheel position dependencies here
+            print(self.filter_wheel)
+
+            # TODO: Change pupil wheel position dependencies here
+            print(self.pupil_wheel)
 
             for order in self.orders:
 
