@@ -232,7 +232,7 @@ dependencies:
     - et-xmlfile==1.0.1
     - flask==1.0.3
     - future==0.17.1
-    - hotsoss==0.1.6
+    - hotsoss==0.1.7
     - itsdangerous==1.1.0
     - jdcal==1.4
     - jwst==0.13.8a0.dev37+g1f2237de
