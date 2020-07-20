@@ -547,8 +547,7 @@ class TSO(object):
 
     @nrows.setter
     def nrows(self, err):
-        """Error when trying to change the number of rows
-        """
+        """Error when trying to change the number of rows"""
         raise TypeError("The number of rows is fixed by setting the 'subarray' attribute.")
 
     @property
