@@ -13,17 +13,13 @@ import warnings
 
 import numpy as np
 from astropy.io import fits
+import astropy.units as q
 from bokeh.plotting import figure, show
-from hotsoss import utils
+from hotsoss import utils, locate_trace
 from svo_filters import svo
 from scipy.interpolate import interp1d
 from scipy.ndimage.interpolation import rotate
 from scipy.interpolate import interp2d, RectBivariateSpline
-
-try:
-    import webbpsf
-except ImportError:
-    print("Could not import `webbpsf` package. Functionality limited.")
 
 warnings.simplefilter('ignore')
 
@@ -50,7 +46,7 @@ def calculate_psf_tilts():
 
         # Get the y-coordinate of the trace polynomial in this column
         # (center of the trace)
-        coeffs = trace_polynomials(subarray=subarray, order=order)
+        coeffs = locate_trace.trace_polynomial(subarray=subarray, order=order)
         trace = np.polyval(coeffs, X)
 
         # Interpolate to get the wavelength value at the center
@@ -104,7 +100,7 @@ def calculate_psf_tilts():
         print('Angles saved to', psf_file)
 
 
-def nuke_psfs(tilts=True, raw=True, final=True):
+def nuke_psfs(tilts=True, raw=True, final=True, mprocessing=True):
     """Generate all the psf cubes from scratch"""
     # Calculate the psf tilts
     if tilts:
@@ -118,10 +114,10 @@ def nuke_psfs(tilts=True, raw=True, final=True):
 
         # Generate the rotated and interpolated psfs ready for trace assembly
         if final:
-            SOSS_psf_cube(filt=filt, generate=True)
+            SOSS_psf_cube(filt=filt, generate=True, mprocessing=mprocessing)
 
 
-def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subarray='SUBSTRIP256', n_bins=100, plot=False, save=''):
+def generate_SOSS_ldcs(wavelengths, ld_profile, params, model_grid='ACES', subarray='SUBSTRIP256', n_bins=100):
     """
     Generate a lookup table of limb darkening coefficients for full
     SOSS wavelength range
@@ -133,55 +129,55 @@ def generate_SOSS_ldcs(wavelengths, ld_profile, grid_point, model_grid='', subar
     ld_profile: str
         A limb darkening profile name supported by
         `ExoCTK.ldc.ldcfit.ld_profile()`
-    grid_point: dict, sequence
-        The stellar parameters [Teff, logg, FeH] or stellar model
-        dictionary from `ExoCTK.modelgrid.ModelGrid.get()`
+    params: sequence
+        The stellar parameters [Teff, logg, FeH]
+    model_grid: modelgrid.ModelGrid
+        The grid of stellar intensity models to calculate LDCs from
+    subarray: str
+        The name of the subarray to use, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
     n_bins: int
         The number of bins to break up the grism into
-    save: str
-        The path to save to file to
+
+    Returns
+    -------
+    np.ndarray
+        An array of limb darkening coefficients for each wavelength
 
     Example
     -------
-    from awesimsoss.sim2D import awesim
-    lookup = awesim.soss_ldc('quadratic', [3300, 4.5, 0])
+    from awesimsoss import make_trace as mt
+    lookup = mt.generate_SOSS_ldcs(np.linspace(1., 2., 3), 'quadratic', [3300, 4.5, 0])
     """
     try:
+
         from exoctk import modelgrid
         from exoctk.limb_darkening import limb_darkening_fit as lf
-    except ImportError:
-        return
 
-    # Get the model grid
-    if not isinstance(model_grid, modelgrid.ModelGrid):
-        model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700)
+        # Break the bandpass up into n_bins pieces
+        bandpass = svo.Filter('NIRISS.GR700XD.1', n_bins=n_bins, verbose=False)
 
-    # Load the model grid
-    model_grid = modelgrid.ModelGrid(os.environ['MODELGRID_DIR'], resolution=700, wave_rng=(0.6, 2.8))
+        # Calculate the LDCs
+        ldcs = lf.LDC(model_grid=model_grid)
+        ldcs.calculate(params[0], params[1], params[2], ld_profile, mu_min=0.08, bandpass=bandpass, verbose=False)
 
-    # Get the grid point
-    if isinstance(grid_point, (list, tuple, np.ndarray)):
-        grid_point = model_grid.get(*grid_point)
+        # Interpolate the LDCs to the desired wavelengths
+        # TODO: Propagate errors
+        coeff_cols = [col for col in ldcs.results.colnames if col.startswith('c') and len(col) == 2]
+        coeff_errs = [err for err in ldcs.results.colnames if err.startswith('e') and len(err) == 2]
+        coeffs = [[np.interp(wav, list(ldcs.results['wave_eff']), list(ldcs.results[c])) for c in coeff_cols] for wav in wavelengths]
+        coeffs = np.array(coeffs)
 
-    # Abort if no stellar dict
-    if not isinstance(grid_point, dict):
-        print('Please provide the grid_point argument as [Teff, logg, FeH] or ExoCTK.modelgrid.ModelGrid.get(Teff, logg, FeH).')
-        return
+        del ldcs
 
-    # Break the bandpass up into n_bins pieces
-    bandpass = svo.Filter('NIRISS.GR700XD', n_bins=n_bins, verbose=False)
+    except Exception as exc:
 
-    # Calculate the LDCs
-    ldc_results = lf.ldc(None, None, None, model_grid, [ld_profile],
-                         bandpass=bandpass, grid_point=grid_point.copy(),
-                         mu_min=0.08, verbose=False)
+        print(exc)
+        print('There was a problem computing those limb darkening coefficients. Using all zeros.')
 
-    # Interpolate the LDCs to the desired wavelengths
-    coeff_table = ldc_results[ld_profile]['coeffs']
-    coeff_cols = [c for c in coeff_table.colnames if c.startswith('c')]
-    coeffs = [np.interp(wavelengths, coeff_table['wavelength'], coeff_table[c]) for c in coeff_cols]
+        n_coeffs = 1 if ld_profile in ['uniform', 'linear'] else 3 if ld_profile == '3-parameter' else 4 if ld_profile == '4-parameter' else 2
+        coeffs = np.zeros((len(wavelengths), n_coeffs))
 
-    return np.array(coeffs).T
+    return coeffs
 
 
 def generate_SOSS_psfs(filt):
@@ -193,37 +189,44 @@ def generate_SOSS_psfs(filt):
     filt: str
         The filter to use, ['CLEAR', 'F277W']
     """
-    # Get the file
-    file = resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
+    try:
 
-    # Get the NIRISS class from webbpsf and set the filter
-    ns = webbpsf.NIRISS()
-    ns.filter = filt
-    ns.pupil_mask = 'GR700XD'
+        import webbpsf
 
-    # Get the min and max wavelengths
-    wavelengths = utils.wave_solutions('SUBSTRIP256').flatten()
-    wave_min = np.max([ns.SHORT_WAVELENGTH_MIN * 1E6, np.min(wavelengths[wavelengths > 0])])
-    wave_max = np.min([ns.LONG_WAVELENGTH_MAX * 1E6, np.max(wavelengths[wavelengths > 0])])
+        # Get the file
+        file = resource_filename('awesimsoss', 'files/SOSS_{}_PSF.fits'.format(filt))
 
-    # webbpsf.calc_datacube can only handle 100 but that's sufficient
-    W = np.linspace(wave_min, wave_max, 100)*1E-6
+        # Get the NIRISS class from webbpsf and set the filter
+        ns = webbpsf.NIRISS()
+        ns.filter = filt
+        ns.pupil_mask = 'GR700XD'
 
-    # Calculate the psfs
-    print("Generating SOSS psfs. This takes about 8 minutes...")
-    start = time.time()
-    PSF = ns.calc_datacube(W, oversample=1)[0].data
-    print("Finished in", time.time()-start)
+        # Get the min and max wavelengths
+        wavelengths = utils.wave_solutions('SUBSTRIP256').flatten()
+        wave_min = np.max([ns.SHORT_WAVELENGTH_MIN * 1E6, np.min(wavelengths[wavelengths > 0])])
+        wave_max = np.min([ns.LONG_WAVELENGTH_MAX * 1E6, np.max(wavelengths[wavelengths > 0])])
 
-    # Make the HDUList
-    psfhdu = fits.PrimaryHDU(data=PSF)
-    wavhdu = fits.ImageHDU(data=W*1E6, name='WAV')
-    hdulist = fits.HDUList([psfhdu, wavhdu])
+        # webbpsf.calc_datacube can only handle 100 but that's sufficient
+        W = np.linspace(wave_min, wave_max, 100) * 1E-6
 
-    # Write the file
-    hdulist.writeto(file, overwrite=True)
-    hdulist.close()
+        # Calculate the psfs
+        print("Generating SOSS psfs. This takes about 8 minutes...")
+        start = time.time()
+        PSF = ns.calc_datacube(W, oversample=1)[0].data
+        print("Finished in", time.time()-start)
 
+        # Make the HDUList
+        psfhdu = fits.PrimaryHDU(data=PSF)
+        wavhdu = fits.ImageHDU(data=W * 1E6, name='WAV')
+        hdulist = fits.HDUList([psfhdu, wavhdu])
+
+        # Write the file
+        hdulist.writeto(file, overwrite=True)
+        hdulist.close()
+
+    except (ImportError, OSError, IOError):
+
+        print("Could not import `webbpsf` package. Functionality limited. Generating dummy file.")
 
 def get_angle(pf, p0=np.array([0, 0]), pi=None):
     """Compute angle (in degrees) for pf-p0-pi corner
@@ -296,7 +299,7 @@ def get_SOSS_psf(wavelength, filt='CLEAR', psfs=None, cutoff=0.005, plot=False):
 
     # Interpolate and scale psf
     psf = psfs(wavelength)
-    psf *= 1./np.sum(psf)
+    psf *= 1. / np.sum(psf)
 
     # Remove background
     # psf[psf < cutoff] = 0
@@ -330,7 +333,7 @@ def make_frame(psfs):
 
     # Add each psf
     for n, psf in enumerate(psfs):
-        frame[:, n:n+76] += psf
+        frame[:, n:n + 76] += psf
 
     return frame[:, 38:-38]
 
@@ -461,7 +464,7 @@ def put_psf_on_subarray(psf, y, frame_height=256):
 
     # Create output frame, shifted as necessary
     yg, xg = np.indices((frame_height, dim), dtype=np.float64)
-    yg += mid-y
+    yg += mid - y
 
     # Resample onto the subarray
     frame = spline.ev(xg, yg)
@@ -473,7 +476,7 @@ def put_psf_on_subarray(psf, y, frame_height=256):
     return frame
 
 
-def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False):
+def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False, mprocessing=True):
     """
     Generate/retrieve a data cube of shape (3, 2048, 76, 76) which is a
     76x76 pixel psf for 2048 wavelengths for each trace order. The PSFs
@@ -490,6 +493,8 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
         The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
     generate: bool
         Generate a new cube
+    mprocessing: bool
+        Use multiprocessing
 
     Returns
     -------
@@ -502,7 +507,7 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
 
         # Get the wavelengths
         wavelengths = np.mean(utils.wave_solutions(subarray), axis=1)[:2 if filt == 'CLEAR' else 1]
-        coeffs = trace_polynomials(subarray)
+        coeffs = locate_trace.trace_polynomial(subarray)
 
         # Get the file
         psf_path = 'files/SOSS_{}_PSF.fits'.format(filt)
@@ -529,52 +534,76 @@ def SOSS_psf_cube(filt='CLEAR', order=1, subarray='SUBSTRIP256', generate=False)
             else:
 
                 # Get the psf for each column
-                print('Calculating order {} SOSS psfs for {} filter...'.format(n+1, filt))
+                print('Calculating order {} SOSS psfs for {} filter...'.format(n + 1, filt))
                 start = time.time()
-                pool = multiprocessing.Pool(8)
                 func = partial(get_SOSS_psf, filt=filt, psfs=psfs)
-                raw_psfs = np.array(pool.map(func, wavelength))
-                pool.close()
-                pool.join()
-                del pool
+
+                if mprocessing:
+                    pool = multiprocessing.Pool(8)
+                    raw_psfs = np.array(pool.map(func, wavelength))
+                    pool.close()
+                    pool.join()
+                    del pool
+                else:
+                    raw_psfs = []
+                    for i in range(len(wavelength)):
+                        raw_psfs.append(func(wavelength[i]))
+                    raw_psfs = np.array(raw_psfs)
+
                 print('Finished in {} seconds.'.format(time.time()-start))
+
+                # Rotate the psfs
+                print('Rotating order {} SOSS psfs for {} filter...'.format(n + 1, filt))
+                start = time.time()
+                func = partial(rotate, reshape=False)
 
                 # Get the PSF tilt at each column
                 angles = psf_tilts(order)
 
-                # Rotate the psfs
-                print('Rotating order {} SOSS psfs for {} filter...'.format(n+1, filt))
-                start = time.time()
-                pool = multiprocessing.Pool(8)
-                func = partial(rotate, reshape=False)
-                rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
-                pool.close()
-                pool.join()
-                del pool
+                if mprocessing:
+                    pool = multiprocessing.Pool(8)
+                    rotated_psfs = np.array(pool.starmap(func, zip(raw_psfs, angles)))
+                    pool.close()
+                    pool.join()
+                    del pool
+                else:
+                    rotated_psfs = []
+                    for rp, ang in zip(raw_psfs, angles):
+                        rotated_psfs.append(func(rp, ang))
+                    rotated_psfs = np.array(rotated_psfs)
+
                 print('Finished in {} seconds.'.format(time.time()-start))
 
                 # Scale psfs to 1
                 rotated_psfs = np.abs(rotated_psfs)
                 scale = np.nansum(rotated_psfs, axis=(1, 2))[:, None, None]
-                rotated_psfs = rotated_psfs/scale
+                rotated_psfs = rotated_psfs / scale
 
                 # Split it into 4 chunks to be below Github file size limit
                 chunks = rotated_psfs.reshape(4, 512, 76, 76)
                 for N, chunk in enumerate(chunks):
 
-                    idx0 = N*512
-                    idx1 = idx0+512
+                    idx0 = N * 512
+                    idx1 = idx0 + 512
                     centers = trace_centers[idx0:idx1]
 
                     # Interpolate the psfs onto the subarray
-                    print('Interpolating chunk {}/4 for order {} SOSS psfs for {} filter onto subarray...'.format(N+1, n+1, filt))
+                    print('Interpolating chunk {}/4 for order {} SOSS psfs for {} filter onto subarray...'.format(N + 1, n + 1, filt))
                     start = time.time()
-                    pool = multiprocessing.Pool(8)
-                    data = zip(chunk, centers)
-                    subarray_psfs = pool.starmap(put_psf_on_subarray, data)
-                    pool.close()
-                    pool.join()
-                    del pool
+                    func = put_psf_on_subarray
+
+                    if mprocessing:
+                        pool = multiprocessing.Pool(8)
+                        data = zip(chunk, centers)
+                        subarray_psfs = pool.starmap(func, data)
+                        pool.close()
+                        pool.join()
+                        del pool
+                    else:
+                        subarray_psfs = []
+                        for ch, ce in zip(chunk, centers):
+                            subarray_psfs.append(func(ch, ce))
+
                     print('Finished in {} seconds.'.format(time.time()-start))
 
                     # Get the filepath

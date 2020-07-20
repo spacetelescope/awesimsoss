@@ -14,6 +14,7 @@ from hotsoss import STAR_DATA, PLANET_DATA
 
 from awesimsoss import TSO, BlackbodyTSO, ModelTSO, TestTSO
 
+
 class test_ModelTSO(unittest.TestCase):
     """A test of the ModelTSO class"""
     def setUp(self):
@@ -26,6 +27,7 @@ class test_ModelTSO(unittest.TestCase):
     def test_run_with_planet(self):
         """A test of the ModelTSO class with a planet"""
         tso = ModelTSO(add_planet=True)
+
 
 class test_BlackbodyTSO(unittest.TestCase):
     """A test of the BlackbodyTSO class"""
@@ -199,7 +201,7 @@ class test_TSO(unittest.TestCase):
         params.limb_dark = 'quadratic'
         params.u = [0.1, 0.1]
         params.rp = 0.
-        tmodel = batman.TransitModel(params, tso.time)
+        tmodel = batman.TransitModel(params, tso.time.jd)
         tmodel.teff = 3500
         tmodel.logg = 5
         tmodel.feh = 0
@@ -280,7 +282,7 @@ class test_TSO(unittest.TestCase):
         self.assertRaises(ValueError, setattr, tso, 'subarray', 'three')
 
         # Bad t0
-        self.assertRaises(ValueError, setattr, tso, 't0', 'three')
+        self.assertRaises(ValueError, setattr, tso, 'obs_date', 123)
 
         # Bad target
         self.assertRaises(TypeError, setattr, tso, 'target', 3)
@@ -329,46 +331,3 @@ class test_TSO(unittest.TestCase):
         # Standard plot
         plt = tso.plot_ramp(draw=False)
         tso.plot_ramp()
-
-    def test_plot_lightcurve(self):
-        """Test plot_lightcurve method"""
-        # Make the TSO object
-        tso = TSO(ngrps=2, nints=2, star=self.star)
-        tso.simulate()
-
-        # Test bad units
-        kwargs = {'column': 500, 'time_unit': 'foo', 'draw': False}
-        self.assertRaises(ValueError, tso.plot_lightcurve, **kwargs)
-
-        # Standard plot
-        plt = tso.plot_lightcurve(500)
-
-        # Wavelength
-        plt = tso.plot_lightcurve(1.6, draw=False)
-
-        # Neither
-        plt = tso.plot_lightcurve('foo', draw=False)
-
-        # List of lightcurves
-        plt = tso.plot_lightcurve([500, 1000], draw=False)
-
-    def test_plot_spectrum(self):
-        """Test plot_spectrum method"""
-        # Make the TSO object
-        tso = TSO(ngrps=2, nints=2, star=self.star)
-        tso.simulate()
-
-        # Standard plot
-        plt = tso.plot_spectrum()
-
-        # Standard plot with one order
-        plt = tso.plot_spectrum(order=1, draw=False)
-
-        # Log plot
-        plt = tso.plot_spectrum(scale='log', draw=False)
-
-        # No noise plot
-        plt = tso.plot_spectrum(noise=True, draw=False)
-
-        # Specific order
-        plt = tso.plot_spectrum(order=1, draw=False)
