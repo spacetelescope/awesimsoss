@@ -128,6 +128,7 @@ class TSO(object):
         self.verbose = verbose
         self.target = target
         self.title = title or '{} Simulation'.format(self.target)
+        self._star = None
 
         # Set instance attributes for the exposure
         self.gain = 1.61
