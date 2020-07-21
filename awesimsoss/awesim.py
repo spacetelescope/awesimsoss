@@ -1131,7 +1131,7 @@ class TSO(object):
             self._tmodel = model
 
             # Update ld_coeffs
-            self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], model.limb_dark, params) for order in self.orders]
+            self.ld_coeffs = [mt.generate_SOSS_ldcs(self.avg_wave[order - 1], model.limb_dark, params, model_grid = self.model_grid) for order in self.orders]
 
     @property
     def tso_ideal(self):
