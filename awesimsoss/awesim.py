@@ -64,7 +64,7 @@ def run_required(func):
     @wraps(func)
     def _run_required(*args, **kwargs):
         """Check that the 'tso' attribute is not None"""
-        if args[0].tso is None:
+        if args[0].tso_order1_ideal is None:
             print("No simulation found! Please run the 'simulate' method first.")
 
         else:
@@ -81,7 +81,7 @@ class TSO(object):
     Generate NIRISS SOSS time series observations
     """
     def __init__(self, ngrps, nints, star=None, planet=None, tmodel=None, snr=700,
-                 filter='CLEAR', subarray='SUBSTRIP256', orders=[1, 2], nresets=0,
+                 filter='CLEAR', subarray='SUBSTRIP256', orders=[1, 2], nresets=1,
                  obs_date=None, target='New Target', title=None, verbose=True):
         """
         Initialize the TSO object and do all pre-calculations
@@ -142,7 +142,7 @@ class TSO(object):
         self.ngrps = ngrps
         self.nints = nints
         self.nresets = nresets
-        self.nframes = (self.nresets + self.ngrps) * self.nints
+        self.nframes = self.ngrps * self.nints
         self.orders = orders
         self.filter = filter
         self.header = ''
@@ -338,8 +338,8 @@ class TSO(object):
         mod.meta.exposure.frame_time = self.frame_time
         mod.meta.exposure.group_time = self.group_time
         mod.meta.exposure.duration = self.duration.to(q.s).value 
-        mod.meta.exposure.nresets_at_start = 1
-        mod.meta.exposure.nresets_between_ints = 1
+        mod.meta.exposure.nresets_at_start = self.nresets
+        mod.meta.exposure.nresets_between_ints = self.nresets
         mod.meta.subarray.name = self.subarray
         mod.meta.subarray.xsize = data.shape[3]
         mod.meta.subarray.ysize = data.shape[2]
@@ -510,8 +510,8 @@ class TSO(object):
             The number of resets
         """
         # Check the value
-        if not isinstance(nreset_val, int):
-            raise TypeError("The number of resets must be an integer")
+        if not isinstance(nreset_val, int) or nreset_val < 1:
+            raise TypeError("The number of resets must be an integer greater than 0")
 
         # Set it
         self._nresets = nreset_val
@@ -716,15 +716,20 @@ class TSO(object):
             self.frame_time = self.subarray_specs.get('tfrm')
             self.group_time = self.subarray_specs.get('tgrp')
 
-            # Datetime of each frame
+            # The indexes of valid groups, skipping resets
+            grp_idx = np.concatenate([np.arange(self.nresets, self.nresets + self.ngrps) + n * (self.nresets + self.ngrps) for n in range(self.nints)])
+
+            # The time increments
             dt = TimeDelta(self.frame_time / 2., format='sec')
-            self.time = self.obs_date + dt * np.arange((self.nresets + self.ngrps) * self.nints)
-            self.duration = self.time.max() - self.time.min()
 
             # Integration time of each frame in seconds
-            self.inttime = np.tile(self.frame_time * np.arange(1, self.nresets + self.ngrps + 1), self.nints)
+            self.inttime = np.tile((dt * grp_idx).sec[:self.ngrps], self.nints)
 
-            # TODO: Fix for nresets != 0 by masking or removing reset frames
+            # Datetime of each frame
+            self.time = self.obs_date + (dt * grp_idx)
+
+            # Exposure duration
+            self.duration = TimeDelta(self.time.max() - self.obs_date, format='sec')
 
     def _reset_psfs(self):
         """Scale the psf for each detector column to the flux from the 1D spectrum"""
@@ -1136,10 +1141,10 @@ class TSO(object):
     @property
     def tso_ideal(self):
         """Getter for TSO data without noise"""
-        if self.tso is None:
+        if self.tso_order1_ideal is None:
             return None
 
-        elif 2 in self.orders:
+        if 2 in self.orders:
             return np.sum([self.tso_order1_ideal, self.tso_order2_ideal], axis=0)
 
         else:
