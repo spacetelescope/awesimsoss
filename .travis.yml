@@ -6,7 +6,7 @@ python:
 
 install:
   - pip install git+https://github.com/astropy/astropy.git@763f069058cb1ee2038fa1cfa485452ec94b726e
-  - pip install git+https://github.com/spacetelescope/jwst@0.15.0
+  - pip install git+https://github.com/spacetelescope/jwst@0.16.2
   - pip install git+https://github.com/pypa/twine.git@68dc617bafbc8a32adbe41c12055efe6ba6d0e1e
   - pip install -r requirements_dev.txt
   - pip install -e .
@@ -14,7 +14,6 @@ install:
 
 # command to run tests, e.g. python setup.py test
 script:
-  # - python -m pytest tests/
   - pytest --cov=awesimsoss/
 
 after_success:
