@@ -332,7 +332,7 @@ class TSO(object):
         mod.meta.exposure.type = 'NIS_SOSS'
         mod.meta.exposure.nints = self.nints
         mod.meta.exposure.ngroups = self.ngrps
-        mod.meta.exposure.nframes = self.nframes
+        mod.meta.exposure.nframes = 1#self.nframes
         mod.meta.exposure.readpatt = 'NISRAPID'
         mod.meta.exposure.groupgap = 0
         mod.meta.exposure.frame_time = self.frame_time
