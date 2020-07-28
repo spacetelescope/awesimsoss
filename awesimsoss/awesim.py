@@ -230,23 +230,13 @@ class TSO(object):
         orders = np.array([order.reshape(self.dims3) for order in orders])
         tso_ideal = np.sum(orders, axis=0).reshape(self.dims3)
 
-        # Load the reference files
+        # Load the FULL frame reference files and trim
         pca0_file = ju.jwst_pca0_ref()
-        nonlinearity = ju.jwst_nonlinearity_ref()
-        pedestal = ju.jwst_pedestal_ref()
-        photon_yield = ju.jwst_photyield_ref()
-        zodi = ju.jwst_zodi_ref()
-        darksignal = ju.jwst_dark_ref() * self.gain
-
-        # Slice of FULL frame reference files
-        slc = slice(1792, 1888) if self.subarray == 'SUBSTRIP96' else slice(1792, 2048) if self.subarray == 'SUBSTRIP256' else slice(0, 2048)
-
-        # Trim FULL frame reference files
-        pedestal = pedestal[slc, :]
-        nonlinearity = nonlinearity[:, slc, :]
-        zodi = zodi[slc, :]
-        darksignal = darksignal[slc, :]
-        photon_yield = photon_yield[:, slc, :]
+        nonlinearity = ju.jwst_nonlinearity_ref(self.subarray)
+        pedestal = ju.jwst_pedestal_ref(self.subarray)
+        photon_yield = ju.jwst_photyield_ref(self.subarray)
+        zodi = ju.jwst_zodi_ref(self.subarray)
+        darksignal = ju.jwst_dark_ref(self.subarray) * self.gain
 
         # Generate the photon yield factor values
         pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
@@ -412,8 +402,7 @@ class TSO(object):
             self.orders = [1]
 
         # Get absolute calibration reference file for current filter
-        photom_data = ju.jwst_photom_ref()
-        self.photom = photom_data[(photom_data['pupil'] == 'GR700XD') & (photom_data['filter'] == filt)]
+        self.photom = ju.jwst_photom_ref(filt)
 
         # Update the results
         self._reset_data()
