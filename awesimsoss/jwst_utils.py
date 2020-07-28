@@ -4,7 +4,11 @@ from pkg_resources import resource_filename
 
 from astropy.io import fits
 
-from jwst import datamodels as dm
+try:
+    from jwst import datamodels as dm
+except ImportError:
+    print("Could not import 'jwst' package. Functionality will be limited.")
+
 
 SUB_SLICE = {'SUBSTRIP96': slice(1792, 1888), 'SUBSTRIP256': slice(1792, 2048), 'FULL': slice(0, 2048)}
 
