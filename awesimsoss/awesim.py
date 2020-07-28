@@ -33,12 +33,8 @@ from contextlib import closing
 from hotsoss import utils, plotting, locate_trace
 import urllib.request as request
 
-try:
-    from jwst.datamodels import RampModel
-except ImportError:
-    print("Could not import `jwst` package. Functionality limited.")
-
 from . import generate_darks as gd
+from . import jwst_utils as ju
 from . import make_trace as mt
 
 warnings.simplefilter('ignore')
@@ -235,12 +231,12 @@ class TSO(object):
         tso_ideal = np.sum(orders, axis=0).reshape(self.dims3)
 
         # Load the reference files
-        pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
-        nonlinearity = fits.getdata(resource_filename('awesimsoss', 'files/forward_coefficients_dms.fits'))
-        pedestal = fits.getdata(resource_filename('awesimsoss', 'files/pedestaldms.fits'))
-        photon_yield = fits.getdata(resource_filename('awesimsoss', 'files/photonyieldfullframe.fits'))
-        zodi = fits.getdata(resource_filename('awesimsoss', 'files/background_detectorfield_normalized.fits'))
-        darksignal = fits.getdata(resource_filename('awesimsoss', 'files/signaldms.fits')) * self.gain
+        pca0_file = ju.jwst_pca0_ref()
+        nonlinearity = ju.jwst_nonlinearity_ref()
+        pedestal = ju.jwst_pedestal_ref()
+        photon_yield = ju.jwst_photyield_ref()
+        zodi = ju.jwst_zodi_ref()
+        darksignal = ju.jwst_dark_ref() * self.gain
 
         # Slice of FULL frame reference files
         slc = slice(1792, 1888) if self.subarray == 'SUBSTRIP96' else slice(1792, 2048) if self.subarray == 'SUBSTRIP256' else slice(0, 2048)
@@ -320,7 +316,7 @@ class TSO(object):
 
         # Make a RampModel
         data = copy(self.tso) if self.tso is not None else np.ones((1, 1, self.nrows, self.ncols))
-        mod = RampModel(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
+        mod = ju.jwst_ramp_model(data=data, groupdq=np.zeros_like(data), pixeldq=np.zeros((self.nrows, self.ncols)), err=np.zeros_like(data))
         pix = utils.subarray_specs(self.subarray)
 
         # Set meta data values for header keywords
@@ -415,10 +411,9 @@ class TSO(object):
         if filt == 'F277W':
             self.orders = [1]
 
-        # Get absolute calibration reference file
-        calfile = resource_filename('awesimsoss', 'files/niriss_ref_photom.fits')
-        caldata = fits.getdata(calfile)
-        self.photom = caldata[(caldata['pupil'] == 'GR700XD') & (caldata['filter'] == filt)]
+        # Get absolute calibration reference file for current filter
+        photom_data = ju.jwst_photom_ref()
+        self.photom = photom_data[(photom_data['pupil'] == 'GR700XD') & (photom_data['filter'] == filt)]
 
         # Update the results
         self._reset_data()

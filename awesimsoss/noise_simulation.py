@@ -178,13 +178,13 @@ class HXRGNoise:
             x0 = 0
 
         # Default clocking pattern is JWST NIRSpec
-        self.naxis1    = 2048  if naxis1   is None else naxis1
-        self.naxis2    = 2048  if naxis2   is None else naxis2
-        self.naxis3    = 1     if naxis3   is None else naxis3
-        self.n_out     = 4     if n_out    is None else n_out
-        self.dt        = 1.e-5 if dt       is None else dt
-        self.nroh      = 12    if nroh     is None else nroh
-        self.nfoh      = 1     if nfoh     is None else nfoh
+        self.naxis1 = 2048 if naxis1 is None else naxis1
+        self.naxis2 = 2048 if naxis2 is None else naxis2
+        self.naxis3 = 1 if naxis3 is None else naxis3
+        self.n_out = 4 if n_out is None else n_out
+        self.dt = 1.e-5 if dt is None else dt
+        self.nroh = 12 if nroh is None else nroh
+        self.nfoh = 1 if nfoh is None else nfoh
         self.reference_pixel_border_width = 4 if reference_pixel_border_width is None \
                                               else reference_pixel_border_width
                                               
@@ -201,7 +201,7 @@ class HXRGNoise:
         # Initialize PCA-zero file and make sure that it exists and is a file
         path=os.getenv('NIRISS_NOISE_HOME')
         if path is None:
-                  path='.'
+            path='.'
         self.pca0_file = path+'/niriss_pca0.fits' if \
             pca0_file is None else pca0_file
         if os.path.isfile(self.pca0_file) is False:
@@ -285,7 +285,7 @@ class HXRGNoise:
         #self.pca0 -= np.median(self.pca0) # Zero offset
         #self.pca0 /= (1.4826*mad(self.pca0)) # Renormalize
 
-        data = hdu[0].data        
+        data = hdu[0].data
         # Make sure the real PCA image is correctly scaled to size of fake data (JML)
         # Depends if we're FULL, STRIPE, or WINDOW
         if wind_mode == 'FULL':
@@ -306,7 +306,7 @@ class HXRGNoise:
 
         data -= np.median(data) # Zero offset
         data /= (1.4826*mad(data)) # Renormalize
-    
+
         # Select region of pca0 associated with window position
         if self.wind_mode == 'WINDOW':
             x1 = self.x0; y1 = self.y0
@@ -314,7 +314,7 @@ class HXRGNoise:
             x1 = 0; y1 = self.y0
         else:
             x1 = 0; y1 = 0
-    
+
         # print(y1, self.naxis2) This appears to be a stub
         x2 = x1 + self.naxis1
         y2 = y1 + self.naxis2
@@ -325,7 +325,7 @@ class HXRGNoise:
                         (x1,x2,y1,y2,data.shape[0],data.shape[1]))
             os.sys.exit()
         self.pca0 = data[y1:y2,x1:x2]
-        
+
         # How many reference pixels on each border?
         w = self.reference_pixel_border_width # Easier to work with
         lower = w-y1; upper = w-(det_size-y2)
@@ -333,7 +333,6 @@ class HXRGNoise:
         ref_all = np.array([lower,upper,left,right])
         ref_all[ref_all<0] = 0
         self.ref_all = ref_all
-
 
     def message(self, message_text):
         """
@@ -356,7 +355,7 @@ class HXRGNoise:
     def pink_noise(self, mode):
         """
         Generate a vector of non-periodic pink noise.
-  
+
         Parameters:
             mode - Selected from {'pink', 'acn'}
         """
@@ -375,14 +374,14 @@ class HXRGNoise:
 
         # Generate seed noise
         mynoise = self.white_noise(nstep2)
-  
+
         # Save the mean and standard deviation of the first
         # half. These are restored later. We do not subtract the mean
         # here. This happens when we multiply the FFT by the pinkening
         # filter which has no power at f=0.
         the_mean = np.mean(mynoise[:nstep2//2])
         the_std = np.std(mynoise[:nstep2//2])
-  
+
         # Apply the pinkening filter.
         thefft = np.fft.rfft(mynoise)
         thefft = np.multiply(thefft, p_filter)
@@ -392,11 +391,9 @@ class HXRGNoise:
         # Restore the mean and standard deviation
         result *= the_std / np.std(result)
         result = result - np.mean(result) + the_mean
-          
+
         # Done
         return(result)
-
-
 
     def mknoise(self, rd_noise=None, pedestal=None, c_pink=None,
                 u_pink=None, acn=None, pca0_amp=None,
@@ -457,23 +454,23 @@ class HXRGNoise:
         #
         # ======================================================================
 
-        self.rd_noise  = 5.0      if rd_noise     is None else rd_noise
-        self.pedestal  = 4        if pedestal     is None else pedestal
-        self.c_pink    = 3        if c_pink       is None else c_pink
-        self.u_pink    = 1        if u_pink       is None else u_pink
-        self.acn       = 0.5      if acn          is None else acn
-        self.pca0_amp  = 0.2      if pca0_amp     is None else pca0_amp
-        self.dark_current = 0.0   if dark_current is None else dark_current
-        self.dc_seed   = 0        if dc_seed      is None else dc_seed
-        self.gain      = 1        if gain         is None else gain
-        self.noise_seed = 0       if noise_seed   is None else noise_seed
-        
+        self.rd_noise = 5.0 if rd_noise is None else rd_noise
+        self.pedestal = 4 if pedestal is None else pedestal
+        self.c_pink = 3 if c_pink is None else c_pink
+        self.u_pink = 1 if u_pink is None else u_pink
+        self.acn = 0.5 if acn is None else acn
+        self.pca0_amp = 0.2 if pca0_amp is None else pca0_amp
+        self.dark_current = 0.0 if dark_current is None else dark_current
+        self.dc_seed = 0 if dc_seed is None else dc_seed
+        self.gain = 1 if gain is None else gain
+        self.noise_seed = 0 if noise_seed is None else noise_seed
+
         if self.gain <= 0.:
             self.gain=1.
-        
+
         if self.dark_current <= 0.:
             self.dark_current=0.
-        
+
         if self.dc_seed <= 0:
             self.dc_seed=long(4294967280.*np.random.uniform())+long(10)
 
