@@ -120,7 +120,7 @@ def jwst_photyield_ref(subarray):
     photyield_file = resource_filename('awesimsoss', 'files/photonyieldfullframe.fits')
     photyield_data = fits.getdata(photyield_file)[:, SUB_SLICE[subarray], :]
 
-    return photom_data
+    return photyield_data
 
 
 def jwst_ramp_model(data, groupdq, pixeldq, err, **kwargs):
