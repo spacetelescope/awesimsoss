@@ -2,19 +2,38 @@
 NGHXRG - Teledyne HxRG Noise Generator
 
 Modification History:
+13 August 2020   Kevin Volk
 
-20 October 2017   Kevin Volk
+  Modify this version to return the simulated ramp and to not change to 
+unsigned integers.
 
-  This version returns the ramp rathr than writing out the FITS file.  It also 
-does not convert to unsigned integer form.
+11 August 2020   Kevin Volk
+
+  Change the random number generation calls to use the new numpy interface.
+
+23 July 2020    Kevin Volk
+
+  A couple of bug fixes to the dark current image option were made.  The code 
+was changed so it will work properly with a sub-array simulation.  Previously 
+the values in the lower left corner were used not the values at the target 
+position.
+
+22 June 2020    Kevin Volk
+
+  Port to python version 3.  Added writing out bias_pattern.fits.
+
+16 September 2019   Kevin Volk
+
+  Add an option to use an image for the dark current rather than a constant 
+value.
 
 2 June 2017   Kevin Volk
 
   I have added in pedestal offsets; the self.pedestal variable in the code, 
 described as the "magnitude of the pedestal drift in electrons" does not appear 
 to be used in the original code.  I added a Gaussian offset per channel per 
-frame based on this parameter.  Finally, I added an optional noise seed so one can 
-reproduce a calculation.
+frame based on this parameter.  Finally, I added an optional noise seed so one 
+can reproduce a calculation.
 
 26 May 2017   Kevin Volk
 
@@ -87,17 +106,20 @@ been changed and a couple of the defaults have been changed as well.
 
 """
 import os
+import math
 import warnings
-import datetime
-import logging
-
 from astropy.io import fits
 import numpy as np
 from scipy.ndimage.interpolation import zoom
 from astropy.stats.funcs import median_absolute_deviation as mad
+import datetime
+# import matplotlib.pyplot as plt # Handy for debugging
 
 
 warnings.filterwarnings('ignore')
+
+# Have not verified this in Python 3.x (JML)
+import logging
 _log = logging.getLogger('nghxrg')
 
 class HXRGNoise:
@@ -168,7 +190,7 @@ class HXRGNoise:
         wind_mode = wind_mode.upper()
         modes = ['FULL', 'STRIPE', 'WINDOW']
         if wind_mode not in modes:
-            _log.warn('%s not a valid window readout mode! Returning...' % inst_params['wind_mode'])
+            _log.warn('%s not a valid window readout mode! Returning...' % (wind_mode))
             os.sys.exit()
         if wind_mode == 'WINDOW':
             n_out = 1
@@ -178,13 +200,13 @@ class HXRGNoise:
             x0 = 0
 
         # Default clocking pattern is JWST NIRSpec
-        self.naxis1 = 2048 if naxis1 is None else naxis1
-        self.naxis2 = 2048 if naxis2 is None else naxis2
-        self.naxis3 = 1 if naxis3 is None else naxis3
-        self.n_out = 4 if n_out is None else n_out
-        self.dt = 1.e-5 if dt is None else dt
-        self.nroh = 12 if nroh is None else nroh
-        self.nfoh = 1 if nfoh is None else nfoh
+        self.naxis1    = 2048  if naxis1   is None else naxis1
+        self.naxis2    = 2048  if naxis2   is None else naxis2
+        self.naxis3    = 1     if naxis3   is None else naxis3
+        self.n_out     = 4     if n_out    is None else n_out
+        self.dt        = 1.e-5 if dt       is None else dt
+        self.nroh      = 12    if nroh     is None else nroh
+        self.nfoh      = 1     if nfoh     is None else nfoh
         self.reference_pixel_border_width = 4 if reference_pixel_border_width is None \
                                               else reference_pixel_border_width
                                               
@@ -201,9 +223,9 @@ class HXRGNoise:
         # Initialize PCA-zero file and make sure that it exists and is a file
         path=os.getenv('NIRISS_NOISE_HOME')
         if path is None:
-            path='.'
+                  path='.'
         self.pca0_file = path+'/niriss_pca0.fits' if \
-            pca0_file is None else pca0_file
+            pca0_file is None else path + '/' + pca0_file
         if os.path.isfile(self.pca0_file) is False:
             print('There was an error finding pca0_file! Check to be')
             print('sure that the NIRISS_NOISE_HOME shell environment')
@@ -285,7 +307,7 @@ class HXRGNoise:
         #self.pca0 -= np.median(self.pca0) # Zero offset
         #self.pca0 /= (1.4826*mad(self.pca0)) # Renormalize
 
-        data = hdu[0].data
+        data = hdu[0].data        
         # Make sure the real PCA image is correctly scaled to size of fake data (JML)
         # Depends if we're FULL, STRIPE, or WINDOW
         if wind_mode == 'FULL':
@@ -297,16 +319,16 @@ class HXRGNoise:
         if wind_mode == 'WINDOW':
             # Scale based on det_size
             scale1 = self.det_size / nx_pca0
-            scale2 = self.det_size / ny_pca0
+            scale2 = self.det_size // ny_pca0
             zoom_factor = np.max([scale1, scale2])
-        
+
         # Resize PCA0 data
         if zoom_factor != 1:
             data = zoom(data, zoom_factor, order=1, mode='wrap')
 
         data -= np.median(data) # Zero offset
         data /= (1.4826*mad(data)) # Renormalize
-
+    
         # Select region of pca0 associated with window position
         if self.wind_mode == 'WINDOW':
             x1 = self.x0; y1 = self.y0
@@ -325,7 +347,7 @@ class HXRGNoise:
                         (x1,x2,y1,y2,data.shape[0],data.shape[1]))
             os.sys.exit()
         self.pca0 = data[y1:y2,x1:x2]
-
+        
         # How many reference pixels on each border?
         w = self.reference_pixel_border_width # Easier to work with
         lower = w-y1; upper = w-(det_size-y2)
@@ -333,6 +355,7 @@ class HXRGNoise:
         ref_all = np.array([lower,upper,left,right])
         ref_all[ref_all<0] = 0
         self.ref_all = ref_all
+
 
     def message(self, message_text):
         """
@@ -342,7 +365,7 @@ class HXRGNoise:
             print('NG: ' + message_text + ' at DATETIME = ', \
                   datetime.datetime.now().time())
 
-    def white_noise(self, nstep=None):
+    def white_noise(self, mygen, nstep=None):
         """
         Generate white noise for an HxRG including all time steps
         (actual pixels and overheads).
@@ -350,18 +373,18 @@ class HXRGNoise:
         Parameters:
             nstep - Length of vector returned
         """
-        return(np.random.standard_normal(nstep))    
+        return(mygen.standard_normal(nstep))    
 
-    def pink_noise(self, mode):
+    def pink_noise(self, mygen, mode):
         """
         Generate a vector of non-periodic pink noise.
-
+  
         Parameters:
             mode - Selected from {'pink', 'acn'}
         """
 
         # Configure depending on mode setting
-        if mode is 'pink':
+        if mode == 'pink':
             nstep  = 2*self.nstep
             nstep2 = 2*self.nstep2 # JML
             f = self.f2
@@ -373,15 +396,15 @@ class HXRGNoise:
             p_filter = self.p_filter1
 
         # Generate seed noise
-        mynoise = self.white_noise(nstep2)
-
+        mynoise = self.white_noise(mygen, nstep2)
+  
         # Save the mean and standard deviation of the first
         # half. These are restored later. We do not subtract the mean
         # here. This happens when we multiply the FFT by the pinkening
         # filter which has no power at f=0.
         the_mean = np.mean(mynoise[:nstep2//2])
         the_std = np.std(mynoise[:nstep2//2])
-
+  
         # Apply the pinkening filter.
         thefft = np.fft.rfft(mynoise)
         thefft = np.multiply(thefft, p_filter)
@@ -391,19 +414,22 @@ class HXRGNoise:
         # Restore the mean and standard deviation
         result *= the_std / np.std(result)
         result = result - np.mean(result) + the_mean
-
+          
         # Done
         return(result)
 
-    def mknoise(self, rd_noise=None, pedestal=None, c_pink=None,
+
+
+    def mknoise(self, o_file, rd_noise=None, pedestal=None, c_pink=None,
                 u_pink=None, acn=None, pca0_amp=None,
                 reference_pixel_noise_ratio=None, ktc_noise=None,
-                bias_offset=None, bias_amp=None, dark_current=None, dc_seed=None, gain=None, noise_seed=None):
+                bias_offset=None, bias_amp=None, dark_current=None, dc_seed=None, gain=None, noise_seed=None, dark_name=None):
         """
-        Generate a FITS cube containing only noise.
+        Generate a FITS cube containing only noise and the optional dark signal.
 
         Parameters:
-                    pedestal - Magnitude of pedestal drift in electrons
+            o_file   - Output filename
+            pedestal - Magnitude of pedestal drift in electrons
             rd_noise - Standard deviation of read noise in electrons
             c_pink   - Standard deviation of correlated pink noise in electrons
             u_pink   - Standard deviation of uncorrelated pink noise in
@@ -425,11 +451,13 @@ class HXRGNoise:
             bias_amp    - A multiplicative factor that we multiply PCA-zero by
                           to simulate a bias pattern. This is completely
                           independent from adding in "picture frame" noise.
-                        dark_current  The dark current signal in electrons/frame
-                        dc_seed       A seed value for the Poission noise generation
-                        gain          An optional gain value in electrons/ADU
-                        noise_seed    An optional seed value for the noise generation, to alloow
-                                      a simulation to be repeated
+            dark_current  The dark current signal in electrons/frame (either a
+                          single value or an image of size 2048x2048)
+            dc_seed       A seed value for the Poission noise generation
+            gain          An optional gain value in electrons/ADU
+            noise_seed    An optional seed value for the noise generation, to alloow
+                          a simulation to be repeated
+            dark_name     An optional string for the name of the dark current file (information only)
 
         Note1:
         Because of the noise correlations, there is no simple way to
@@ -454,36 +482,53 @@ class HXRGNoise:
         #
         # ======================================================================
 
-        self.rd_noise = 5.0 if rd_noise is None else rd_noise
-        self.pedestal = 4 if pedestal is None else pedestal
-        self.c_pink = 3 if c_pink is None else c_pink
-        self.u_pink = 1 if u_pink is None else u_pink
-        self.acn = 0.5 if acn is None else acn
-        self.pca0_amp = 0.2 if pca0_amp is None else pca0_amp
-        self.dark_current = 0.0 if dark_current is None else dark_current
-        self.dc_seed = 0 if dc_seed is None else dc_seed
-        self.gain = 1 if gain is None else gain
-        self.noise_seed = 0 if noise_seed is None else noise_seed
+        self.rd_noise  = 5.0      if rd_noise     is None else rd_noise
+        self.pedestal  = 4        if pedestal     is None else pedestal
+        self.c_pink    = 3        if c_pink       is None else c_pink
+        self.u_pink    = 1        if u_pink       is None else u_pink
+        self.acn       = 0.5      if acn          is None else acn
+        self.pca0_amp  = 0.2      if pca0_amp     is None else pca0_amp
+        self.dark_current = 0.0      if dark_current     is None else dark_current
+        self.dc_seed = 0.0      if dc_seed     is None else dc_seed
+        self.gain = 1      if gain     is None else gain
+        self.noise_seed = 0      if noise_seed     is None else noise_seed
+        self.dark_name = 'None'      if dark_name     is None else dark_name
 
         if self.gain <= 0.:
             self.gain=1.
 
-        if self.dark_current <= 0.:
+        try:
+            print('checking the dark current shape')
+            self.dark_current_shape = self.dark_current.shape
+            inds = np.where(self.dark_current <= 0.0000001)
+            self.dark_current[inds] = 0.0000001
+        except:
+            print('Error setting the dark current image shape.')
+            self.dark_current_shape = None
+            print('Dark current value: ', self.dark_current)
+        if (self.dark_current_shape is None) and (self.dark_current <= 0.):
             self.dark_current=0.
 
         if self.dc_seed <= 0:
-            self.dc_seed=long(4294967280.*np.random.uniform())+long(10)
+            self.dc_seed=int(4294967280.*np.random.uniform())+10
+        if self.dc_seed == self.noise_seed:
+            self.dc_seed = int(math.sqrt(self.dc_seed))
 
+        rseed1 = np.random.SeedSequence(self.noise_seed)
+        mygen = np.random.default_rng(rseed1)
+        rseed2 = np.random.SeedSequence(self.dc_seed)
+        darkgen = np.random.default_rng(rseed2)
         # Change this only if you know that your detector is different from a
         # typical H2RG.
-        self.reference_pixel_noise_ratio = 0.8 if reference_pixel_noise_ratio is None else reference_pixel_noise_ratio
+        self.reference_pixel_noise_ratio = 0.8 if \
+            reference_pixel_noise_ratio is None else reference_pixel_noise_ratio
 
         # These are used only when generating cubes. They are
         # completely removed when the data are calibrated to
         # correlated double sampling or slope images. We include
         # them in here to make more realistic looking raw cubes.
         self.ktc_noise = 29.     if ktc_noise   is None else ktc_noise 
-        # The following are from the NIRISS pedestal, in electrons
+                # The following are from the NIRISS pedestal, in electrons
         self.bias_offset = 20994.06  if bias_offset is None else bias_offset
         self.bias_amp    = 5358.87  if bias_amp    is None else bias_amp
 
@@ -511,7 +556,7 @@ class HXRGNoise:
             # Add in some kTC noise. Since this should always come out
             # in calibration, we do not attempt to model it in detail.
             bias_pattern += self.ktc_noise * \
-                         np.random.standard_normal((self.naxis2, self.naxis1))
+                         mygen.standard_normal((self.naxis2, self.naxis1))
 
             # Ensure that there are no negative pixel values. Data cubes
             # are converted to unsigned integer before writing.
@@ -524,14 +569,6 @@ class HXRGNoise:
             for z in np.arange(self.naxis3):
                 result[z,:,:] += bias_pattern
 
-                # if the noise_seed is defined, set it ebfore doing the white 
-                # noise calculation
-                if self.noise_seed != 0:
-                  # The seed value must be positive (unsigned 32 bit integer)
-                  if self.noise_seed < 0:
-                    self.noise_seed= -self.noise_seed
-                  np.random.seed(self.noise_seed)
-
         # Make white read noise. This is the same for all pixels.
         if self.rd_noise > 0:
             self.message('Generating rd_noise')
@@ -543,24 +580,24 @@ class HXRGNoise:
                 # Noisy reference pixels for each side of detector
                 if w[0] > 0: # lower
                     here[:w[0],:] = r * self.rd_noise * \
-                                    np.random.standard_normal((w[0],self.naxis1))
+                                    mygen.standard_normal((w[0],self.naxis1))
                 if w[1] > 0: # upper
                     here[-w[1]:,:] = r * self.rd_noise * \
-                                    np.random.standard_normal((w[1],self.naxis1))
+                                    mygen.standard_normal((w[1],self.naxis1))
                 if w[2] > 0: # left
                     here[:,:w[2]] = r * self.rd_noise * \
-                                    np.random.standard_normal((self.naxis2,w[2]))
+                                    mygen.standard_normal((self.naxis2,w[2]))
                 if w[3] > 0: # right
                     here[:,-w[3]:] = r * self.rd_noise * \
-                                    np.random.standard_normal((self.naxis2,w[3]))
+                                    mygen.standard_normal((self.naxis2,w[3]))
                                     
                 # Noisy regular pixels
                 if np.sum(w) > 0: # Ref. pixels exist in frame
                     here[w[0]:self.naxis2-w[1],w[2]:self.naxis1-w[3]] = self.rd_noise * \
-                                      np.random.standard_normal(\
+                                      mygen.standard_normal(\
                                       (self.naxis2-w[0]-w[1],self.naxis1-w[2]-w[3]))
                 else: # No Ref. pixels, so add only regular pixels
-                    here = self.rd_noise * np.random.standard_normal((self.naxis2,self.naxis1))
+                    here = self.rd_noise * mygen.standard_normal((self.naxis2,self.naxis1))
                 
                 # Add the noise in to the result
                 result[z,:,:] += here
@@ -569,7 +606,7 @@ class HXRGNoise:
         # Add correlated pink noise.
         if self.c_pink > 0:
             self.message('Adding c_pink noise')
-            tt = self.c_pink * self.pink_noise('pink') # tt is a temp. variable
+            tt = self.c_pink * self.pink_noise(mygen, 'pink') # tt is a temp. variable
             tt = np.reshape(tt, (self.naxis3, self.naxis2+self.nfoh, \
                                  self.xsize+self.nroh))[:,:self.naxis2,:self.xsize]
             for op in np.arange(self.n_out):
@@ -594,7 +631,7 @@ class HXRGNoise:
             for op in np.arange(self.n_out):
                 x0 = op * self.xsize
                 x1 = x0 + self.xsize
-                tt = self.u_pink * self.pink_noise('pink')
+                tt = self.u_pink * self.pink_noise(mygen, 'pink')
                 tt = np.reshape(tt, (self.naxis3, self.naxis2+self.nfoh, \
                                  self.xsize+self.nroh))[:,:self.naxis2,:self.xsize]
                 result[:,:,x0:x1] += tt
@@ -609,8 +646,8 @@ class HXRGNoise:
                 # We give these the abstract names 'a' and 'b' so that we
                 # can use a previously worked out formula to turn them
                 # back into an image section.
-                a = self.acn * self.pink_noise('acn')
-                b = self.acn * self.pink_noise('acn')
+                a = self.acn * self.pink_noise(mygen, 'acn')
+                b = self.acn * self.pink_noise(mygen, 'acn')
 
                 # Pick out just the real pixels (i.e. ignore the gaps)
                 a = a[np.where(self.m_short == 1)]
@@ -632,7 +669,7 @@ class HXRGNoise:
         # Add PCA-zero. The PCA-zero template is modulated by 1/f.
         if self.pca0_amp > 0:
             self.message('Adding PCA-zero "picture frame" noise')
-            gamma = self.pink_noise(mode='pink')
+            gamma = self.pink_noise(mygen, mode='pink')
             zoom_factor = self.naxis2 * self.naxis3 / np.size(gamma)
             gamma = zoom(gamma, zoom_factor, order=1, mode='mirror')
             gamma = np.reshape(gamma, (self.naxis3,self.naxis2))
@@ -640,36 +677,49 @@ class HXRGNoise:
                 for y in np.arange(self.naxis2):
                     result[z,y,:] += self.pca0_amp*self.pca0[y,:]*gamma[z,y]
 
-                # add in channel offsets
-                if self.pedestal > 0.:
-                  self.message('Adding pedestal drift')
-                  offsets=np.random.standard_normal((self.n_out,self.naxis3))
-                  for z in range(self.naxis3):
-                    x0=0
-                    for n in range(self.n_out):
-                      result[z,:,x0:x0+self.xsize]=result[z,:,x0:x0+self.xsize]+self.pedestal*offsets[n,z]
-                      x0=x0+self.xsize
+        # add in channel offsets
+        if self.pedestal > 0.:
+            self.message('Adding pedestal drift')
+            offsets=mygen.standard_normal((self.n_out,self.naxis3))
+            for z in range(self.naxis3):
+                x0=0
+                for n in range(self.n_out):
+                    result[z,:,x0:x0+self.xsize]=result[z,:,x0:x0+self.xsize]+self.pedestal*offsets[n,z]
+                    x0=x0+self.xsize
 
-                if self.dark_current > 0.:
-                  self.message('Adding dark current')
-                  np.random.seed(self.dc_seed)
-                  dark=result*0.
-                  w=self.ref_all
-                  for ind in range(self.naxis3):
-                    frame=np.random.poisson(self.dark_current,(self.naxis2,self.naxis1))
-                    if w[0] > 0:
-                      frame[:w[0],:]=0.
-                    if w[1] > 0:
-                      frame[-w[1]:,:]=0.
-                    if w[2] > 0:
-                      frame[:,0:w[2]]=0.
-                    if w[3] > 0:
-                      frame[:,-w[3]:]=0.
-                    if ind == 0:
-                      dark[ind,:,:]=frame
-                    else:
-                      dark[ind,:,:]=dark[ind-1,:,:]+frame  
-                  result=result+dark                  
+        if (self.dark_current_shape is None) and (self.dark_current > 0.):
+          self.message('Adding dark current')
+          dark=result*0.
+          w=self.ref_all
+          for ind in range(self.naxis3):
+            frame=darkgen.poisson(self.dark_current, (self.naxis2, self.naxis1))
+            if w[0] > 0:
+              frame[:w[0],:]=0.
+            if w[1] > 0:
+              frame[-w[1]:,:]=0.
+            if w[2] > 0:
+              frame[:,0:w[2]]=0.
+            if w[3] > 0:
+              frame[:,-w[3]:]=0.
+            if ind == 0:
+              dark[ind,:,:]=frame
+            else:
+              dark[ind,:,:]=dark[ind-1,:,:]+frame  
+          result=result+dark
+
+        if self.dark_current_shape is not None:
+          self.message('Adding dark current from the image')
+          try:
+            for n1 in range(self.naxis1):
+              for n2 in range(self.naxis2):
+                values = darkgen.poisson(lam=self.dark_current[self.y0+n2, self.x0+n1], size=self.naxis3)
+                cvalues = np.cumsum(values)
+                result[:,n2,n1] = result[:,n2,n1] + cvalues
+          except:
+            print('Dark signal image error:')
+            print(self.dark_current_shape)
+            print(result.shape)
+            print(values.shape)
 
         # If the data cube has only 1 frame, reformat into a 2-dimensional
         # image.
@@ -678,8 +728,6 @@ class HXRGNoise:
             result = result[0,:,:]
 
         if self.gain != 1:
-                  result=result/self.gain
+            result=result/self.gain
 
-        self.message('Exiting mknoise()')
-        
         return result
