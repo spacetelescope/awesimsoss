@@ -5,102 +5,62 @@ from pkg_resources import resource_filename
 from astropy.io import fits
 
 try:
+    import crds
+except ImportError:
+    print("Could not import 'crds' package. Using default reference files which may not be the most up-to-date.")
+
+try:
     from jwst import datamodels as dm
 except ImportError:
     print("Could not import 'jwst' package. Functionality will be limited.")
 
-
 SUB_SLICE = {'SUBSTRIP96': slice(1792, 1888), 'SUBSTRIP256': slice(1792, 2048), 'FULL': slice(0, 2048)}
+SUB_DIMS = {'SUBSTRIP96': (96, 2048), 'SUBSTRIP256': (256, 2048), 'FULL': (2048, 2048)}
 
-
-def jwst_dark_ref(subarray):
+def get_references(subarray, filter='CLEAR'):
     """
-    Function to retrieve dark current reference file from installed jwst calibration pipeline
+    Get dictionary of the reference file locations for the given subarray
 
     Parameters
     ----------
     subarray: str
         The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
-
-    Returns
-    -------
-    np.ndarray
-        The sliced dark current reference file data
-    """
-    dark_file = resource_filename('awesimsoss', 'files/signaldms.fits')
-    dark_data = fits.getdata(dark_file)[SUB_SLICE[subarray], :]
-
-    return dark_data
-
-
-def jwst_nonlinearity_ref(subarray):
-    """
-    Function to retrieve nonlinearity reference file from installed jwst calibration pipeline
-
-    Parameters
-    ----------
-    subarray: str
-        The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
-
-    Returns
-    -------
-    np.ndarray
-        The sliced nonlinearity reference file data
-    """
-    nonlin_file = resource_filename('awesimsoss', 'files/forward_coefficients_dms.fits')
-    nonlin_data = fits.getdata(nonlin_file)[:, SUB_SLICE[subarray], :]
-
-    return nonlin_data
-
-
-def jwst_pca0_ref():
-    """
-    Function to get the location of the PCA0 file from installed jwst calibration pipeline
-    """
-    pca0_file = resource_filename('awesimsoss', 'files/niriss_pca0.fits')
-
-    return pca0_file
-
-
-def jwst_pedestal_ref(subarray):
-    """
-    Function to retrieve pedestal reference file from installed jwst calibration pipeline
-
-    Parameters
-    ----------
-    subarray: str
-        The subarray to use, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
-
-    Returns
-    -------
-    np.ndarray
-        The sliced pedestal reference file data
-    """
-    ped_file = resource_filename('awesimsoss', 'files/pedestaldms.fits')
-    ped_data = fits.getdata(ped_file)[SUB_SLICE[subarray], :]
-
-    return ped_data
-
-
-def jwst_photom_ref(filter):
-    """
-    Function to retrieve photom reference file from installed jwst calibration pipeline
-
-    Parameters
-    ----------
     filter: str
         The filter to use, ['CLEAR', 'F277W']
 
     Returns
     -------
-    np.ndarray
-        The absolute photometric scaling data
+    dict
+        The dictionary of reference files
     """
-    photom_file = resource_filename('awesimsoss', 'files/niriss_ref_photom.fits')
-    photom_dict = fits.getdata(photom_file)
-    photom_data = photom_dict[(photom_dict['pupil'] == 'GR700XD') & (photom_dict['filter'] == filter)]
+    # Accepted subarrays
+    subarrays = ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
+    if subarray not in subarrays:
+        raise ValueError("{} is not a supported subarray. Please use {}".format(subarray, subarrays))
 
-    return photom_data
+    # Accepted filters
+    filters = ['CLEAR', 'F277W']
+    if filter not in filters:
+        raise ValueError("{} is not a supported filter. Please use {}".format(filter, filters))
+
+    # F277W not yet supported. Just delete this line when F277W support is added to crds
+    filter = 'CLEAR'
+
+    params = {"INSTRUME": "NIRISS",
+              "READPATT": "NIS",
+              "EXP_TYPE": "NIS_SOSS",
+              "DETECTOR": "NIS",
+              "PUPIL": "GR700XD",
+              "DATE-OBS": "2020-07-28",
+              "TIME-OBS": "00:00:00",
+              "INSTRUMENT": "NIRISS",
+              "FILTER" : filter,
+              "SUBARRAY": subarray}
+
+    # Collect reference files for subarray+filter combination
+    refs = crds.getreferences(params)
+
+    return refs
 
 
 def jwst_photyield_ref(subarray):

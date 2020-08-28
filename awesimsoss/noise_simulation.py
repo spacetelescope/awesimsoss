@@ -29,7 +29,7 @@ value.
 
 2 June 2017   Kevin Volk
 
-  I have added in pedestal offsets; the self.pedestal variable in the code, 
+  I have added in pedestal offsets; the self.pedestal_drift variable in the code, 
 described as the "magnitude of the pedestal drift in electrons" does not appear 
 to be used in the original code.  I added a Gaussian offset per channel per 
 frame based on this parameter.  Finally, I added an optional noise seed so one 
@@ -105,21 +105,161 @@ been changed and a couple of the defaults have been changed as well.
 - Version 2.6
 
 """
+from copy import copy
 import datetime
 import math
 import os
+from pkg_resources import resource_filename
 import warnings
 
 from astropy.io import fits
 from astropy.stats.funcs import median_absolute_deviation as mad
+import astropy.table as at
+from hotsoss import utils
 import numpy as np
 from scipy.ndimage.interpolation import zoom
 
+from .jwst_utils import SUB_SLICE, SUB_DIMS
+
 warnings.filterwarnings('ignore')
 
-# Have not verified this in Python 3.x (JML)
-import logging
-_log = logging.getLogger('nghxrg')
+
+def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon_yield=False):
+    """
+    Add the science signal to the generated noise
+
+    Parameters
+    ----------
+    signals: sequence
+        The science frames
+    cube: sequence
+        The generated dark ramp
+    pyimage: sequence
+        The photon yield per order
+    frametime: float
+        The number of seconds per frame
+    gain: float
+        The detector gain
+    zodi: sequence
+        The zodiacal background image
+    zodi_scale: float
+        The scale factor for the zodi background
+    """
+    # Get the data dimensions
+    dims1 = cube.shape
+    dims2 = signals.shape
+    if dims1 != dims2:
+        raise ValueError(dims1, "not equal to", dims2)
+
+    # Make a new ramp
+    newcube = np.zeros_like(cube)
+
+    # The background is assumed to be in electrons/second/pixel, not ADU/s/pixel.
+    background = zodi * zodi_scale * frametime
+
+    # Iterate over each group
+    for n in range(dims1[0]):
+        framesignal = signals[n, :, :] * gain * frametime
+
+        # Add photon yield
+        if photon_yield:
+            newvalues = np.random.poisson(framesignal)
+            target = pyimage - 1.
+            for k in range(dims1[1]):
+                for l in range(dims1[2]):
+                    if target[k, l] > 0.:
+                        n = int(newvalues[k, l])
+                        values = np.random.poisson(target[k, l], size=n)
+                        newvalues[k, l] = newvalues[k, l] + np.sum(values)
+            newvalues = newvalues + np.random.poisson(background)
+
+        # Or don't
+        else:
+            vals = np.abs(framesignal * pyimage + background)
+            newvalues = np.random.poisson(vals)
+
+        # First ramp image
+        if n == 0:
+            newcube[n, :, :] = newvalues
+        else:
+            newcube[n, :, :] = newcube[n-1, :, :] + newvalues
+
+    newcube = cube + newcube / gain
+
+    return newcube
+
+
+def add_nonlinearity(cube, nonlinearity, offset=0):
+    """
+    Add nonlinearity to the ramp
+
+    Parameters
+    ----------
+    cube: sequence
+        The ramp with no non-linearity
+    nonlinearity: sequence
+        The non-linearity image to add to the ramp
+    offset: int
+        The non-linearity offset
+
+    Returns
+    -------
+    np.ndarray
+        The ramp with the added non-linearity
+    """
+    # Get the dimensions of the input data
+    dims1 = nonlinearity.shape
+    dims2 = cube.shape
+    if dims1 != dims2:
+        raise ValueError("{} != {}: Array shapes do not match.".format(dims1, dims2))
+
+    # Make a new array for the ramp + non-linearity
+    newcube = cube - offset
+    for k in range(dims2[0]):
+        frame = np.squeeze(np.copy(newcube[k, :, :]))
+        sum1 = frame * 0.
+        for n in range(dims1[0] - 1, -1, -1):
+            sum1 = sum1 + nonlinearity[n, :, :] * np.power(frame, n + 1)
+        sum1 = frame * (1. + sum1)
+        newcube[k, :, :] = sum1
+
+    newcube = newcube + offset
+
+    return newcube
+
+
+def add_pedestal(cube, pedestal, offset=500):
+    """
+    Add a pedestal to the ramp
+
+    Parameters
+    ----------
+    cube: sequence
+        The ramp with no pedestal
+    pedestal: sequence
+        The pedestal image to add to the ramp
+    offset: int
+        The pedestal offset
+
+    Returns
+    -------
+    np.ndarray
+        The ramp with the added pedestal
+    """
+    # Add the offset to the pedestal
+    ped1 = pedestal + (offset - 500.)
+
+    # Make a new array for the ramp + pedestal
+    dims = cube.shape
+    newcube = np.zeros_like(cube, dtype=np.float32)
+
+    # Iterate over each integration
+    for n in range(dims[0]):
+        newcube[n, :, :] = cube[n, :, :] + ped1
+    newcube = newcube.astype(np.uint32)
+
+    return newcube
+
 
 class HXRGNoise:
     """
@@ -133,20 +273,16 @@ class HXRGNoise:
     # These class variables are common to all HxRG detectors
     nghxrg_version = 2.6 # Sofware version
 
-    def __init__(self, naxis1=None, naxis2=None, naxis3=None, n_out=None, dt=None, nroh=None, nfoh=None, pca0_file=None, verbose=False, reverse_scan_direction=False, reference_pixel_border_width=None, wind_mode='FULL', x0=0, y0=0, det_size=None):
+    def __init__(self, subarray, ngrps, dt=1.e-5, nroh=12, nfoh=1, reverse_scan_direction=False, verbose=False):
         """
         Simulate Teledyne HxRG+SIDECAR ASIC system noise.
 
         Parameters
         ----------
-        naxis1: int
-            X-dimension of the FITS cube
-        naxis2: int
-            Y-dimension of the FITS cube
-        naxis3: int
-            Z-dimension of the FITS cube (number of up-the-ramp samples)
-        n_out: int
-            Number of detector outputs
+        subarray: str
+            The NIRISS subarray, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
+        ngrps: int
+            Number of groups per integration
         nfoh: int
             New frame overhead in rows. This allows for a short wait at the end of a frame before
             starting the next one.
@@ -155,120 +291,59 @@ class HXRGNoise:
             starting the next one.
         dt: float
             Pixel dwell time in seconds
-        pca0_file: str
-            Name of a FITS file that contains PCA-zero
         verbose: bool
             Enable this to provide status reporting
-        wind_mode: str
-            The wind mode, ['FULL', 'STRIPE', 'WINDOW']
-        x0: int
-            Pixel x-position of subarray mode
-        y0: int
-            Pixel y-position of subarray mode
-        det_size: int
-            Pixel dimension of full detector (square), used only for WINDOW mode
-        reference_pixel_border_width: int
-            Width of reference pixel border around image area
         reverse_scan_direction: bool
             Enable this to reverse the fast scanner eadout directions. This capability was added to support
             Teledyne's programmable fast scan readout directions. The default setting =False corresponds to
             what HxRG detectors default to upon power up.
         """
-        # ======================================================================
-        #
-        # DEFAULT CLOCKING PARAMETERS
-        #
-        # The following parameters define the default HxRG clocking pattern. The
-        # parameters that define the default noise model are defined in the
-        # mknoise() method.
-        #
-        # ======================================================================
+        # Save all arguments as attributes
+        self.__dict__.update({k: v for k, v in locals().items() if k != 'self'})
 
-        # Subarray Mode? (JML)
-        if wind_mode is None:
-            wind_mode = 'FULL'
-        if det_size is None:
-            det_size = 2048
-        wind_mode = wind_mode.upper()
-        modes = ['FULL', 'STRIPE', 'WINDOW']
-        if wind_mode not in modes:
-            _log.warn('%s not a valid window readout mode! Returning...' % (wind_mode))
-            os.sys.exit()
-        if wind_mode == 'WINDOW':
-            n_out = 1
-        if wind_mode == 'FULL':
-            x0, y0 = 0, 0
-        if wind_mode == 'STRIPE':
-            x0 = 0
+        # Subarray Mode
+        subarrays = ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
+        if subarray not in subarrays:
+            raise ValueError("{} not a valid subarray. Please use {}".format(subarray, subarrays))
 
-        # Default clocking pattern is JWST NIRSpec
-        self.naxis1 = 2048 if naxis1 is None else naxis1
-        self.naxis2 = 2048 if naxis2 is None else naxis2
-        self.naxis3 = 1 if naxis3 is None else naxis3
-        self.n_out = 4 if n_out is None else n_out
-        self.dt = 1.e-5 if dt is None else dt
-        self.nroh = 12 if nroh is None else nroh
-        self.nfoh = 1 if nfoh is None else nfoh
-        self.reference_pixel_border_width = 4 if reference_pixel_border_width is None else reference_pixel_border_width
-                                              
-        # Check that det_size is greater than self.naxis1 and self.naxis2 in WINDOW mode (JML)
-        if wind_mode == 'WINDOW':
-            if (self.naxis1 > det_size):
-                _log.warn('NAXIS1 %s greater than det_size %s! Returning...' % (self.naxis1,det_size))
-                os.sys.exit()
-            if (self.naxis2 > det_size):
-                _log.warn('NAXIS2 %s greater than det_size %s! Returning...' % (self.naxis1,det_size))
-                os.sys.exit()
-
-        # Initialize PCA-zero file and make sure that it exists and is a file
-        path = os.getenv('NIRISS_NOISE_HOME')
-        if path is None:
-            path = '.'
-        self.pca0_file = path + '/niriss_pca0.fits' if pca0_file is None else path + '/' + pca0_file
-        if os.path.isfile(self.pca0_file) is False:
-            print('There was an error finding pca0_file! Check to be')
-            print('sure that the NIRISS_NOISE_HOME shell environment')
-            print('variable is set correctly and that the')
-            print('$NIRISS_NOISE_HOME/ directory contains the desired PCA0')
-            print('file. The default is niriss_pca0.fits.')
-            os.sys.exit()
-
-        # Configure Subarray (JML)
-        self.wind_mode = wind_mode
-        self.det_size  = det_size
-        self.x0 = x0
-        self.y0 = y0
-
-        # Configure status reporting
-        self.verbose = verbose
-
-        # Configure readout direction
-        self.reverse_scan_direction = reverse_scan_direction
+        # Get subarray detector settings
+        self.sub_specs = utils.subarray_specs(subarray)
+        self.row_slice = SUB_SLICE[self.subarray]
+        self.nrows = self.sub_specs['y']
+        self.ncols = self.sub_specs['x']
+        self.ref_all = np.array([self.sub_specs[i] for i in ['y1', 'y2', 'x1', 'x2']])
+        self.x0 = 0
+        self.y0 = 0 if subarray == 'FULL' else 1792
+        self.x1 = 4
+        self.x2 = 2040
+        self.y1 = 4 if subarray == 'FULL' else 1792
+        self.y2 = self.y1 + self.nrows - self.sub_specs['y2']
+        self.n_out = 4 if subarray == 'FULL' else 1
 
         # Compute the number of pixels in the fast-scan direction per output
-        self.xsize = self.naxis1 // self.n_out
+        self.xsize = self.nrows // self.n_out
 
         # Compute the number of time steps per integration, per output
-        self.nstep = (self.xsize + self.nroh) * (self.naxis2 + self.nfoh) * self.naxis3
+        self.nstep = (self.xsize + self.nroh) * (self.ncols + self.nfoh) * self.ngrps
 
         # Pad nsteps to a power of 2, which is much faster (JML)
         self.nstep2 = int(2**np.ceil(np.log2(self.nstep)))
 
         # For adding in ACN, it is handy to have masks of the even
         # and odd pixels on one output neglecting any gaps
-        self.m_even = np.zeros((self.naxis3,self.naxis2,self.xsize))
+        self.m_even = np.zeros((self.ngrps, self.ncols, self.xsize))
         self.m_odd = np.zeros_like(self.m_even)
         for x in np.arange(0, self.xsize, 2):
-            self.m_even[:, :self.naxis2, x] = 1
-            self.m_odd[:, :self.naxis2, x + 1] = 1
+            self.m_even[:, :self.ncols, x] = 1
+            self.m_odd[:, :self.ncols, x + 1] = 1
         self.m_even = np.reshape(self.m_even, np.size(self.m_even))
         self.m_odd = np.reshape(self.m_odd, np.size(self.m_odd))
 
         # Also for adding in ACN, we need a mask that point to just
         # the real pixels in ordered vectors of just the even or odd
         # pixels
-        self.m_short = np.zeros((self.naxis3, self.naxis2 + self.nfoh, (self.xsize + self.nroh) // 2))
-        self.m_short[:, :self.naxis2, :self.xsize // 2] = 1
+        self.m_short = np.zeros((self.ngrps, self.ncols + self.nfoh, (self.xsize + self.nroh) // 2))
+        self.m_short[:, :self.ncols, :self.xsize // 2] = 1
         self.m_short = np.reshape(self.m_short, np.size(self.m_short))
 
         # Define frequency arrays
@@ -283,69 +358,86 @@ class HXRGNoise:
         self.p_filter1[0] = 0.
         self.p_filter2[0] = 0.
 
-        # Initialize pca0. This includes scaling to the correct size,
-        # zero offsetting, and renormalization. We use robust statistics
-        # because pca0 is real data
-        hdu = fits.open(self.pca0_file)
-        nx_pca0 = hdu[0].header['naxis1']
-        ny_pca0 = hdu[0].header['naxis2']
-        data = hdu[0].data
+        # Reset the calculations
+        self.reset()
 
-        # Make sure the real PCA image is correctly scaled to size of fake data (JML)
-        # Depends if we're FULL, STRIPE, or WINDOW
-        if wind_mode == 'FULL':
-            scale1 = self.naxis1 / nx_pca0
-            scale2 = self.naxis2 / ny_pca0
-            zoom_factor = np.max([scale1, scale2])
-        if wind_mode == 'STRIPE':
-            zoom_factor = self.naxis1 / nx_pca0
-        if wind_mode == 'WINDOW':
-            # Scale based on det_size
-            scale1 = self.det_size / nx_pca0
-            scale2 = self.det_size // ny_pca0
-            zoom_factor = np.max([scale1, scale2])
+    def reset(self):
+        """
+        Reset calculations
+        """
+        # Dictionary for tracking noise contributions
+        sources = ['dark_current', 'bias_pattern', 'read_noise', 'corr_pink_noise', 'uncorr_pink_noise',
+                   'alt_col_noise', 'pca0_noise', 'pedestal_drift']
+        self.noise_sources = {source: [] for source in sources}
+        self.nints = 0
 
-        # Resize PCA0 data
-        if zoom_factor != 1:
-            data = zoom(data, zoom_factor, order=1, mode='wrap')
+    def calculate_dark_current(self, dark_current, gain, floor=0.0000001):
+        """
+        Generate dark current image
 
-        data -= np.median(data) # Zero offset
-        data /= (1.4826 * mad(data)) # Renormalize
+        Parameters
+        ----------
+        dark_current: str, array_like
+            The dark current data or reference file to use
+        gain: float
+            The gain in electrons/ADU
+        floor: float
+            The minimum dark current value for a pixel
+        """
+        # Read in the dark current data
+        if isinstance(dark_current, str):
+            dark_current = fits.getdata(dark_current)
 
-        # Select region of pca0 associated with window position
-        if self.wind_mode == 'WINDOW':
-            x1, y1 = self.x0, self.y0
-        elif self.wind_mode == 'STRIPE':
-            x1, y1 = 0, self.y0
-        else:
-            x1, y1 = 0, 0
+        # Take median dark current image and multiply by the gain
+        dark_current = np.median(dark_current, axis=0) * gain
 
-        # print(y1, self.naxis2) This appears to be a stub
-        x2 = x1 + self.naxis1
-        y2 = y1 + self.naxis2
-        # Make sure x2 and y2 are valid
-        if (x2 > data.shape[0] or y2 > data.shape[1]):
-            _log.warn('Specified window size does not fit within detector array!')
-            _log.warn('X indices: [%s,%s]; Y indices: [%s,%s]; XY Size: [%s, %s]' % 
-                        (x1, x2, y1, y2, data.shape[0], data.shape[1]))
-            os.sys.exit()
-        self.pca0 = data[y1:y2, x1:x2]
+        # Set dark current floor
+        dark_current[np.where(dark_current <= floor)] = floor
 
-        # Set number of reference pixels on each border
-        w = self.reference_pixel_border_width
-        lower = w - y1
-        upper = w - (det_size - y2)
-        left = w - x1;
-        right = w - (det_size - x2)
-        ref_all = np.array([lower, upper, left, right])
-        ref_all[ref_all < 0] = 0
-        self.ref_all = ref_all
+        # Save at attribute
+        self.dark_current = dark_current
+
+    def calculate_pca0(self, superbias):
+        """
+        Generate pca0 image from the superbias reference file
+
+        One needs to take the superbias reference file, find the mean and standard deviation values,
+        subtract the mean value, divide by the standard deviation value, and then transform to the
+        raw detector orientation.
+
+        Parameters
+        ----------
+        superbias: str, array_like
+            The superbias data or reference file to use
+        """
+        # Read in the superbias data
+        if isinstance(superbias, str):
+            superbias = fits.getdata(superbias_file)
+
+        # Get the mean and standard deviation
+        superbias_mean = np.mean(superbias)
+        superbias_std = np.std(superbias)
+
+        # Normalize the superbias
+        superbias_norm = (superbias - superbias_mean) / superbias_std
+
+        # Transpose to detector orientation
+        superbias_T = superbias_norm.T
+
+        # Set pca0 array
+        self.pca0 = superbias_T[:, self.row_slice]
+        self.pca0_amp = np.std(self.pca0)
 
     def message(self, message_text):
         """
         Used for status reporting
+
+        Parameters
+        ----------
+        message_text: str
+            The message to print
         """
-        if self.verbose is True:
+        if self.verbose:
             print('NG: ' + message_text + ' at DATETIME = ', datetime.datetime.now().time())
 
     def white_noise(self, mygen, nstep=None):
@@ -407,7 +499,7 @@ class HXRGNoise:
 
         return(result)
 
-    def mknoise(self, rd_noise=5.0, pedestal=4, c_pink=3, u_pink=1, acn=0.5, pca0_amp=0.2, gain=1., reference_pixel_noise_ratio=0.8, ktc_noise=29., bias_offset=20994.06, bias_amp=5358.87, dark_current=0.0, dc_seed=0.0, noise_seed=0, dark_name='None'):
+    def mknoise(self, rd_noise=5.0, pedestal_drift=4, c_pink=3, u_pink=1, acn=0.5, gain=1., superbias=None, reference_pixel_noise_ratio=0.8, ktc_noise=29., bias_offset=20994.06, bias_amp=5358.87, dark_current=None, dc_seed=0, noise_seed=0):
         """
         Generate a FITS cube containing only noise and the optional dark signal.
 
@@ -425,7 +517,7 @@ class HXRGNoise:
 
         Parameters
         ----------
-        pedestal:float
+        pedestal_drift:float
             Magnitude of pedestal drift in electrons
         rd_noise: float
             Standard deviation of read noise in electrons
@@ -434,9 +526,7 @@ class HXRGNoise:
         u_pink: float
             Standard deviation of uncorrelated pink noise in electrons
         acn: float
-            Standard deviation of alterating column noise in electrons
-        pca0:float
-            Standard deviation of pca0 in electrons
+            Standard deviation of alternating column noise in electrons
         reference_pixel_noise_ratio: float
             Ratio of the standard deviation of the reference pixels to the regular pixels.
             Reference pixels are usually a little lower noise.
@@ -457,8 +547,6 @@ class HXRGNoise:
             Gain value in electrons/ADU
         noise_seed: float
             Seed value for the noise generation, to allow a simulation to be repeated
-        dark_name: str (optional)
-            An string for the name of the dark current file (information only)
 
         Returns
         -------
@@ -469,34 +557,23 @@ class HXRGNoise:
 
         # Set noise parameters
         self.rd_noise = rd_noise
-        self.pedestal = pedestal
+        self.pedestal_drift = pedestal_drift
         self.c_pink = c_pink
         self.u_pink = u_pink
         self.acn = acn
-        self.pca0_amp = pca0_amp
-        self.dark_current = dark_current
         self.dc_seed = dc_seed if dc_seed > 0. else int(4294967280. * np.random.uniform()) + 10
         self.gain = max(gain, 1.)
         self.noise_seed = noise_seed
-        self.dark_name = dark_name
         self.bias_offset = bias_offset
         self.bias_amp = bias_amp
         self.reference_pixel_noise_ratio = reference_pixel_noise_ratio
         self.ktc_noise = ktc_noise
 
-        try:
-            print('checking the dark current shape')
-            self.dark_current_shape = self.dark_current.shape
-            inds = np.where(self.dark_current <= 0.0000001)
-            self.dark_current[inds] = 0.0000001
+        # Generate pca0
+        self.calculate_pca0(superbias)
 
-        except:
-            print('Error setting the dark current image shape.')
-            self.dark_current_shape = None
-            print('Dark current value: ', self.dark_current)
-
-        if (self.dark_current_shape is None) and (self.dark_current <= 0.):
-            self.dark_current = 0.
+        # Generate dark current
+        self.calculate_dark_current(dark_current, self.gain)
 
         if self.dc_seed == self.noise_seed:
             self.dc_seed = int(math.sqrt(self.dc_seed))
@@ -509,53 +586,63 @@ class HXRGNoise:
 
         # Initialize the result cube
         self.message('Initializing results cube')
-        result = np.zeros((self.naxis3, self.naxis2, self.naxis1), dtype=np.float32)
+        result = np.zeros((self.ngrps, self.ncols, self.nrows), dtype=np.float32)
 
-        if self.naxis3 > 1:
+        if self.ngrps > 1:
 
             # Always inject bias pattern. Works for WINDOW and STRIPE (JML)
             bias_pattern = self.pca0 * self.bias_amp + self.bias_offset
 
             # Add in some kTC noise. Since this should always come out
             # in calibration, we do not attempt to model it in detail.
-            bias_pattern += self.ktc_noise * mygen.standard_normal((self.naxis2, self.naxis1))
+            bias_pattern += self.ktc_noise * mygen.standard_normal((self.ncols, self.nrows))
 
             # Add in the bias pattern
-            for z in np.arange(self.naxis3):
+            for z in np.arange(self.ngrps):
                 result[z, :, :] += bias_pattern
+
+            # Save it
+            self.noise_sources['bias_pattern'].append(list(np.nanmean(result - bias_pattern, axis=(1, 2))))
+            del bias_pattern
 
         # Make white read noise. This is the same for all pixels.
         if self.rd_noise > 0:
             self.message('Generating rd_noise')
+            pre_rdnoise = copy(result)
             w = self.ref_all
             r = self.reference_pixel_noise_ratio
-            for z in np.arange(self.naxis3):
-                here = np.zeros((self.naxis2, self.naxis1))
+            for z in np.arange(self.ngrps):
+                read_noise = np.zeros((self.ncols, self.nrows))
 
                 # Noisy reference pixels for each side of detector
                 if w[0] > 0: # lower
-                    here[:w[0], :] = r * self.rd_noise *  mygen.standard_normal((w[0], self.naxis1))
+                    read_noise[:w[0], :] = r * self.rd_noise *  mygen.standard_normal((w[0], self.nrows))
                 if w[1] > 0: # upper
-                    here[-w[1]:, :] = r * self.rd_noise *  mygen.standard_normal((w[1], self.naxis1))
+                    read_noise[-w[1]:, :] = r * self.rd_noise *  mygen.standard_normal((w[1], self.nrows))
                 if w[2] > 0: # left
-                    here[:, :w[2]] = r * self.rd_noise *  mygen.standard_normal((self.naxis2, w[2]))
+                    read_noise[:, :w[2]] = r * self.rd_noise *  mygen.standard_normal((self.ncols, w[2]))
                 if w[3] > 0: # right
-                    here[:, -w[3]:] = r * self.rd_noise * mygen.standard_normal((self.naxis2, w[3]))
+                    read_noise[:, -w[3]:] = r * self.rd_noise * mygen.standard_normal((self.ncols, w[3]))
 
                 # Noisy regular pixels
                 if np.sum(w) > 0: # Ref. pixels exist in frame
-                    here[w[0]:self.naxis2-w[1],w[2]:self.naxis1-w[3]] = self.rd_noise * mygen.standard_normal((self.naxis2 - w[0] - w[1], self.naxis1 - w[2] - w[3]))
+                    read_noise[w[0]:self.ncols-w[1],w[2]:self.nrows-w[3]] = self.rd_noise * mygen.standard_normal((self.ncols - w[0] - w[1], self.nrows - w[2] - w[3]))
                 else: # No Ref. pixels, so add only regular pixels
-                    here = self.rd_noise * mygen.standard_normal((self.naxis2, self.naxis1))
+                    read_noise = self.rd_noise * mygen.standard_normal((self.ncols, self.nrows))
 
                 # Add the noise in to the result
-                result[z, :, :] += here
+                result[z, :, :] += read_noise
+
+            # Save it
+            self.noise_sources['read_noise'].append(list(np.nanmean(result - pre_rdnoise, axis=(1, 2))))
+            del read_noise, pre_rdnoise
 
         # Add correlated pink noise.
         if self.c_pink > 0:
             self.message('Adding c_pink noise')
-            tt = self.c_pink * self.pink_noise(mygen, 'pink') # tt is a temp. variable
-            tt = np.reshape(tt, (self.naxis3, self.naxis2 + self.nfoh, self.xsize + self.nroh))[:, :self.naxis2, :self.xsize]
+            pre_cpink = copy(result)
+            corr_pink = self.c_pink * self.pink_noise(mygen, 'pink')
+            corr_pink = np.reshape(corr_pink, (self.ngrps, self.ncols + self.nfoh, self.xsize + self.nroh))[:, :self.ncols, :self.xsize]
             for op in np.arange(self.n_out):
                 x0 = op * self.xsize
                 x1 = x0 + self.xsize
@@ -565,24 +652,34 @@ class HXRGNoise:
                 # Would be nice to include option for all --> or all <--
                 modnum = 1 if self.reverse_scan_direction else 0
                 if np.mod(op,2) == modnum:
-                    result[:, :, x0:x1] += tt
+                    result[:, :, x0:x1] += corr_pink
                 else:
-                    result[:, :, x0:x1] += tt[:, :, ::-1]
+                    result[:, :, x0:x1] += corr_pink[:, :, ::-1]
+
+            # Save it
+            self.noise_sources['corr_pink_noise'].append(list(np.nanmean(result - pre_cpink, axis=(1, 2))))
+            del corr_pink, pre_cpink
 
         # Add uncorrelated pink noise. Because this pink noise is stationary and
         # different for each output, we don't need to flip it.
         if self.u_pink > 0:
             self.message('Adding u_pink noise')
+            pre_upink = copy(result)
             for op in np.arange(self.n_out):
                 x0 = op * self.xsize
                 x1 = x0 + self.xsize
-                tt = self.u_pink * self.pink_noise(mygen, 'pink')
-                tt = np.reshape(tt, (self.naxis3, self.naxis2 + self.nfoh, self.xsize + self.nroh))[:, :self.naxis2, :self.xsize]
-                result[:, :, x0:x1] += tt
+                uncorr_pink = self.u_pink * self.pink_noise(mygen, 'pink')
+                uncorr_pink = np.reshape(uncorr_pink, (self.ngrps, self.ncols + self.nfoh, self.xsize + self.nroh))[:, :self.ncols, :self.xsize]
+                result[:, :, x0:x1] += uncorr_pink
+
+            # Save it
+            self.noise_sources['uncorr_pink_noise'].append(list(np.nanmean(result - pre_upink, axis=(1, 2))))
+            del pre_upink
 
         # Add ACN
         if self.acn > 0:
             self.message('Adding acn noise')
+            pre_acn = copy(result)
             for op in np.arange(self.n_out):
 
                 # Generate new pink noise for each even and odd vector.
@@ -598,7 +695,7 @@ class HXRGNoise:
 
                 # Reformat into an image section. This uses the formula
                 # mentioned above.
-                acn_cube = np.reshape(np.transpose(np.vstack((a,b))), (self.naxis3,self.naxis2,self.xsize))
+                acn_cube = np.reshape(np.transpose(np.vstack((a,b))), (self.ngrps,self.ncols,self.xsize))
 
                 # Add in the ACN. Because pink noise is stationary, we can
                 # ignore the readout directions. There is no need to flip
@@ -607,67 +704,118 @@ class HXRGNoise:
                 x1 = x0 + self.xsize
                 result[:, :, x0:x1] += acn_cube
 
+            # Save it
+            self.noise_sources['alt_col_noise'].append(list(np.nanmean(result - pre_acn, axis=(1, 2))))
+            del acn_cube, pre_acn
+
         # Add PCA-zero. The PCA-zero template is modulated by 1/f.
         if self.pca0_amp > 0:
             self.message('Adding PCA-zero "picture frame" noise')
             gamma = self.pink_noise(mygen, mode='pink')
-            zoom_factor = self.naxis2 * self.naxis3 / np.size(gamma)
+            zoom_factor = self.ncols * self.ngrps / np.size(gamma)
             gamma = zoom(gamma, zoom_factor, order=1, mode='mirror')
-            gamma = np.reshape(gamma, (self.naxis3, self.naxis2))
-            for z in np.arange(self.naxis3):
-                for y in np.arange(self.naxis2):
+            gamma = np.reshape(gamma, (self.ngrps, self.ncols))
+            pre_pca0 = copy(result)
+            for z in np.arange(self.ngrps):
+                for y in np.arange(self.ncols):
                     result[z, y, :] += self.pca0_amp * self.pca0[y, :] * gamma[z, y]
 
-        # add in channel offsets
-        if self.pedestal > 0.:
+            # Save it
+            self.noise_sources['pca0_noise'].append(list(np.nanmean(result - pre_pca0, axis=(1, 2))))
+            del pre_pca0
+
+        # Add in channel offsets
+        if self.pedestal_drift > 0.:
             self.message('Adding pedestal drift')
-            offsets = mygen.standard_normal((self.n_out, self.naxis3))
-            for z in range(self.naxis3):
+            offsets = mygen.standard_normal((self.n_out, self.ngrps))
+            pre_drift = copy(result)
+            for z in range(self.ngrps):
                 x0 = 0
                 for n in range(self.n_out):
-                    result[z, :, x0:x0 + self.xsize] = result[z, :, x0:x0 + self.xsize] + self.pedestal * offsets[n, z]
+                    result[z, :, x0:x0 + self.xsize] = result[z, :, x0:x0 + self.xsize] + self.pedestal_drift * offsets[n, z]
                     x0 = x0 + self.xsize
 
-        if (self.dark_current_shape is None) and (self.dark_current > 0.):
-          self.message('Adding dark current')
-          dark = result * 0.
-          w = self.ref_all
-          for ind in range(self.naxis3):
-            frame = darkgen.poisson(self.dark_current, (self.naxis2, self.naxis1))
-            if w[0] > 0:
-              frame[:w[0], :] = 0.
-            if w[1] > 0:
-              frame[-w[1]:, :] = 0.
-            if w[2] > 0:
-              frame[:, 0:w[2]] = 0.
-            if w[3] > 0:
-              frame[:, -w[3]:] = 0.
-            if ind == 0:
-              dark[ind, :, :]=frame
-            else:
-              dark[ind, :, :] = dark[ind-1, :, :] + frame
-          result = result + dark
+            # Save it
+            self.noise_sources['pedestal_drift'].append(list(np.nanmean(result - pre_drift, axis=(1, 2))))
+            del pre_drift
 
-        if self.dark_current_shape is not None:
-          self.message('Adding dark current from the image')
-          try:
-            for n1 in range(self.naxis1):
-              for n2 in range(self.naxis2):
-                values = darkgen.poisson(lam=self.dark_current[self.y0 + n2, self.x0 + n1], size=self.naxis3)
-                cvalues = np.cumsum(values)
-                result[:, n2, n1] = result[:, n2, n1] + cvalues
-          except:
-            print('Dark signal image error:')
-            print(self.dark_current_shape)
-            print(result.shape)
-            print(values.shape)
+        # Add in dark current
+        if self.dark_current is not None:
+            self.message('Adding dark current')
+            dark = np.zeros_like(result)
+            w = self.ref_all
+            pre_dark = copy(result)
+            for ind in range(self.ngrps):
+                frame = darkgen.poisson(self.dark_current, (self.nrows, self.ncols))
+                if w[0] > 0:
+                    frame[:w[0], :] = 0.
+                if w[1] > 0:
+                    frame[-w[1]:, :] = 0.
+                if w[2] > 0:
+                    frame[:, 0:w[2]] = 0.
+                if w[3] > 0:
+                    frame[:, -w[3]:] = 0.
+                if ind == 0:
+                    dark[ind, :, :] = frame.T
+                else:
+                    dark[ind, :, :] = dark[ind-1, :, :] + frame.T
+                result = result + dark
+
+            for n1 in range(self.nrows):
+                for n2 in range(self.ncols):
+                    values = darkgen.poisson(lam=self.dark_current[n1, n2], size=self.ngrps)
+                    cvalues = np.cumsum(values)
+                    result[:, n2, n1] = result[:, n2, n1] + cvalues
+
+            # Save it
+            self.noise_sources['dark_current'].append(list(np.nanmean(result - pre_dark, axis=(1, 2))))
+            del pre_dark
 
         # If the data cube has only 1 frame, reformat into a 2-dimensional image
-        if self.naxis3 == 1:
+        if self.ngrps == 1:
             self.message('Reformatting cube into image')
             result = result[0, :, :]
 
         if self.gain != 1:
             result = result / self.gain
 
+        # Transpose to (frame, nrows, ncols)
+        result = np.transpose(result, (0, 2, 1))
+
+        self.nints += 1
+
         return result
+
+
+def make_photon_yield(photon_yield, orders):
+    """
+    Generates a map of the photon yield for each order.
+    The shape of both arrays should be [order, nrows, ncols]
+
+    Parameters
+    ----------
+    photon_yield: array-like
+        An array for the calculated photon yield at each pixel
+    orders: sequence
+        An array of the median image of each order
+
+    Returns
+    -------
+    np.ndarray
+        The array containing the photon yield map for each order
+    """
+    # Get the shape and create empty arrays
+    dims = orders.shape
+    sum1 = np.zeros((dims[1], dims[2]), dtype=np.float32)
+    sum2 = np.zeros((dims[1], dims[2]), dtype=np.float32)
+
+    # Add the photon yield for each order
+    for n in range(dims[0]):
+        sum1 = sum1 + photon_yield[n, :, :] * orders[n, :, :]
+        sum2 = sum2 + orders[n, :, :]
+
+    # Take the ratio of the photon yield to the signal
+    pyimage = sum1 / sum2
+    pyimage[np.where(sum2 == 0.)] = 1.
+
+    return pyimage

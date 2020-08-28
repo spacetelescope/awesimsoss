@@ -28,12 +28,14 @@ from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 import batman
 from bokeh.plotting import figure, show
+import bokeh.palettes as pal
 from bokeh.layouts import column
+from bokeh.models import Legend
 from contextlib import closing
 from hotsoss import utils, plotting, locate_trace
 import urllib.request as request
 
-from . import generate_darks as gd
+from . import noise_simulation as ns
 from . import jwst_utils as ju
 from . import make_trace as mt
 
@@ -130,7 +132,6 @@ class TSO(object):
         self.title = title or '{} Simulation'.format(self.target)
 
         # Set static values
-        self.gain = 1.61
         self._star = None
 
         # Set instance attributes for the exposure
@@ -145,6 +146,9 @@ class TSO(object):
         self.snr = snr
         self.model_grid = 'ACES'
         self.subarray = subarray
+
+        # Get correct reference files
+        self.refs = ju.get_references(self.subarray, self.filter)
 
         # Set instance attributes for the target
         self.lines = at.Table(names=('name', 'profile', 'x_0', 'amp', 'fwhm', 'flux'), dtype=('S20', 'S20', float, float, 'O', 'O'))
@@ -205,22 +209,39 @@ class TSO(object):
         # Add the line to the line list
         self.lines.add_row([name, profile, x_0, amplitude, fwhm, line])
 
-        # Reset the psfs
-        self._reset_psfs()
-
     @run_required
-    def add_noise(self, zodi_scale=1., offset=500):
+    def add_noise(self, c_pink=9.6, u_pink=3.2, bias_amp=5358.87, bias_offset=20944.06, acn=2.0, pca0_amp=0., rd_noise=12.95, pedestal_drift=18.3, gain=1.612, dc_seed=914075, noise_seed=2879328, zodi_scale=1.):
         """
         Generate ramp and background noise
 
         Parameters
         ----------
+        c_pink: float
+            Standard deviation of correlated pink noise in electrons
+        u_pink: float
+            Standard deviation of uncorrelated pink noise in electrons
+        bias_amp: float
+            The PCA-zero multiplicative factor that simulates a bias pattern
+        bias_offset: float
+            Bias offset in electrons, so that all pixels are in range
+        acn: float
+            Standard deviation of alterating column noise in electrons
+        pca0_amp: float
+            Standard deviation of pca0 in electrons
+        rd_noise: float
+            Standard deviation of read noise in electrons
+        pedestal_drift: float
+            Magnitude of pedestal drift in electrons
+        gain: float
+            Gain value in electrons/ADU
+        dc_seed: int
+            Seed value for the Poission noise generation
+        noise_seed: int
+            Seed value for the noise generation
         zodi_scale: float
             The scale factor of the zodiacal background
-        offset: int
-            The dark current offset
         """
-        print('Adding noise to TSO...')
+        self.message('Adding noise to TSO...')
         start = time.time()
 
         # Get the separated orders
@@ -230,46 +251,68 @@ class TSO(object):
         orders = np.array([order.reshape(self.dims3) for order in orders])
         tso_ideal = np.sum(orders, axis=0).reshape(self.dims3)
 
-        # Load the FULL frame reference files and trim
-        pca0_file = ju.jwst_pca0_ref()
-        nonlinearity = ju.jwst_nonlinearity_ref(self.subarray)
-        pedestal = ju.jwst_pedestal_ref(self.subarray)
+        # Fetch reference file data
+        linearity = fits.getdata(self.refs['linearity'])[:self.ngrps, self.row_slice, :]
+        superbias = fits.getdata(self.refs['superbias'])
+        dark_current = fits.getdata(self.refs['dark'])
+
+        # Other quantities
         photon_yield = ju.jwst_photyield_ref(self.subarray)
         zodi = ju.jwst_zodi_ref(self.subarray)
-        darksignal = ju.jwst_dark_ref(self.subarray) * self.gain
+
+        # Set gain from reference file if not provided
+        if gain is None:
+            gain = np.mean(fits.getdata(self.refs['gain'])[self.row_slice, :])
 
         # Generate the photon yield factor values
-        pyf = gd.make_photon_yield(photon_yield, np.mean(orders, axis=1))
+        pyf = ns.make_photon_yield(photon_yield, np.mean(orders, axis=1))
 
-        # Remove negatives from the dark ramp
-        darksignal[np.where(darksignal < 0.)] = 0.
+        # Noise parameters
+        noise_params = {'c_pink': c_pink, 'u_pink': u_pink, 'bias_amp': bias_amp, 'bias_offset': bias_offset,
+                        'acn': acn, 'rd_noise': rd_noise, 'pedestal_drift': pedestal_drift, 'gain': gain,
+                        'superbias': superbias, 'dark_current': dark_current}
 
-        # Make the exposure
-        RAMP = gd.make_exposure(1, self.ngrps, darksignal, self.gain, pca0_file=pca0_file, offset=offset)
+        # Generate noise model
+        self.noise_model = ns.HXRGNoise(subarray=self.subarray, ngrps=self.ngrps, verbose=self.verbose)
 
         # Iterate over integrations
         tso = copy(tso_ideal)
+        nonlin = []
         for n in range(self.nints):
 
+            # Plant seeds
+            dc_seed_int = dc_seed + 7 * n
+            noise_seed_int = noise_seed + 24 * n
+
+            # Make the ramp with dark current
+            self.message("Generating noise for integration {}/{}".format(n + 1, self.nints))
+            ramp = self.noise_model.mknoise(dc_seed=dc_seed_int, noise_seed=noise_seed_int, **noise_params)
+
             # Add in the SOSS signal
-            ramp = gd.add_signal(tso_ideal[self.ngrps * n:self.ngrps * n + self.ngrps], RAMP.copy(), pyf, self.frame_time, self.gain, zodi, zodi_scale, photon_yield=False)
+            signal = copy(tso_ideal[self.ngrps * n:self.ngrps * (n + 1)])
+            ramp = ns.add_signal(signal, ramp, pyf, self.frame_time, gain, zodi, zodi_scale, photon_yield=False)
 
             # Apply the non-linearity function
-            ramp = gd.non_linearity(ramp, nonlinearity, offset=offset)
-
-            # Add the pedestal to each frame in the integration
-            ramp = gd.add_pedestal(ramp, pedestal, offset=offset)
+            pre_nonlin = copy(ramp)
+            ramp = ns.add_nonlinearity(ramp, linearity)
+            nonlin.append(list(np.nanmean(ramp - pre_nonlin, axis=(1, 2))))
+            del pre_nonlin
 
             # Update the TSO with one containing noise
-            tso[self.ngrps * n:self.ngrps * n + self.ngrps] = ramp
+            tso[self.ngrps * n:self.ngrps * (n + 1)] = ramp
+
+            del ramp, signal
+
+        # Add nonlinearity to noise model
+        self.noise_model.noise_sources['nonlinearity'] = nonlin
 
         # Put into 4D
         self.tso = tso.reshape(self.dims)
 
         # Memory cleanup
-        del RAMP, tso, tso_ideal, ramp, pyf, photon_yield, darksignal, zodi, nonlinearity, pedestal, orders
+        del tso, tso_ideal, pyf, photon_yield, dark_current, zodi, linearity, superbias, orders, gain
 
-        print('Noise model finished:', round(time.time() - start, 3), 's')
+        self.message('Noise model finished: {} {}'.format(round(time.time() - start, 3), 's'))
 
     @run_required
     def add_refpix(self, counts=0):
@@ -401,14 +444,8 @@ class TSO(object):
         if filt == 'F277W':
             self.orders = [1]
 
-        # Get absolute calibration reference file for current filter
-        self.photom = ju.jwst_photom_ref(filt)
-
         # Update the results
         self._reset_data()
-
-        # Reset relative response function
-        self._reset_psfs()
 
     @property
     def info(self):
@@ -417,6 +454,18 @@ class TSO(object):
         track = ['_ncols', '_nrows', '_nints', '_ngrps', '_nresets', '_subarray', '_filter', '_obs_date', '_orders', 'ld_profile', '_target', 'title', 'ra', 'dec']
         settings = {key.strip('_'): val for key, val in self.__dict__.items() if key in track}
         return settings
+
+    def message(self, message_text):
+        """
+        Print message
+
+        Parameters
+        ----------
+        message_text: str
+            The message to print
+        """
+        if self.verbose:
+            print(message_text)
 
     @property
     def ncols(self):
@@ -478,6 +527,51 @@ class TSO(object):
         # Update the results
         self._reset_data()
         self._reset_time()
+
+    def noise_report(self, plot=True, exclude=[]):
+        """
+        Table and plot of contributions from different noise sources
+
+        Parameters
+        ----------
+        plot: bool
+            Plot a figure of the noise contributions
+        exclude: list
+            A list of the sources to exclude from the plot
+        """
+        # Make empty table of inventory
+        inv = at.Table()
+        inv['nint'] = [int(i) for j in (np.ones((self.ngrps, self.nints)) * np.arange(1, self.nints + 1)).T for i in j]
+        inv['ngrp'] = [int(i) for j in np.ones((self.nints, self.ngrps)) * np.arange(1, self.ngrps + 1) for i in j]
+
+        # Add signal
+        self.noise_model.noise_sources['signal'] = list(np.nanmean(self.tso_ideal, axis=(2, 3)))
+
+        # Add the data
+        cols = []
+        for col, data in self.noise_model.noise_sources.items():
+            inv[col] = [i for j in data for i in j]
+            cols.append(col)
+
+        # Print the table
+        inv.pprint()
+
+        # Plot it
+        if plot:
+            fig = figure(x_axis_label='Group', y_axis_label='Electrons/ADU', width=1000, height=500)
+            palette = pal.viridis(len(inv.colnames) - 2)
+            legend_list = []
+            for n, col in enumerate(cols):
+                if col not in exclude:
+                    x = np.arange(self.ngrps * self.nints) + 1
+                    fig.line(x, inv[col], color=palette[n], line_width=2)
+                    c = fig.circle(x, inv[col], color=palette[n], size=12)
+                    legend_list.append((col, [c]))
+
+            legend = Legend(items=legend_list)
+            fig.add_layout(legend, 'right')
+
+            show(fig)
 
     @property
     def nresets(self):
@@ -726,7 +820,8 @@ class TSO(object):
                 wave = self.avg_wave[order - 1]
 
                 # Get relative spectral response for the order
-                throughput = self.photom[self.photom['order'] == order]
+                photom = fits.getdata(self.refs['photom'])
+                throughput = photom[(photom['order'] == order) & (photom['filter'] == self.filter) & (photom['pupil'] == 'GR700XD')]
                 ph_wave = throughput.wavelength[throughput.wavelength > 0][1:-2]
                 ph_resp = throughput.relresponse[throughput.wavelength > 0][1:-2]
                 response = np.interp(wave, ph_wave, ph_resp)
@@ -776,7 +871,7 @@ class TSO(object):
 
         return tso
 
-    def simulate(self, ld_coeffs=None, noise=True, n_jobs=-1, params=None, supersample_factor=None, **kwargs):
+    def simulate(self, ld_coeffs=None, n_jobs=-1, params=None, supersample_factor=None, **kwargs):
         """
         Generate the simulated 4D ramp data given the initialized TSO object
 
@@ -786,8 +881,6 @@ class TSO(object):
             A 3D array that assigns limb darkening coefficients to each pixel, i.e. wavelength
         ld_profile: str (optional)
             The limb darkening profile to use
-        noise: bool
-            Add noise model
         n_jobs: int
             The number of cores to use in multiprocessing
 
@@ -827,8 +920,14 @@ class TSO(object):
         # Clear out old simulation
         self._reset_data()
 
-        if self.verbose:
-            begin = time.time()
+        # Reset relative response function
+        self._reset_psfs()
+
+        # Get correct reference files
+        self.refs = ju.get_references(self.subarray, self.filter)
+
+        # Start timer
+        begin = time.time()
 
         # Set the number of cores for multiprocessing
         max_cores = cpu_count()
@@ -849,9 +948,8 @@ class TSO(object):
         for chunk, (time_chunk, inttime_chunk) in enumerate(zip(time_chunks, inttime_chunks)):
 
             # Run multiprocessing to generate lightcurves
-            if self.verbose:
-                print('Constructing frames for chunk {}/{}...'.format(chunk + 1, n_chunks))
-                start = time.time()
+            self.message('Constructing frames for chunk {}/{}...'.format(chunk + 1, n_chunks))
+            start = time.time()
 
             # Re-define lightcurve model for the current chunk
             if params is not None:
@@ -917,8 +1015,7 @@ class TSO(object):
                 # Clear memory
                 del frames, lightcurves, psfs, wave
 
-            if self.verbose:
-                print('Chunk {}/{} finished:'.format(chunk + 1, n_chunks), round(time.time() - start, 3), 's')
+            self.message('Chunk {}/{} finished: {} {}'.format(chunk + 1, n_chunks, round(time.time() - start, 3), 's'))
 
         # Trim SUBSTRIP256 array if SUBSTRIP96
         if self.subarray == 'SUBSTRIP96':
@@ -946,8 +1043,7 @@ class TSO(object):
         # Simulate reference pixels
         self.add_refpix()
 
-        if self.verbose:
-            print('\nTotal time:', round(time.time() - begin, 3), 's')
+        self.message('\nTotal time: {} {}'.format(round(time.time() - begin, 3), 's'))
 
     @property
     def star(self):
@@ -965,8 +1061,7 @@ class TSO(object):
         """
         # Check if the star has been set
         if spectrum is None:
-            if self.verbose:
-                print("No star to simulate! Please set the self.star attribute!")
+            self.message("No star to simulate! Please set the self.star attribute!")
             self._star = None
 
         else:
@@ -998,9 +1093,6 @@ class TSO(object):
             # Good to go
             self._star = spectrum
 
-            # Reset the psfs
-            self._reset_psfs()
-
     @property
     def subarray(self):
         """Getter for the subarray"""
@@ -1025,6 +1117,7 @@ class TSO(object):
         # Set the subarray
         self._subarray = subarr
         self.subarray_specs = utils.subarray_specs(subarr)
+        self.row_slice = ju.SUB_SLICE[subarr]
 
         # Set the dependent quantities
         self._ncols = 2048
@@ -1036,9 +1129,6 @@ class TSO(object):
         # Reset the data and time arrays
         self._reset_data()
         self._reset_time()
-
-        # Reset the psfs
-        self._reset_psfs()
 
     @property
     def target(self):
