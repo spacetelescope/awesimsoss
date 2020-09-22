@@ -252,7 +252,7 @@ class TSO(object):
         tso_ideal = np.sum(orders, axis=0).reshape(self.dims3)
 
         # Fetch reference file data
-        linearity = fits.getdata(self.refs['linearity'])[:self.ngrps, self.row_slice, :]
+        linearity = fits.getdata(self.refs['linearity'])
         superbias = fits.getdata(self.refs['superbias'])
         dark_current = fits.getdata(self.refs['dark'])
 
@@ -280,12 +280,10 @@ class TSO(object):
         nonlin = []
         for n in range(self.nints):
 
-            # Plant seeds
+            # Make the ramp + noise model
+            self.message("Generating noise for integration {}/{}".format(n + 1, self.nints))
             dc_seed_int = dc_seed + 7 * n
             noise_seed_int = noise_seed + 24 * n
-
-            # Make the ramp with dark current
-            self.message("Generating noise for integration {}/{}".format(n + 1, self.nints))
             ramp = self.noise_model.mknoise(dc_seed=dc_seed_int, noise_seed=noise_seed_int, **noise_params)
 
             # Add in the SOSS signal
@@ -313,27 +311,6 @@ class TSO(object):
         del tso, tso_ideal, pyf, photon_yield, dark_current, zodi, linearity, superbias, orders, gain
 
         self.message('Noise model finished: {} {}'.format(round(time.time() - start, 3), 's'))
-
-    @run_required
-    def add_refpix(self, counts=0):
-        """Add reference pixels to detector edges
-
-        Parameters
-        ----------
-        counts: int
-            The number of counts or the reference pixels
-        """
-        # Left, right (all subarrays)
-        self.tso[:, :, :, :4] = counts
-        self.tso[:, :, :, -4:] = counts
-
-        # Top (excluding SUBSTRIP96)
-        if self.subarray != 'SUBSTRIP96':
-            self.tso[:, :, -4:, :] = counts
-
-        # Bottom (Only FULL frame)
-        if self.subarray == 'FULL':
-            self.tso[:, :, :4, :] = counts
 
     def export(self, outfile, all_data=False):
         """
@@ -554,7 +531,7 @@ class TSO(object):
             cols.append(col)
 
         # Print the table
-        inv.pprint()
+        inv.pprint(max_width=-1, max_lines=-1)
 
         # Plot it
         if plot:
@@ -568,6 +545,7 @@ class TSO(object):
                     c = fig.circle(x, inv[col], color=palette[n], size=12)
                     legend_list.append((col, [c]))
 
+            # Legend
             legend = Legend(items=legend_list)
             fig.add_layout(legend, 'right')
 
@@ -1041,7 +1019,7 @@ class TSO(object):
         self.add_noise()
 
         # Simulate reference pixels
-        self.add_refpix()
+        self.tso = ju.add_refpix(self.tso)
 
         self.message('\nTotal time: {} {}'.format(round(time.time() - begin, 3), 's'))
 

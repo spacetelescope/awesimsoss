@@ -2,6 +2,13 @@
 NGHXRG - Teledyne HxRG Noise Generator
 
 Modification History:
+
+18 September 2020 Joe Filippazzo
+
+  Made code more Pythonic, faster with Numpy array calls rather than list comprehensions,
+and moved much of the heavy lifting caluclations from mknoise() out to dedicated methods.
+Also added noise_sources property to track contributions from each noise source.
+
 13 August 2020   Kevin Volk
 
   Modify this version to return the simulated ramp and to not change to 
@@ -119,7 +126,7 @@ from hotsoss import utils
 import numpy as np
 from scipy.ndimage.interpolation import zoom
 
-from .jwst_utils import SUB_SLICE, SUB_DIMS
+from .jwst_utils import SUB_SLICE, SUB_DIMS, add_refpix
 
 warnings.filterwarnings('ignore')
 
@@ -152,7 +159,7 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
         raise ValueError(dims1, "not equal to", dims2)
 
     # Make a new ramp
-    newcube = np.zeros_like(cube)
+    newcube = np.zeros_like(cube, dtype=np.float32)
 
     # The background is assumed to be in electrons/second/pixel, not ADU/s/pixel.
     background = zodi * zodi_scale * frametime
@@ -182,7 +189,7 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
         if n == 0:
             newcube[n, :, :] = newvalues
         else:
-            newcube[n, :, :] = newcube[n-1, :, :] + newvalues
+            newcube[n, :, :] = newcube[n - 1, :, :] + newvalues
 
     newcube = cube + newcube / gain
 
@@ -207,56 +214,27 @@ def add_nonlinearity(cube, nonlinearity, offset=0):
     np.ndarray
         The ramp with the added non-linearity
     """
-    # Get the dimensions of the input data
-    dims1 = nonlinearity.shape
-    dims2 = cube.shape
-    if dims1 != dims2:
-        raise ValueError("{} != {}: Array shapes do not match.".format(dims1, dims2))
+    # Get the cube shape
+    shape = cube.shape
 
-    # Make a new array for the ramp + non-linearity
+    # Transpose linearity coefficient array
+    coeffs = np.transpose(nonlinearity, (0, 2, 1))
+
+    # Reverse coefficients, x, and y dimensions
+    coeffs = coeffs[::-1, ::-1, ::-1]
+
+    # Trim coeffs to subarray (nonlinearity ref file is FULL frame)
+    sl = SUB_SLICE['SUBSTRIP256' if shape[1] == 256 else 'SUBSTRIP96' if shape[1] == 96 else 'FULL']
+    coeffs = coeffs[:, sl, :]
+
+    # Make a new array for the ramp + non-linearity and subtract offset
     newcube = cube - offset
-    for k in range(dims2[0]):
-        frame = np.squeeze(np.copy(newcube[k, :, :]))
-        sum1 = frame * 0.
-        for n in range(dims1[0] - 1, -1, -1):
-            sum1 = sum1 + nonlinearity[n, :, :] * np.power(frame, n + 1)
-        sum1 = frame * (1. + sum1)
-        newcube[k, :, :] = sum1
 
-    newcube = newcube + offset
+    # Evaluate polynomial at each pixel
+    newcube = np.polyval(coeffs, newcube)
 
-    return newcube
-
-
-def add_pedestal(cube, pedestal, offset=500):
-    """
-    Add a pedestal to the ramp
-
-    Parameters
-    ----------
-    cube: sequence
-        The ramp with no pedestal
-    pedestal: sequence
-        The pedestal image to add to the ramp
-    offset: int
-        The pedestal offset
-
-    Returns
-    -------
-    np.ndarray
-        The ramp with the added pedestal
-    """
-    # Add the offset to the pedestal
-    ped1 = pedestal + (offset - 500.)
-
-    # Make a new array for the ramp + pedestal
-    dims = cube.shape
-    newcube = np.zeros_like(cube, dtype=np.float32)
-
-    # Iterate over each integration
-    for n in range(dims[0]):
-        newcube[n, :, :] = cube[n, :, :] + ped1
-    newcube = newcube.astype(np.uint32)
+    # Put offset back in
+    newcube += offset
 
     return newcube
 
@@ -415,18 +393,15 @@ class HXRGNoise:
             superbias = fits.getdata(superbias_file)
 
         # Get the mean and standard deviation
-        superbias_mean = np.mean(superbias)
-        superbias_std = np.std(superbias)
+        superbias_mean = np.nanmean(superbias)
+        superbias_std = np.nanstd(superbias)
 
         # Normalize the superbias
         superbias_norm = (superbias - superbias_mean) / superbias_std
 
-        # Transpose to detector orientation
-        superbias_T = superbias_norm.T
-
-        # Set pca0 array
-        self.pca0 = superbias_T[:, self.row_slice]
-        self.pca0_amp = np.std(self.pca0)
+        # Set transposed pca0 array and STD
+        self.pca0 = superbias_norm.T
+        self.pca0_amp = np.nanstd(self.pca0)
 
     def message(self, message_text):
         """
@@ -602,7 +577,7 @@ class HXRGNoise:
                 result[z, :, :] += bias_pattern
 
             # Save it
-            self.noise_sources['bias_pattern'].append(list(np.nanmean(result - bias_pattern, axis=(1, 2))))
+            self.noise_sources['bias_pattern'].append(self.noise_stats(result - bias_pattern))
             del bias_pattern
 
         # Make white read noise. This is the same for all pixels.
@@ -634,7 +609,7 @@ class HXRGNoise:
                 result[z, :, :] += read_noise
 
             # Save it
-            self.noise_sources['read_noise'].append(list(np.nanmean(result - pre_rdnoise, axis=(1, 2))))
+            self.noise_sources['read_noise'].append(self.noise_stats(result - pre_rdnoise))
             del read_noise, pre_rdnoise
 
         # Add correlated pink noise.
@@ -657,7 +632,7 @@ class HXRGNoise:
                     result[:, :, x0:x1] += corr_pink[:, :, ::-1]
 
             # Save it
-            self.noise_sources['corr_pink_noise'].append(list(np.nanmean(result - pre_cpink, axis=(1, 2))))
+            self.noise_sources['corr_pink_noise'].append(self.noise_stats(result - pre_cpink))
             del corr_pink, pre_cpink
 
         # Add uncorrelated pink noise. Because this pink noise is stationary and
@@ -673,7 +648,7 @@ class HXRGNoise:
                 result[:, :, x0:x1] += uncorr_pink
 
             # Save it
-            self.noise_sources['uncorr_pink_noise'].append(list(np.nanmean(result - pre_upink, axis=(1, 2))))
+            self.noise_sources['uncorr_pink_noise'].append(self.noise_stats(result - pre_upink))
             del pre_upink
 
         # Add ACN
@@ -705,7 +680,7 @@ class HXRGNoise:
                 result[:, :, x0:x1] += acn_cube
 
             # Save it
-            self.noise_sources['alt_col_noise'].append(list(np.nanmean(result - pre_acn, axis=(1, 2))))
+            self.noise_sources['alt_col_noise'].append(self.noise_stats(result - pre_acn))
             del acn_cube, pre_acn
 
         # Add PCA-zero. The PCA-zero template is modulated by 1/f.
@@ -721,7 +696,7 @@ class HXRGNoise:
                     result[z, y, :] += self.pca0_amp * self.pca0[y, :] * gamma[z, y]
 
             # Save it
-            self.noise_sources['pca0_noise'].append(list(np.nanmean(result - pre_pca0, axis=(1, 2))))
+            self.noise_sources['pca0_noise'].append(self.noise_stats(result - pre_pca0))
             del pre_pca0
 
         # Add in channel offsets
@@ -736,36 +711,32 @@ class HXRGNoise:
                     x0 = x0 + self.xsize
 
             # Save it
-            self.noise_sources['pedestal_drift'].append(list(np.nanmean(result - pre_drift, axis=(1, 2))))
+            self.noise_sources['pedestal_drift'].append(self.noise_stats(result - pre_drift))
             del pre_drift
 
         # Add in dark current
         if self.dark_current is not None:
             self.message('Adding dark current')
-            dark = np.zeros_like(result)
-            w = self.ref_all
             pre_dark = copy(result)
-            for ind in range(self.ngrps):
-                frame = darkgen.poisson(self.dark_current, (self.nrows, self.ncols))
-                if w[0] > 0:
-                    frame[:w[0], :] = 0.
-                if w[1] > 0:
-                    frame[-w[1]:, :] = 0.
-                if w[2] > 0:
-                    frame[:, 0:w[2]] = 0.
-                if w[3] > 0:
-                    frame[:, -w[3]:] = 0.
-                if ind == 0:
-                    dark[ind, :, :] = frame.T
-                else:
-                    dark[ind, :, :] = dark[ind-1, :, :] + frame.T
-                result = result + dark
 
-            for n1 in range(self.nrows):
-                for n2 in range(self.ncols):
-                    values = darkgen.poisson(lam=self.dark_current[n1, n2], size=self.ngrps)
-                    cvalues = np.cumsum(values)
-                    result[:, n2, n1] = result[:, n2, n1] + cvalues
+            # Generate dark current with Poisson distribution sampling
+            dark = darkgen.poisson(self.dark_current, (self.ngrps, self.nrows, self.ncols))
+
+            # Make dark current count cumulative
+            dark = np.cumsum(dark, axis=0)
+
+            # Zero out reference pixels
+            dark = add_refpix(dark)
+
+            # What's this for?
+            # for n1 in range(self.nrows):
+            #     for n2 in range(self.ncols):
+            #         values = darkgen.poisson(lam=self.dark_current[n1, n2], size=self.ngrps)
+            #         cvalues = np.cumsum(values)
+            #         result[:, n2, n1] = result[:, n2, n1] + cvalues
+
+            # Add dark current to data
+            result = result + np.transpose(dark, (0, 2, 1))
 
             # Save it
             self.noise_sources['dark_current'].append(list(np.nanmean(result - pre_dark, axis=(1, 2))))
@@ -785,6 +756,27 @@ class HXRGNoise:
         self.nints += 1
 
         return result
+
+    @staticmethod
+    def noise_stats(data, func=np.nanmax, axis=(1, 2)):
+        """
+        Calculate some statistic for the given noise data
+
+        Parameters
+        ----------
+        data: array-like
+            The data to analyze
+        func: function
+            The function to use
+        axis: tuple, int
+            The axis over which to apply the function
+
+        Returns
+        -------
+        float
+            The calculated statistic
+        """
+        return list(func(data, axis=axis))
 
 
 def make_photon_yield(photon_yield, orders):

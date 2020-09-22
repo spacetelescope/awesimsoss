@@ -1,8 +1,10 @@
 #! /usr/bin/env python
+from copy import copy
 import os
 from pkg_resources import resource_filename
 
 from astropy.io import fits
+import numpy as np
 
 try:
     import crds
@@ -17,7 +19,52 @@ except ImportError:
 SUB_SLICE = {'SUBSTRIP96': slice(1792, 1888), 'SUBSTRIP256': slice(1792, 2048), 'FULL': slice(0, 2048)}
 SUB_DIMS = {'SUBSTRIP96': (96, 2048), 'SUBSTRIP256': (256, 2048), 'FULL': (2048, 2048)}
 
-def get_references(subarray, filter='CLEAR'):
+
+def add_refpix(data, counts=0):
+    """
+    Add reference pixels to detector edges
+
+    Parameters
+    ----------
+    data: np.ndarray
+        The data to add reference pixels to
+    counts: int
+        The number of counts or the reference pixels
+
+    Returns
+    -------
+    np.ndarray
+        The data with reference pixels
+    """
+    # Get dimensions
+    dims = data.shape
+    new_data = copy(data)
+
+    # Convert to 3D
+    if data.ndim == 4:
+        new_data.shape = dims[0] * dims[1], dims[2], dims[3]
+    elif data.ndim == 2:
+        new_data.shape = (1, dims[0], dims[1])
+
+    # Left, right (all subarrays)
+    new_data[:, :, :4] = counts
+    new_data[:, :, -4:] = counts
+
+    # Top (excluding SUBSTRIP96)
+    if dims[-2] != 96:
+        new_data[:, -4:, :] = counts
+
+    # Bottom (Only FULL frame)
+    if dims[-2] == 2048:
+        new_data[:, :4, :] = counts
+
+    # Restore shape
+    new_data.shape = dims
+
+    return new_data
+
+
+def get_references(subarray, filter='CLEAR', context='jwst_niriss_0134.imap'):
     """
     Get dictionary of the reference file locations for the given subarray
 
@@ -58,7 +105,7 @@ def get_references(subarray, filter='CLEAR'):
               "SUBARRAY": subarray}
 
     # Collect reference files for subarray+filter combination
-    refs = crds.getreferences(params)
+    refs = crds.getreferences(params, context=context)
 
     return refs
 
