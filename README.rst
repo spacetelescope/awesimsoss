@@ -16,10 +16,6 @@ awesimsoss
 .. image:: https://coveralls.io/repos/github/spacetelescope/awesimsoss/badge.svg
         :target: https://coveralls.io/github/spacetelescope/awesimsoss
 
-.. image:: https://pyup.io/repos/github/hover2pi/awesimsoss/shield.svg
-        :target: https://pyup.io/repos/github/hover2pi/awesimsoss/
-        :alt: Updates
-
 
 
 Advanced Webb Exposure SIMulator for SOSS
