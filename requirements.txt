@@ -1,8 +1,8 @@
-pip==18.1
+pip==20.2.3
 bumpversion==0.5.3
 wheel==0.32.3
 watchdog==0.9.0
-flake8==3.6.0
+flake8==3.8.3
 tox==3.5.3
 coverage==4.5.2
 Sphinx==1.8.2
@@ -10,12 +10,16 @@ twine==3.1.1
 click==7.0
 
 astropy==4.0
+<<<<<<< HEAD:requirements_dev.txt
 jwst==0.16.2
 numpy==1.16.1
+=======
+numpy==1.19.2
+>>>>>>> ee4102b03fa92ff78f4e8443af9265fc9c0b8325:requirements.txt
 bokeh==1.3.4
 svo_filters==0.2.19
 scipy==1.1.0
-astroquery==0.4
+astroquery==0.4.1
 hotsoss==0.1.7
 webbpsf
 batman-package==2.4.6

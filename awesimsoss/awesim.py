@@ -776,7 +776,7 @@ class TSO(object):
             grp_idx = np.concatenate([np.arange(self.nresets, self.nresets + self.ngrps) + n * (self.nresets + self.ngrps) for n in range(self.nints)])
 
             # The time increments
-            dt = TimeDelta(self.frame_time / 2., format='sec')
+            dt = TimeDelta(self.frame_time, format='sec')
 
             # Integration time of each frame in seconds
             self.inttime = np.tile((dt * grp_idx).sec[:self.ngrps], self.nints)
