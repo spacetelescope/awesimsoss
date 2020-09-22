@@ -16,6 +16,9 @@ awesimsoss
 .. image:: https://coveralls.io/repos/github/spacetelescope/awesimsoss/badge.svg
         :target: https://coveralls.io/github/spacetelescope/awesimsoss
 
+.. image:: https://zenodo.org/badge/115032914.svg
+        :target: https://zenodo.org/badge/latestdoi/115032914
+
 
 
 Advanced Webb Exposure SIMulator for SOSS
