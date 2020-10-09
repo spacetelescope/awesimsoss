@@ -33,6 +33,7 @@ from bokeh.layouts import column
 from bokeh.models import Legend
 from contextlib import closing
 from hotsoss import utils, plotting, locate_trace
+from gitfit import gitfit as gf
 import urllib.request as request
 
 from . import noise_simulation as ns
@@ -252,9 +253,9 @@ class TSO(object):
         tso_ideal = np.sum(orders, axis=0).reshape(self.dims3)
 
         # Fetch reference file data
-        linearity = fits.getdata(self.refs['linearity'])
+        linearity = gf.reassemble(self.refs['linearity'])[1].data
         superbias = fits.getdata(self.refs['superbias'])
-        dark_current = fits.getdata(self.refs['dark'])
+        dark_current = gf.reassemble(self.refs['dark'])[1].data
 
         # Other quantities
         photon_yield = ju.jwst_photyield_ref(self.subarray)

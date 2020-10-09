@@ -19,7 +19,6 @@ except ImportError:
 SUB_SLICE = {'SUBSTRIP96': slice(1792, 1888), 'SUBSTRIP256': slice(1792, 2048), 'FULL': slice(0, 2048)}
 SUB_DIMS = {'SUBSTRIP96': (96, 2048), 'SUBSTRIP256': (256, 2048), 'FULL': (2048, 2048)}
 
-
 def add_refpix(data, counts=0):
     """
     Add reference pixels to detector edges
@@ -104,8 +103,27 @@ def get_references(subarray, filter='CLEAR', context='jwst_niriss_0134.imap'):
               "FILTER" : filter,
               "SUBARRAY": subarray}
 
+    # Default ref file path
+    default_path = resource_filename('awesimsoss', 'files/refs/')
+
     # Collect reference files for subarray+filter combination
-    refs = crds.getreferences(params, context=context)
+    try:
+        refs = crds.getreferences(params, context=context)
+    except Exception as err:
+        refs = {'saturation': os.path.join(default_path, 'jwst_niriss_saturation_0010.fits'),
+                'photom': os.path.join(default_path, 'jwst_niriss_photom_0037.fits'),
+                'flat': os.path.join(default_path, 'jwst_niriss_flat_0190.fits'),
+                'gain': os.path.join(default_path, 'jwst_niriss_gain_0005.fits'),
+                'superbias': os.path.join(default_path, 'jwst_niriss_superbias_0120.fits'),
+                'dark': os.path.join(default_path, 'jwst_niriss_dark_0114.fits'),
+                'readnoise': os.path.join(default_path, 'jwst_niriss_readnoise_0001.fits'),
+                'linearity': os.path.join(default_path, 'jwst_niriss_linearity_0011.fits')}
+
+    # Check if reference files exist and load defaults if necessary
+    for ref_name, ref_fn in refs.items():
+        if not 'NOT FOUND' in ref_fn and not os.path.isfile(refs[ref_name]):
+            refs[ref_name] = os.path.join(default_path, ref_fn)
+            print("Could not get {} reference file from CRDS. Using {}.".format(ref_name, ref_fn))
 
     return refs
 

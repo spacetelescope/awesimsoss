@@ -26,6 +26,7 @@ dependencies:
     - bibtexparser==1.2.0
     - dustmaps==1.0.4
     - hotsoss==0.1.7
+    - gitfit==0.1.0
     - jwst==0.13.8a0.dev37+g1f2237de
     - jwst-backgrounds==1.1.1
     - lmfit==0.9.13
