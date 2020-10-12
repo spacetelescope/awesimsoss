@@ -198,7 +198,8 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
 
 def add_nonlinearity(cube, nonlinearity, offset=0):
     """
-    Add nonlinearity to the ramp
+    Add pixel nonlinearity effects to the ramp using the procedure outlined in
+    /grp/jwst/wit/niriss/CDP-2/documentation/niriss_linearity.docx
 
     Parameters
     ----------
@@ -222,6 +223,7 @@ def add_nonlinearity(cube, nonlinearity, offset=0):
 
     # Reverse coefficients, x, and y dimensions
     coeffs = coeffs[::-1, ::-1, ::-1]
+    print(coeffs[:, 100, 100])
 
     # Trim coeffs to subarray (nonlinearity ref file is FULL frame)
     sl = SUB_SLICE['SUBSTRIP256' if shape[1] == 256 else 'SUBSTRIP96' if shape[1] == 96 else 'FULL']
