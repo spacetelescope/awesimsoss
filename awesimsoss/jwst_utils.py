@@ -117,12 +117,12 @@ def get_references(subarray, filter='CLEAR', context='jwst_niriss_0134.imap'):
                 'linearity': os.path.join(default_path, 'jwst_niriss_linearity_0011.fits')}
 
         if subarray == 'SUBSTRIP96':
-            refs['superbias'] = os.path.join(default_path, 'jwst_niriss_superbias_0111.fits'),
+            refs['superbias'] = os.path.join(default_path, 'jwst_niriss_superbias_0111.fits')
             refs['dark'] = os.path.join(default_path, 'jwst_niriss_dark_0111.fits')
 
         if subarray == 'FULL':
-            refs['gain'] = os.path.join(default_path, 'jwst_niriss_gain_0002.fits'),
-            refs['superbias'] = os.path.join(default_path, 'jwst_niriss_superbias_0029.fits'),
+            refs['gain'] = os.path.join(default_path, 'jwst_niriss_gain_0002.fits')
+            refs['superbias'] = os.path.join(default_path, 'jwst_niriss_superbias_0029.fits')
             refs['dark'] = os.path.join(default_path, 'jwst_niriss_dark_0129.fits')
 
     # Check if reference files exist and load defaults if necessary
