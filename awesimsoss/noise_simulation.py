@@ -223,7 +223,6 @@ def add_nonlinearity(cube, nonlinearity, offset=0):
 
     # Reverse coefficients, x, and y dimensions
     coeffs = coeffs[::-1, ::-1, ::-1]
-    print(coeffs[:, 100, 100])
 
     # Trim coeffs to subarray (nonlinearity ref file is FULL frame)
     sl = SUB_SLICE['SUBSTRIP256' if shape[1] == 256 else 'SUBSTRIP96' if shape[1] == 96 else 'FULL']
@@ -393,6 +392,9 @@ class HXRGNoise:
         # Read in the superbias data
         if isinstance(superbias, str):
             superbias = fits.getdata(superbias_file)
+
+        # Slice for subarray
+        superbias = superbias[self.row_slice, :]
 
         # Get the mean and standard deviation
         superbias_mean = np.nanmean(superbias)
