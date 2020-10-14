@@ -922,6 +922,7 @@ class TSO(object):
         n_chunks = len(time_chunks)
 
         # Iterate over chunks
+        self.message('Simulating {target} in {title}\nConfiguration: {subarray} + {filter}\nGroups: {ngrps}, Integrations: {nints}\n'.format(**self.info))
         for chunk, (time_chunk, inttime_chunk) in enumerate(zip(time_chunks, inttime_chunks)):
 
             # Run multiprocessing to generate lightcurves

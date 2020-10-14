@@ -393,9 +393,6 @@ class HXRGNoise:
         if isinstance(superbias, str):
             superbias = fits.getdata(superbias_file)
 
-        # Slice for subarray
-        superbias = superbias[self.row_slice, :]
-
         # Get the mean and standard deviation
         superbias_mean = np.nanmean(superbias)
         superbias_std = np.nanstd(superbias)
