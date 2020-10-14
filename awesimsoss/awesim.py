@@ -2,7 +2,7 @@
 """
 A module to generate simulated 2D time-series SOSS data
 
-Authors: Joe Filippazzo, Kevin Volk, Jonathan Fraine, Michael Wolfe
+Authors: Joe Filippazzo, Kevin Volk, Nestor Espinoza, Jonathan Fraine, Michael Wolfe
 """
 from copy import copy
 import datetime
@@ -29,15 +29,14 @@ from astroquery.simbad import Simbad
 import batman
 from bokeh.plotting import figure, show
 import bokeh.palettes as pal
-from bokeh.layouts import column
 from bokeh.models import Legend
 from contextlib import closing
 from hotsoss import utils, plotting, locate_trace
-from gitfit import reassemble
 import urllib.request as request
 
 from . import noise_simulation as ns
 from . import jwst_utils as ju
+from . import gitfit as gf
 from . import make_trace as mt
 
 warnings.simplefilter('ignore')
@@ -253,9 +252,9 @@ class TSO(object):
         tso_ideal = np.sum(orders, axis=0).reshape(self.dims3)
 
         # Fetch reference file data
-        linearity = reassemble(self.refs['linearity'])[1].data
+        linearity = gf.reassemble(self.refs['linearity'])[1].data
         superbias = fits.getdata(self.refs['superbias'])
-        dark_current = reassemble(self.refs['dark'])[1].data
+        dark_current = gf.reassemble(self.refs['dark'])[1].data
 
         # Other quantities
         photon_yield = ju.jwst_photyield_ref(self.subarray)
@@ -313,7 +312,7 @@ class TSO(object):
 
         self.message('Noise model finished: {} {}'.format(round(time.time() - start, 3), 's'))
 
-    def export(self, outfile, all_data=False):
+    def export(self, outfile):
         """
         Export the simulated data to a JWST pipeline ingestible FITS file
 
@@ -632,8 +631,7 @@ class TSO(object):
         # Valid order lists
         orderlist = [[1], [1, 2], [1, 2, 3]]
 
-        # Check the value
-        # Set single order to list
+        # Check the value and set single order to list
         if isinstance(ords, int):
             ords = [ords]
         if not all([o in [1, 2, 3] for o in ords]):
