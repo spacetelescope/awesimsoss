@@ -7,11 +7,6 @@ from astropy.io import fits
 import numpy as np
 
 try:
-    import crds
-except ImportError:
-    print("Could not import 'crds' package. Using default reference files which may not be the most up-to-date.")
-
-try:
     from jwst import datamodels as dm
 except ImportError:
     print("Could not import 'jwst' package. Functionality will be limited.")
@@ -100,7 +95,7 @@ def get_references(subarray, filter='CLEAR', context='jwst_niriss_0134.imap'):
               "DATE-OBS": "2020-07-28",
               "TIME-OBS": "00:00:00",
               "INSTRUMENT": "NIRISS",
-              "FILTER" : filter,
+              "FILTER": filter,
               "SUBARRAY": subarray}
 
     # Default ref file path
@@ -108,6 +103,7 @@ def get_references(subarray, filter='CLEAR', context='jwst_niriss_0134.imap'):
 
     # Collect reference files for subarray+filter combination
     try:
+        import crds
         refs = crds.getreferences(params, context=context)
     except Exception as err:
         refs = {'saturation': os.path.join(default_path, 'jwst_niriss_saturation_0010.fits'),
