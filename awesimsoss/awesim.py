@@ -15,6 +15,7 @@ from pkg_resources import resource_filename
 from scipy import interpolate, ndimage
 import shutil
 import time
+import urllib.request as request
 import warnings
 
 import astropy.units as q
@@ -32,7 +33,6 @@ import bokeh.palettes as pal
 from bokeh.models import Legend
 from contextlib import closing
 from hotsoss import utils, plotting, locate_trace
-import urllib.request as request
 
 from . import noise_simulation as ns
 from . import jwst_utils as ju

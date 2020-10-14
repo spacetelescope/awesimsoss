@@ -105,7 +105,7 @@ def get_references(subarray, filter='CLEAR', context='jwst_niriss_0134.imap'):
     try:
         import crds
         refs = crds.getreferences(params, context=context)
-    except Exception as err:
+    except:
         refs = {'saturation': os.path.join(default_path, 'jwst_niriss_saturation_0010.fits'),
                 'photom': os.path.join(default_path, 'jwst_niriss_photom_0037.fits'),
                 'flat': os.path.join(default_path, 'jwst_niriss_flat_0190.fits'),
