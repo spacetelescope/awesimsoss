@@ -92,7 +92,7 @@ class test_TSO_validation(unittest.TestCase):
             order1_flux = order1_counts[n] / self.tso256.order1_response / (self.tso256.frame_time * (n + 1))
 
             # Mean residual (away from edges)
-            mean_residual = np.mean(((order1_flux.value - input_spec) / input_spec)[20:-20])
+            mean_residual = np.nanmean(((order1_flux.value - input_spec) / input_spec)[20:-20])
 
             # Check that the mean residual is less than 0.01
             self.assertTrue(mean_residual < 0.01)
@@ -121,7 +121,7 @@ class test_TSO_validation(unittest.TestCase):
             order2_flux = order2_counts[n] / self.tso256.order2_response / (self.tso256.frame_time * (n + 1))
 
             # Mean residual (away from edges)
-            mean_residual = np.mean(((order2_flux.value - input_spec) / input_spec)[20:-20])
+            mean_residual = np.nanmean(((order2_flux.value - input_spec) / input_spec)[20:-20])
 
             # Check that the mean residual is less than 0.01
             self.assertTrue(mean_residual < 0.01)
