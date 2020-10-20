@@ -89,7 +89,7 @@ class test_TSO_validation(unittest.TestCase):
         for n, group in enumerate(order1_counts):
 
             # Convert counts to flux
-            order1_flux = order1_counts[n] / tso256.order1_response / (tso256.frame_time * (n + 1))
+            order1_flux = order1_counts[n] / self.tso256.order1_response / (self.tso256.frame_time * (n + 1))
 
             # Mean residual (away from edges)
             mean_residual = np.mean(((order1_flux.value - input_spec) / input_spec)[20:-20])
@@ -118,7 +118,7 @@ class test_TSO_validation(unittest.TestCase):
         for n, group in enumerate(order2_counts):
 
             # Convert counts to flux
-            order2_flux = order2_counts[n] / tso256.order2_response / (tso256.frame_time * (n + 1))
+            order2_flux = order2_counts[n] / self.tso256.order2_response / (self.tso256.frame_time * (n + 1))
 
             # Mean residual (away from edges)
             mean_residual = np.mean(((order2_flux.value - input_spec) / input_spec)[20:-20])
