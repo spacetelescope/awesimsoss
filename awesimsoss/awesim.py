@@ -812,8 +812,8 @@ class TSO(object):
                 response = self.frame_time / (response * q.mJy * ac.c / (wave * q.um)**2).to(self.star[1].unit)
                 flux = np.interp(wave, self.star[0].value, self.star[1].value, left=0, right=0) * self.star[1].unit * response
                 cube = mt.SOSS_psf_cube(filt=self.filter, order=order, subarray=self.subarray) * flux[:, None, None]
-                setattr(self, 'order{}_response'.format(order), response.astype(np.float16))
-                setattr(self, 'order{}_psfs'.format(order), cube.astype(np.float16))
+                setattr(self, 'order{}_response'.format(order), response)
+                setattr(self, 'order{}_psfs'.format(order), cube)
 
     @run_required
     def _select_data(self, order, noise, reshape=True):
