@@ -59,8 +59,8 @@ You can also do it with
 Simulating SOSS Observations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Given a 1D spectrum of a target, this module produces a 2D SOSS ramp
-image with the given number of groups and integrations. For example, if
+Given a 1D spectrum of a target, this package produces 2D SOSS ramp
+images for the specified number of groups and integrations. For example, if
 I want to produce 5 integrations of 3 groups each for a J=9 A0 star as
 seen through SOSS, my code might look like:
 
@@ -102,7 +102,7 @@ the `F277W` filter like so:
 Simulated Planetary Transits
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The example above was for an isolated star though. To include a
+The example above was for an isolated star. To include a
 planetary transit we must additionally provide a transmission spectrum
 and the orbital parameters of the planet.
 
