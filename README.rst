@@ -6,8 +6,8 @@ awesimsoss
         :alt: GitHub release
         :target: https://github.com/spacetelescope/awesimsoss/releases
 
-.. image:: https://img.shields.io/travis/hover2pi/awesimsoss.svg
-        :target: https://travis-ci.com/hover2pi/awesimsoss
+.. image:: https://img.shields.io/travis/spacetelescope/awesimsoss.svg
+        :target: https://travis-ci.org/spacetelescope/awesimsoss.svg?branch=master
 
 .. image:: https://readthedocs.org/projects/awesimsoss/badge/?version=latest
         :target: https://awesimsoss.readthedocs.io/en/latest/?badge=latest
