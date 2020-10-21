@@ -4,7 +4,6 @@
 
 from copy import copy
 import unittest
-from pkg_resources import resource_filename
 
 import numpy as np
 import astropy.units as q
@@ -57,8 +56,79 @@ class test_TestTSO(unittest.TestCase):
         tso = TestTSO(add_planet=True)
 
 
-class test_TSO(unittest.TestCase):
-    """Tests for the TSO class"""
+class test_TSO_validation(unittest.TestCase):
+    """Validation tests for the TSO class"""
+    def setUp(self):
+        """Setup for the tests"""
+        # Get data
+        self.star = STAR_DATA
+        self.planet = PLANET_DATA
+
+        # Make the simulation
+        self.tso256 = TSO(ngrps=2, nints=2, star=self.star)
+        self.tso256.simulate()
+
+    def test_extract_order1_ideal(self):
+        """Test that the column extracted spectrum from the order1 ideal trace matches the input spectrum"""
+        # Get the order 1 data
+        trace = self.tso256.tso_order1_ideal
+        shape = trace.shape
+
+        # Reshape into 3D and NaN reference pixels
+        data = trace.reshape((shape[0] * shape[1], shape[2], shape[3]))
+        data[:, :, :4] = np.nan
+        data[:, :, -4:] = np.nan
+        data[:, -4:, :] = np.nan
+
+        # Add up counts
+        order1_counts = np.nansum(data, axis=1)
+
+        # Interpolate input spectrum
+        input_spec = np.interp(self.tso256.avg_wave[0], self.star[0].value, self.star[1].value, right=np.nan, left=np.nan)
+
+        for n, group in enumerate(order1_counts):
+
+            # Convert counts to flux
+            order1_flux = order1_counts[n] / self.tso256.order1_response / (self.tso256.frame_time * (n + 1))
+
+            # Mean residual (away from edges)
+            mean_residual = np.nanmean(((order1_flux.value - input_spec) / input_spec)[20:-20])
+
+            # Check that the mean residual is less than 0.01
+            self.assertTrue(mean_residual < 0.01)
+
+    def test_extract_order2_ideal(self):
+        """Test that the column extracted spectrum from the order2 ideal trace matches the input spectrum"""
+        # Get the order 1 data
+        trace = self.tso256.tso_order2_ideal
+        shape = trace.shape
+
+        # Reshape into 3D and NaN reference pixels
+        data = trace.reshape((shape[0] * shape[1], shape[2], shape[3]))
+        data[:, :, :4] = np.nan
+        data[:, :, -4:] = np.nan
+        data[:, -4:, :] = np.nan
+
+        # Add up counts
+        order2_counts = np.nansum(data, axis=1)
+
+        # Interpolate input spectrum
+        input_spec = np.interp(self.tso256.avg_wave[1], self.star[0].value, self.star[1].value, right=np.nan, left=np.nan)
+
+        for n, group in enumerate(order2_counts):
+
+            # Convert counts to flux
+            order2_flux = order2_counts[n] / self.tso256.order2_response / (self.tso256.frame_time * (n + 1))
+
+            # Mean residual (away from edges)
+            mean_residual = np.nanmean(((order2_flux.value - input_spec) / input_spec)[20:-20])
+
+            # Check that the mean residual is less than 0.01
+            self.assertTrue(mean_residual < 0.01)
+
+
+class test_TSO_verification(unittest.TestCase):
+    """Verification tests for the TSO class"""
     def setUp(self):
         """Setup for the tests"""
         # Get data

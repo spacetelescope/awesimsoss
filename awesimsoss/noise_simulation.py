@@ -3,18 +3,44 @@ NGHXRG - Teledyne HxRG Noise Generator
 
 Modification History:
 
-20 October 2017   Kevin Volk
+18 September 2020 Joe Filippazzo
 
-  This version returns the ramp rathr than writing out the FITS file.  It also 
-does not convert to unsigned integer form.
+  Made code more Pythonic, faster with Numpy array calls rather than list comprehensions,
+and moved much of the heavy lifting caluclations from mknoise() out to dedicated methods.
+Also added noise_sources property to track contributions from each noise source.
+
+13 August 2020   Kevin Volk
+
+  Modify this version to return the simulated ramp and to not change to 
+unsigned integers.
+
+11 August 2020   Kevin Volk
+
+  Change the random number generation calls to use the new numpy interface.
+
+23 July 2020    Kevin Volk
+
+  A couple of bug fixes to the dark current image option were made.  The code 
+was changed so it will work properly with a sub-array simulation.  Previously 
+the values in the lower left corner were used not the values at the target 
+position.
+
+22 June 2020    Kevin Volk
+
+  Port to python version 3.  Added writing out bias_pattern.fits.
+
+16 September 2019   Kevin Volk
+
+  Add an option to use an image for the dark current rather than a constant 
+value.
 
 2 June 2017   Kevin Volk
 
-  I have added in pedestal offsets; the self.pedestal variable in the code, 
+  I have added in pedestal offsets; the self.pedestal_drift variable in the code, 
 described as the "magnitude of the pedestal drift in electrons" does not appear 
 to be used in the original code.  I added a Gaussian offset per channel per 
-frame based on this parameter.  Finally, I added an optional noise seed so one can 
-reproduce a calculation.
+frame based on this parameter.  Finally, I added an optional noise seed so one 
+can reproduce a calculation.
 
 26 May 2017   Kevin Volk
 
@@ -86,19 +112,133 @@ been changed and a couple of the defaults have been changed as well.
 - Version 2.6
 
 """
-import os
-import warnings
+from copy import copy
 import datetime
-import logging
+import math
+import os
+from pkg_resources import resource_filename
+import warnings
 
 from astropy.io import fits
+from astropy.stats.funcs import median_absolute_deviation as mad
+import astropy.table as at
+from hotsoss import utils
 import numpy as np
 from scipy.ndimage.interpolation import zoom
-from astropy.stats.funcs import median_absolute_deviation as mad
 
+from .jwst_utils import SUB_SLICE, SUB_DIMS, add_refpix
 
 warnings.filterwarnings('ignore')
-_log = logging.getLogger('nghxrg')
+
+
+def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon_yield=False):
+    """
+    Add the science signal to the generated noise
+
+    Parameters
+    ----------
+    signals: sequence
+        The science frames
+    cube: sequence
+        The generated dark ramp
+    pyimage: sequence
+        The photon yield per order
+    frametime: float
+        The number of seconds per frame
+    gain: float
+        The detector gain
+    zodi: sequence
+        The zodiacal background image
+    zodi_scale: float
+        The scale factor for the zodi background
+    """
+    # Get the data dimensions
+    dims1 = cube.shape
+    dims2 = signals.shape
+    if dims1 != dims2:
+        raise ValueError(dims1, "not equal to", dims2)
+
+    # Make a new ramp
+    newcube = np.zeros_like(cube, dtype=np.float32)
+
+    # The background is assumed to be in electrons/second/pixel, not ADU/s/pixel.
+    background = zodi * zodi_scale * frametime
+
+    # Iterate over each group
+    for n in range(dims1[0]):
+        framesignal = signals[n, :, :] * gain * frametime
+
+        # Add photon yield
+        if photon_yield:
+            newvalues = np.random.poisson(framesignal)
+            target = pyimage - 1.
+            for k in range(dims1[1]):
+                for l in range(dims1[2]):
+                    if target[k, l] > 0.:
+                        n = int(newvalues[k, l])
+                        values = np.random.poisson(target[k, l], size=n)
+                        newvalues[k, l] = newvalues[k, l] + np.sum(values)
+            newvalues = newvalues + np.random.poisson(background)
+
+        # Or don't
+        else:
+            vals = np.abs(framesignal * pyimage + background)
+            newvalues = np.random.poisson(vals)
+
+        # First ramp image
+        if n == 0:
+            newcube[n, :, :] = newvalues
+        else:
+            newcube[n, :, :] = newcube[n - 1, :, :] + newvalues
+
+    newcube = cube + newcube / gain
+
+    return newcube
+
+
+def add_nonlinearity(cube, nonlinearity, offset=0):
+    """
+    Add pixel nonlinearity effects to the ramp using the procedure outlined in
+    /grp/jwst/wit/niriss/CDP-2/documentation/niriss_linearity.docx
+
+    Parameters
+    ----------
+    cube: sequence
+        The ramp with no non-linearity
+    nonlinearity: sequence
+        The non-linearity image to add to the ramp
+    offset: int
+        The non-linearity offset
+
+    Returns
+    -------
+    np.ndarray
+        The ramp with the added non-linearity
+    """
+    # Get the cube shape
+    shape = cube.shape
+
+    # Transpose linearity coefficient array
+    coeffs = np.transpose(nonlinearity, (0, 2, 1))
+
+    # Reverse coefficients, x, and y dimensions
+    coeffs = coeffs[::-1, ::-1, ::-1]
+
+    # Trim coeffs to subarray (nonlinearity ref file is FULL frame)
+    sl = SUB_SLICE['SUBSTRIP256' if shape[1] == 256 else 'SUBSTRIP96' if shape[1] == 96 else 'FULL']
+    coeffs = coeffs[:, sl, :]
+
+    # Make a new array for the ramp + non-linearity and subtract offset
+    newcube = cube - offset
+
+    # Evaluate polynomial at each pixel
+    newcube = np.polyval(coeffs, newcube)
+
+    # Put offset back in
+    newcube += offset
+
+    return newcube
+
 
 class HXRGNoise:
     """
@@ -109,155 +249,85 @@ class HXRGNoise:
     H2RG detectors. They are read out using four video outputs at
     1.e+5 pix/s/output.
     """
-
     # These class variables are common to all HxRG detectors
     nghxrg_version = 2.6 # Sofware version
 
-    def __init__(self, naxis1=None, naxis2=None, naxis3=None, n_out=None,
-                 dt=None, nroh=None, nfoh=None, pca0_file=None, verbose=False,
-                 reverse_scan_direction=False, reference_pixel_border_width=None,
-                 wind_mode='FULL', x0=0, y0=0, det_size=None):
+    def __init__(self, subarray, ngrps, dt=1.e-5, nroh=12, nfoh=1, reverse_scan_direction=False, verbose=False):
         """
         Simulate Teledyne HxRG+SIDECAR ASIC system noise.
 
-        Parameters:
-            naxis1      - X-dimension of the FITS cube
-            naxis2      - Y-dimension of the FITS cube
-            naxis3      - Z-dimension of the FITS cube
-                          (number of up-the-ramp samples)
-            n_out       - Number of detector outputs
-            nfoh        - New frame overhead in rows. This allows for a short
-                          wait at the end of a frame before starting the next
-                          one.
-            nroh        - New row overhead in pixels. This allows for a short
-                          wait at the end of a row before starting the next one.
-            dt          - Pixel dwell time in seconds
-            pca0_file   - Name of a FITS file that contains PCA-zero
-            verbose     - Enable this to provide status reporting
-            wind_mode   - 'FULL', 'STRIPE', or 'WINDOW' (JML)
-            x0/y0       - Pixel positions of subarray mode (JML)
-            det_size    - Pixel dimension of full detector (square), used only
-                          for WINDOW mode (JML)
-            reference_pixel_border_width - Width of reference pixel border
-                                           around image area
-            reverse_scan_direction - Enable this to reverse the fast scanner
-                                     readout directions. This
-                                     capability was added to support
-                                     Teledyne's programmable fast scan
-                                     readout directions. The default
-                                     setting =False corresponds to
-                                     what HxRG detectors default to
-                                     upon power up.
+        Parameters
+        ----------
+        subarray: str
+            The NIRISS subarray, ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
+        ngrps: int
+            Number of groups per integration
+        nfoh: int
+            New frame overhead in rows. This allows for a short wait at the end of a frame before
+            starting the next one.
+        nroh: int
+            New row overhead in pixels. This allows for a short wait at the end of a row before
+            starting the next one.
+        dt: float
+            Pixel dwell time in seconds
+        verbose: bool
+            Enable this to provide status reporting
+        reverse_scan_direction: bool
+            Enable this to reverse the fast scanner eadout directions. This capability was added to support
+            Teledyne's programmable fast scan readout directions. The default setting =False corresponds to
+            what HxRG detectors default to upon power up.
         """
+        # Save all arguments as attributes
+        self.__dict__.update({k: v for k, v in locals().items() if k != 'self'})
 
-        # ======================================================================
-        #
-        # DEFAULT CLOCKING PARAMETERS
-        #
-        # The following parameters define the default HxRG clocking pattern. The
-        # parameters that define the default noise model are defined in the
-        # mknoise() method.
-        #
-        # ======================================================================
+        # Subarray Mode
+        subarrays = ['SUBSTRIP96', 'SUBSTRIP256', 'FULL']
+        if subarray not in subarrays:
+            raise ValueError("{} not a valid subarray. Please use {}".format(subarray, subarrays))
 
-        # Subarray Mode? (JML)
-        if wind_mode is None:
-            wind_mode = 'FULL'
-        if det_size is None:
-            det_size = 2048
-        wind_mode = wind_mode.upper()
-        modes = ['FULL', 'STRIPE', 'WINDOW']
-        if wind_mode not in modes:
-            _log.warn('%s not a valid window readout mode! Returning...' % inst_params['wind_mode'])
-            os.sys.exit()
-        if wind_mode == 'WINDOW':
-            n_out = 1
-        if wind_mode == 'FULL':
-            x0 = 0; y0 = 0
-        if wind_mode == 'STRIPE':
-            x0 = 0
+        # Get subarray detector settings
+        self.sub_specs = utils.subarray_specs(subarray)
+        self.row_slice = SUB_SLICE[self.subarray]
+        self.nrows = self.sub_specs['y']
+        self.ncols = self.sub_specs['x']
+        self.ref_all = np.array([self.sub_specs[i] for i in ['y1', 'y2', 'x1', 'x2']])
+        self.x0 = 0
+        self.y0 = 0 if subarray == 'FULL' else 1792
+        self.x1 = 4
+        self.x2 = 2040
+        self.y1 = 4 if subarray == 'FULL' else 1792
+        self.y2 = self.y1 + self.nrows - self.sub_specs['y2']
+        self.n_out = 4 if subarray == 'FULL' else 1
 
-        # Default clocking pattern is JWST NIRSpec
-        self.naxis1    = 2048  if naxis1   is None else naxis1
-        self.naxis2    = 2048  if naxis2   is None else naxis2
-        self.naxis3    = 1     if naxis3   is None else naxis3
-        self.n_out     = 4     if n_out    is None else n_out
-        self.dt        = 1.e-5 if dt       is None else dt
-        self.nroh      = 12    if nroh     is None else nroh
-        self.nfoh      = 1     if nfoh     is None else nfoh
-        self.reference_pixel_border_width = 4 if reference_pixel_border_width is None \
-                                              else reference_pixel_border_width
-                                              
-        # Check that det_size is greater than self.naxis1 and self.naxis2 in WINDOW mode (JML)
-        if wind_mode == 'WINDOW':
-            if (self.naxis1 > det_size):
-                _log.warn('NAXIS1 %s greater than det_size %s! Returning...' % (self.naxis1,det_size))
-                os.sys.exit()
-            if (self.naxis2 > det_size):
-                _log.warn('NAXIS2 %s greater than det_size %s! Returning...' % (self.naxis1,det_size))
-                os.sys.exit()
-                
+        # Compute the number of pixels in the fast-scan direction per output
+        self.xsize = self.nrows // self.n_out
 
-        # Initialize PCA-zero file and make sure that it exists and is a file
-        path=os.getenv('NIRISS_NOISE_HOME')
-        if path is None:
-                  path='.'
-        self.pca0_file = path+'/niriss_pca0.fits' if \
-            pca0_file is None else pca0_file
-        if os.path.isfile(self.pca0_file) is False:
-            print('There was an error finding pca0_file! Check to be')
-            print('sure that the NIRISS_NOISE_HOME shell environment')
-            print('variable is set correctly and that the')
-            print('$NIRISS_NOISE_HOME/ directory contains the desired PCA0')
-            print('file. The default is niriss_pca0.fits.')
-            os.sys.exit()
+        # Compute the number of time steps per integration, per output
+        self.nstep = (self.xsize + self.nroh) * (self.ncols + self.nfoh) * self.ngrps
 
-
-        # ======================================================================
-
-        # Configure Subarray (JML)
-        self.wind_mode = wind_mode
-        self.det_size  = det_size
-        self.x0 = x0
-        self.y0 = y0
-
-        # Configure status reporting
-        self.verbose = verbose
-
-        # Configure readout direction
-        self.reverse_scan_direction = reverse_scan_direction
-    
-        # Compute the number of pixels in the fast-scan direction per
-        # output
-        self.xsize = self.naxis1 // self.n_out
-            
-        # Compute the number of time steps per integration, per
-        # output
-        self.nstep = (self.xsize+self.nroh) * (self.naxis2+self.nfoh) * self.naxis3
         # Pad nsteps to a power of 2, which is much faster (JML)
         self.nstep2 = int(2**np.ceil(np.log2(self.nstep)))
 
         # For adding in ACN, it is handy to have masks of the even
         # and odd pixels on one output neglecting any gaps
-        self.m_even = np.zeros((self.naxis3,self.naxis2,self.xsize))
+        self.m_even = np.zeros((self.ngrps, self.ncols, self.xsize))
         self.m_odd = np.zeros_like(self.m_even)
-        for x in np.arange(0,self.xsize,2):
-            self.m_even[:,:self.naxis2,x] = 1
-            self.m_odd[:,:self.naxis2,x+1] = 1
+        for x in np.arange(0, self.xsize, 2):
+            self.m_even[:, :self.ncols, x] = 1
+            self.m_odd[:, :self.ncols, x + 1] = 1
         self.m_even = np.reshape(self.m_even, np.size(self.m_even))
         self.m_odd = np.reshape(self.m_odd, np.size(self.m_odd))
 
         # Also for adding in ACN, we need a mask that point to just
         # the real pixels in ordered vectors of just the even or odd
         # pixels
-        self.m_short = np.zeros((self.naxis3, self.naxis2+self.nfoh, \
-                                      (self.xsize+self.nroh)//2))
-        self.m_short[:,:self.naxis2,:self.xsize//2] = 1
+        self.m_short = np.zeros((self.ngrps, self.ncols + self.nfoh, (self.xsize + self.nroh) // 2))
+        self.m_short[:, :self.ncols, :self.xsize // 2] = 1
         self.m_short = np.reshape(self.m_short, np.size(self.m_short))
 
         # Define frequency arrays
         self.f1 = np.fft.rfftfreq(self.nstep2) # Frequencies for nstep elements
-        self.f2 = np.fft.rfftfreq(2*self.nstep2) # ... for 2*nstep elements
+        self.f2 = np.fft.rfftfreq(2 * self.nstep2) # ... for 2*nstep elements
 
         # Define pinkening filters. F1 and p_filter1 are used to
         # generate ACN. F2 and p_filter2 are used to generate 1/f noise.
@@ -267,172 +337,147 @@ class HXRGNoise:
         self.p_filter1[0] = 0.
         self.p_filter2[0] = 0.
 
+        # Reset the calculations
+        self.reset()
 
-        # Initialize pca0. This includes scaling to the correct size,
-        # zero offsetting, and renormalization. We use robust statistics
-        # because pca0 is real data
-        hdu = fits.open(self.pca0_file)
-        nx_pca0 = hdu[0].header['naxis1']
-        ny_pca0 = hdu[0].header['naxis2']
+    def reset(self):
+        """
+        Reset calculations
+        """
+        # Dictionary for tracking noise contributions
+        sources = ['dark_current', 'bias_pattern', 'read_noise', 'corr_pink_noise', 'uncorr_pink_noise',
+                   'alt_col_noise', 'pca0_noise', 'pedestal_drift']
+        self.noise_sources = {source: [] for source in sources}
+        self.nints = 0
 
-        # Do this slightly differently, taking into account the 
-        # different types of readout modes (JML)
-        #if (nx_pca0 != self.naxis1 or naxis2 != self.naxis2):
-        #    zoom_factor = self.naxis1 / nx_pca0
-        #    self.pca0 = zoom(hdu[0].data, zoom_factor, order=1, mode='wrap')
-        #else:
-        #    self.pca0 = hdu[0].data
-        #self.pca0 -= np.median(self.pca0) # Zero offset
-        #self.pca0 /= (1.4826*mad(self.pca0)) # Renormalize
+    def calculate_dark_current(self, dark_current, gain, floor=0.0000001):
+        """
+        Generate dark current image
 
-        data = hdu[0].data        
-        # Make sure the real PCA image is correctly scaled to size of fake data (JML)
-        # Depends if we're FULL, STRIPE, or WINDOW
-        if wind_mode == 'FULL':
-            scale1 = self.naxis1 / nx_pca0
-            scale2 = self.naxis2 / ny_pca0
-            zoom_factor = np.max([scale1, scale2])
-        if wind_mode == 'STRIPE':
-            zoom_factor = self.naxis1 / nx_pca0
-        if wind_mode == 'WINDOW':
-            # Scale based on det_size
-            scale1 = self.det_size / nx_pca0
-            scale2 = self.det_size / ny_pca0
-            zoom_factor = np.max([scale1, scale2])
-        
-        # Resize PCA0 data
-        if zoom_factor != 1:
-            data = zoom(data, zoom_factor, order=1, mode='wrap')
+        Parameters
+        ----------
+        dark_current: str, array_like
+            The dark current data or reference file to use
+        gain: float
+            The gain in electrons/ADU
+        floor: float
+            The minimum dark current value for a pixel
+        """
+        # Read in the dark current data
+        if isinstance(dark_current, str):
+            dark_current = fits.getdata(dark_current)
 
-        data -= np.median(data) # Zero offset
-        data /= (1.4826*mad(data)) # Renormalize
-    
-        # Select region of pca0 associated with window position
-        if self.wind_mode == 'WINDOW':
-            x1 = self.x0; y1 = self.y0
-        elif self.wind_mode == 'STRIPE':
-            x1 = 0; y1 = self.y0
-        else:
-            x1 = 0; y1 = 0
-    
-        # print(y1, self.naxis2) This appears to be a stub
-        x2 = x1 + self.naxis1
-        y2 = y1 + self.naxis2
-        # Make sure x2 and y2 are valid
-        if (x2 > data.shape[0] or y2 > data.shape[1]):
-            _log.warn('Specified window size does not fit within detector array!')
-            _log.warn('X indices: [%s,%s]; Y indices: [%s,%s]; XY Size: [%s, %s]' % 
-                        (x1,x2,y1,y2,data.shape[0],data.shape[1]))
-            os.sys.exit()
-        self.pca0 = data[y1:y2,x1:x2]
-        
-        # How many reference pixels on each border?
-        w = self.reference_pixel_border_width # Easier to work with
-        lower = w-y1; upper = w-(det_size-y2)
-        left = w-x1; right = w-(det_size-x2)
-        ref_all = np.array([lower,upper,left,right])
-        ref_all[ref_all<0] = 0
-        self.ref_all = ref_all
+        # Take median dark current image and multiply by the gain
+        dark_current = np.median(dark_current, axis=0) * gain
 
+        # Set dark current floor
+        dark_current[np.where(dark_current <= floor)] = floor
+
+        # Save at attribute
+        self.dark_current = dark_current
+
+    def calculate_pca0(self, superbias):
+        """
+        Generate pca0 image from the superbias reference file
+
+        One needs to take the superbias reference file, find the mean and standard deviation values,
+        subtract the mean value, divide by the standard deviation value, and then transform to the
+        raw detector orientation.
+
+        Parameters
+        ----------
+        superbias: str, array_like
+            The superbias data or reference file to use
+        """
+        # Read in the superbias data
+        if isinstance(superbias, str):
+            superbias = fits.getdata(superbias_file)
+
+        # Get the mean and standard deviation
+        superbias_mean = np.nanmean(superbias)
+        superbias_std = np.nanstd(superbias)
+
+        # Normalize the superbias
+        superbias_norm = (superbias - superbias_mean) / superbias_std
+
+        # Set transposed pca0 array and STD
+        self.pca0 = superbias_norm.T
+        self.pca0_amp = np.nanstd(self.pca0)
 
     def message(self, message_text):
         """
         Used for status reporting
-        """
-        if self.verbose is True:
-            print('NG: ' + message_text + ' at DATETIME = ', \
-                  datetime.datetime.now().time())
 
-    def white_noise(self, nstep=None):
+        Parameters
+        ----------
+        message_text: str
+            The message to print
         """
-        Generate white noise for an HxRG including all time steps
-        (actual pixels and overheads).
+        if self.verbose:
+            print('NG: ' + message_text + ' at DATETIME = ', datetime.datetime.now().time())
 
-        Parameters:
-            nstep - Length of vector returned
+    def white_noise(self, mygen, nstep=None):
         """
-        return(np.random.standard_normal(nstep))    
+        Generate white noise for an HxRG including all time steps (actual pixels and overheads).
 
-    def pink_noise(self, mode):
+        Parameters
+        ----------
+        mygen: numpy.random._generator.Generator
+            The random seed generator
+        nstep: int
+            Length of vector returned
+        """
+        return(mygen.standard_normal(nstep))
+
+    def pink_noise(self, mygen, mode):
         """
         Generate a vector of non-periodic pink noise.
-  
-        Parameters:
-            mode - Selected from {'pink', 'acn'}
-        """
 
+        Parameters
+        ----------
+        mygen: numpy.random._generator.Generator
+            The random seed generator
+        mode: str
+            Pink noise mode, ['pink', 'acn']
+        """
         # Configure depending on mode setting
-        if mode is 'pink':
-            nstep  = 2*self.nstep
-            nstep2 = 2*self.nstep2 # JML
+        if mode == 'pink':
+            nstep = 2 * self.nstep
+            nstep2 = 2 * self.nstep2 # JML
             f = self.f2
             p_filter = self.p_filter2
+
         else:
-            nstep  = self.nstep
+            nstep = self.nstep
             nstep2 = self.nstep2 # JML
             f = self.f1
             p_filter = self.p_filter1
 
         # Generate seed noise
-        mynoise = self.white_noise(nstep2)
-  
+        mynoise = self.white_noise(mygen, nstep2)
+
         # Save the mean and standard deviation of the first
         # half. These are restored later. We do not subtract the mean
         # here. This happens when we multiply the FFT by the pinkening
         # filter which has no power at f=0.
-        the_mean = np.mean(mynoise[:nstep2//2])
-        the_std = np.std(mynoise[:nstep2//2])
-  
+        the_mean = np.mean(mynoise[:nstep2 // 2])
+        the_std = np.std(mynoise[:nstep2 // 2])
+
         # Apply the pinkening filter.
         thefft = np.fft.rfft(mynoise)
         thefft = np.multiply(thefft, p_filter)
         result = np.fft.irfft(thefft)
-        result = result[:nstep//2] # Keep 1st half of nstep
+        result = result[:nstep // 2] # Keep 1st half of nstep
 
         # Restore the mean and standard deviation
         result *= the_std / np.std(result)
         result = result - np.mean(result) + the_mean
-          
-        # Done
+
         return(result)
 
-
-
-    def mknoise(self, rd_noise=None, pedestal=None, c_pink=None,
-                u_pink=None, acn=None, pca0_amp=None,
-                reference_pixel_noise_ratio=None, ktc_noise=None,
-                bias_offset=None, bias_amp=None, dark_current=None, dc_seed=None, gain=None, noise_seed=None):
+    def mknoise(self, rd_noise=5.0, pedestal_drift=4, c_pink=3, u_pink=1, acn=0.5, gain=1., superbias=None, reference_pixel_noise_ratio=0.8, ktc_noise=29., bias_offset=20994.06, bias_amp=5358.87, dark_current=None, dc_seed=0, noise_seed=0):
         """
-        Generate a FITS cube containing only noise.
-
-        Parameters:
-                    pedestal - Magnitude of pedestal drift in electrons
-            rd_noise - Standard deviation of read noise in electrons
-            c_pink   - Standard deviation of correlated pink noise in electrons
-            u_pink   - Standard deviation of uncorrelated pink noise in
-                       electrons
-            acn      - Standard deviation of alterating column noise in
-                       electrons
-            pca0     - Standard deviation of pca0 in electrons
-            reference_pixel_noise_ratio - Ratio of the standard deviation of
-                                          the reference pixels to the regular
-                                          pixels. Reference pixels are usually
-                                          a little lower noise.                                          
-            ktc_noise   - kTC noise in electrons. Set this equal to
-                          sqrt(k*T*C_pixel)/q_e, where k is Boltzmann's
-                          constant, T is detector temperature, and C_pixel is
-                          pixel capacitance. For an H2RG, the pixel capacitance
-                          is typically about 40 fF.
-            bias_offset - On average, integrations start here in electrons. Set
-                          this so that all pixels are in range.
-            bias_amp    - A multiplicative factor that we multiply PCA-zero by
-                          to simulate a bias pattern. This is completely
-                          independent from adding in "picture frame" noise.
-                        dark_current  The dark current signal in electrons/frame
-                        dc_seed       A seed value for the Poission noise generation
-                        gain          An optional gain value in electrons/ADU
-                        noise_seed    An optional seed value for the noise generation, to alloow
-                                      a simulation to be repeated
+        Generate a FITS cube containing only noise and the optional dark signal.
 
         Note1:
         Because of the noise correlations, there is no simple way to
@@ -441,179 +486,184 @@ class HXRGNoise:
         quadrature.
 
         Note2:
-        The units in the above are mostly "electrons". This follows convention
+        The units are mostly "electrons". This follows convention
         in the astronomical community. From a physics perspective, holes are
         actually the physical entity that is collected in Teledyne's p-on-n
         (p-type implants in n-type bulk) HgCdTe architecture.
-        """
 
+        Parameters
+        ----------
+        pedestal_drift:float
+            Magnitude of pedestal drift in electrons
+        rd_noise: float
+            Standard deviation of read noise in electrons
+        c_pink: float
+            Standard deviation of correlated pink noise in electrons
+        u_pink: float
+            Standard deviation of uncorrelated pink noise in electrons
+        acn: float
+            Standard deviation of alternating column noise in electrons
+        reference_pixel_noise_ratio: float
+            Ratio of the standard deviation of the reference pixels to the regular pixels.
+            Reference pixels are usually a little lower noise.
+        ktc_noise: float
+            kTC noise in electrons. Set this equal to sqrt(k*T*C_pixel)/q_e, where k is Boltzmann's
+            constant, T is detector temperature, and C_pixel is pixel capacitance. For an H2RG,
+            the pixel capacitance is typically about 40 fF.
+        bias_offset: float
+            On average, integrations start here in electrons. Set this so that all pixels are in range.
+        bias_amp: float
+            A multiplicative factor that we multiply PCA-zero by to simulate a bias pattern.
+            This is completely independent from adding in "picture frame" noise.
+        dark_current: float, array-like
+            The dark current signal in electrons/frame, a single value or an image of size 2048x2048
+        dc_seed: int
+            A seed value for the Poission noise generation
+        gain: float
+            Gain value in electrons/ADU
+        noise_seed: float
+            Seed value for the noise generation, to allow a simulation to be repeated
+
+        Returns
+        -------
+        array
+            The resulting noise cube
+        """
         self.message('Starting mknoise()')
 
-        # ======================================================================
-        #
-        # DEFAULT NOISE PARAMETERS
-        #
-        # These defaults create noise similar to that seen in the JWST NIRSpec.
-        #
-        # ======================================================================
+        # Set noise parameters
+        self.rd_noise = rd_noise
+        self.pedestal_drift = pedestal_drift
+        self.c_pink = c_pink
+        self.u_pink = u_pink
+        self.acn = acn
+        self.dc_seed = dc_seed if dc_seed > 0. else int(4294967280. * np.random.uniform()) + 10
+        self.gain = max(gain, 1.)
+        self.noise_seed = noise_seed
+        self.bias_offset = bias_offset
+        self.bias_amp = bias_amp
+        self.reference_pixel_noise_ratio = reference_pixel_noise_ratio
+        self.ktc_noise = ktc_noise
 
-        self.rd_noise  = 5.0      if rd_noise     is None else rd_noise
-        self.pedestal  = 4        if pedestal     is None else pedestal
-        self.c_pink    = 3        if c_pink       is None else c_pink
-        self.u_pink    = 1        if u_pink       is None else u_pink
-        self.acn       = 0.5      if acn          is None else acn
-        self.pca0_amp  = 0.2      if pca0_amp     is None else pca0_amp
-        self.dark_current = 0.0   if dark_current is None else dark_current
-        self.dc_seed   = 0        if dc_seed      is None else dc_seed
-        self.gain      = 1        if gain         is None else gain
-        self.noise_seed = 0       if noise_seed   is None else noise_seed
-        
-        if self.gain <= 0.:
-            self.gain=1.
-        
-        if self.dark_current <= 0.:
-            self.dark_current=0.
-        
-        if self.dc_seed <= 0:
-            self.dc_seed=long(4294967280.*np.random.uniform())+long(10)
+        # Generate pca0
+        self.calculate_pca0(superbias)
 
-        # Change this only if you know that your detector is different from a
-        # typical H2RG.
-        self.reference_pixel_noise_ratio = 0.8 if reference_pixel_noise_ratio is None else reference_pixel_noise_ratio
+        # Generate dark current
+        self.calculate_dark_current(dark_current, self.gain)
 
-        # These are used only when generating cubes. They are
-        # completely removed when the data are calibrated to
-        # correlated double sampling or slope images. We include
-        # them in here to make more realistic looking raw cubes.
-        self.ktc_noise = 29.     if ktc_noise   is None else ktc_noise 
-        # The following are from the NIRISS pedestal, in electrons
-        self.bias_offset = 20994.06  if bias_offset is None else bias_offset
-        self.bias_amp    = 5358.87  if bias_amp    is None else bias_amp
+        if self.dc_seed == self.noise_seed:
+            self.dc_seed = int(math.sqrt(self.dc_seed))
 
-        # ======================================================================
+        # Seed generators
+        rseed1 = np.random.SeedSequence(self.noise_seed)
+        mygen = np.random.default_rng(rseed1)
+        rseed2 = np.random.SeedSequence(self.dc_seed)
+        darkgen = np.random.default_rng(rseed2)
 
-        # Initialize the result cube. For up-the-ramp integrations,
-        # we also add a bias pattern. Otherwise, we assume
-        # that the aim was to simulate a two dimensional correlated
-        # double sampling image or slope image.
+        # Initialize the result cube
         self.message('Initializing results cube')
-        result = np.zeros((self.naxis3, self.naxis2, self.naxis1), \
-                          dtype=np.float32)
-        if self.naxis3 > 1:
-            # Inject a bias pattern and kTC noise. If there are no reference pixels,
-            # we know that we are dealing with a subarray. In this case, we do not
-            # inject any bias pattern for now.
-            #if self.reference_pixel_border_width > 0:
-            #    bias_pattern = self.pca0*self.bias_amp + self.bias_offset
-            #else:
-            #    bias_pattern = self.bias_offset
-            
+        result = np.zeros((self.ngrps, self.ncols, self.nrows), dtype=np.float32)
+
+        if self.ngrps > 1:
+
             # Always inject bias pattern. Works for WINDOW and STRIPE (JML)
-            bias_pattern = self.pca0*self.bias_amp + self.bias_offset
-            
+            bias_pattern = self.pca0 * self.bias_amp + self.bias_offset
+
             # Add in some kTC noise. Since this should always come out
             # in calibration, we do not attempt to model it in detail.
-            bias_pattern += self.ktc_noise * \
-                         np.random.standard_normal((self.naxis2, self.naxis1))
+            bias_pattern += self.ktc_noise * mygen.standard_normal((self.ncols, self.nrows))
 
-            # Ensure that there are no negative pixel values. Data cubes
-            # are converted to unsigned integer before writing.
-            #bias_pattern = np.where(bias_pattern < 0, 0, bias_pattern)
-            # Updated to conform to Python >=2.6. (JML)
-            #bias_pattern[bias_pattern < 0] = 0
-            # Actually, I think this makes the most sense to do at the very end (JML)
-        
             # Add in the bias pattern
-            for z in np.arange(self.naxis3):
-                result[z,:,:] += bias_pattern
+            for z in np.arange(self.ngrps):
+                result[z, :, :] += bias_pattern
 
-                # if the noise_seed is defined, set it ebfore doing the white 
-                # noise calculation
-                if self.noise_seed != 0:
-                  # The seed value must be positive (unsigned 32 bit integer)
-                  if self.noise_seed < 0:
-                    self.noise_seed= -self.noise_seed
-                  np.random.seed(self.noise_seed)
+            # Save it
+            self.noise_sources['bias_pattern'].append(self.noise_stats(result - bias_pattern))
+            del bias_pattern
 
         # Make white read noise. This is the same for all pixels.
         if self.rd_noise > 0:
             self.message('Generating rd_noise')
+            pre_rdnoise = copy(result)
             w = self.ref_all
-            r = self.reference_pixel_noise_ratio  # Easier to work with
-            for z in np.arange(self.naxis3):
-                here = np.zeros((self.naxis2, self.naxis1))
-                
+            r = self.reference_pixel_noise_ratio
+            for z in np.arange(self.ngrps):
+                read_noise = np.zeros((self.ncols, self.nrows))
+
                 # Noisy reference pixels for each side of detector
                 if w[0] > 0: # lower
-                    here[:w[0],:] = r * self.rd_noise * \
-                                    np.random.standard_normal((w[0],self.naxis1))
+                    read_noise[:w[0], :] = r * self.rd_noise *  mygen.standard_normal((w[0], self.nrows))
                 if w[1] > 0: # upper
-                    here[-w[1]:,:] = r * self.rd_noise * \
-                                    np.random.standard_normal((w[1],self.naxis1))
+                    read_noise[-w[1]:, :] = r * self.rd_noise *  mygen.standard_normal((w[1], self.nrows))
                 if w[2] > 0: # left
-                    here[:,:w[2]] = r * self.rd_noise * \
-                                    np.random.standard_normal((self.naxis2,w[2]))
+                    read_noise[:, :w[2]] = r * self.rd_noise *  mygen.standard_normal((self.ncols, w[2]))
                 if w[3] > 0: # right
-                    here[:,-w[3]:] = r * self.rd_noise * \
-                                    np.random.standard_normal((self.naxis2,w[3]))
-                                    
+                    read_noise[:, -w[3]:] = r * self.rd_noise * mygen.standard_normal((self.ncols, w[3]))
+
                 # Noisy regular pixels
                 if np.sum(w) > 0: # Ref. pixels exist in frame
-                    here[w[0]:self.naxis2-w[1],w[2]:self.naxis1-w[3]] = self.rd_noise * \
-                                      np.random.standard_normal(\
-                                      (self.naxis2-w[0]-w[1],self.naxis1-w[2]-w[3]))
+                    read_noise[w[0]:self.ncols-w[1],w[2]:self.nrows-w[3]] = self.rd_noise * mygen.standard_normal((self.ncols - w[0] - w[1], self.nrows - w[2] - w[3]))
                 else: # No Ref. pixels, so add only regular pixels
-                    here = self.rd_noise * np.random.standard_normal((self.naxis2,self.naxis1))
-                
-                # Add the noise in to the result
-                result[z,:,:] += here
+                    read_noise = self.rd_noise * mygen.standard_normal((self.ncols, self.nrows))
 
+                # Add the noise in to the result
+                result[z, :, :] += read_noise
+
+            # Save it
+            self.noise_sources['read_noise'].append(self.noise_stats(result - pre_rdnoise))
+            del read_noise, pre_rdnoise
 
         # Add correlated pink noise.
         if self.c_pink > 0:
             self.message('Adding c_pink noise')
-            tt = self.c_pink * self.pink_noise('pink') # tt is a temp. variable
-            tt = np.reshape(tt, (self.naxis3, self.naxis2+self.nfoh, \
-                                 self.xsize+self.nroh))[:,:self.naxis2,:self.xsize]
+            pre_cpink = copy(result)
+            corr_pink = self.c_pink * self.pink_noise(mygen, 'pink')
+            corr_pink = np.reshape(corr_pink, (self.ngrps, self.ncols + self.nfoh, self.xsize + self.nroh))[:, :self.ncols, :self.xsize]
             for op in np.arange(self.n_out):
                 x0 = op * self.xsize
                 x1 = x0 + self.xsize
+
                 # By default fast-scan readout direction is [-->,<--,-->,<--]
                 # If reverse_scan_direction is True, then [<--,-->,<--,-->]
                 # Would be nice to include option for all --> or all <--
                 modnum = 1 if self.reverse_scan_direction else 0
                 if np.mod(op,2) == modnum:
-                    result[:,:,x0:x1] += tt
+                    result[:, :, x0:x1] += corr_pink
                 else:
-                    result[:,:,x0:x1] += tt[:,:,::-1]
+                    result[:, :, x0:x1] += corr_pink[:, :, ::-1]
 
-
-            
+            # Save it
+            self.noise_sources['corr_pink_noise'].append(self.noise_stats(result - pre_cpink))
+            del corr_pink, pre_cpink
 
         # Add uncorrelated pink noise. Because this pink noise is stationary and
         # different for each output, we don't need to flip it.
         if self.u_pink > 0:
             self.message('Adding u_pink noise')
+            pre_upink = copy(result)
             for op in np.arange(self.n_out):
                 x0 = op * self.xsize
                 x1 = x0 + self.xsize
-                tt = self.u_pink * self.pink_noise('pink')
-                tt = np.reshape(tt, (self.naxis3, self.naxis2+self.nfoh, \
-                                 self.xsize+self.nroh))[:,:self.naxis2,:self.xsize]
-                result[:,:,x0:x1] += tt
+                uncorr_pink = self.u_pink * self.pink_noise(mygen, 'pink')
+                uncorr_pink = np.reshape(uncorr_pink, (self.ngrps, self.ncols + self.nfoh, self.xsize + self.nroh))[:, :self.ncols, :self.xsize]
+                result[:, :, x0:x1] += uncorr_pink
 
+            # Save it
+            self.noise_sources['uncorr_pink_noise'].append(self.noise_stats(result - pre_upink))
+            del pre_upink
 
         # Add ACN
         if self.acn > 0:
             self.message('Adding acn noise')
+            pre_acn = copy(result)
             for op in np.arange(self.n_out):
 
                 # Generate new pink noise for each even and odd vector.
                 # We give these the abstract names 'a' and 'b' so that we
                 # can use a previously worked out formula to turn them
                 # back into an image section.
-                a = self.acn * self.pink_noise('acn')
-                b = self.acn * self.pink_noise('acn')
+                a = self.acn * self.pink_noise(mygen, 'acn')
+                b = self.acn * self.pink_noise(mygen, 'acn')
 
                 # Pick out just the real pixels (i.e. ignore the gaps)
                 a = a[np.where(self.m_short == 1)]
@@ -621,68 +671,144 @@ class HXRGNoise:
 
                 # Reformat into an image section. This uses the formula
                 # mentioned above.
-                acn_cube = np.reshape(np.transpose(np.vstack((a,b))),
-                                      (self.naxis3,self.naxis2,self.xsize))
+                acn_cube = np.reshape(np.transpose(np.vstack((a,b))), (self.ngrps,self.ncols,self.xsize))
 
                 # Add in the ACN. Because pink noise is stationary, we can
                 # ignore the readout directions. There is no need to flip
                 # acn_cube before adding it in.
                 x0 = op * self.xsize
                 x1 = x0 + self.xsize
-                result[:,:,x0:x1] += acn_cube
+                result[:, :, x0:x1] += acn_cube
 
+            # Save it
+            self.noise_sources['alt_col_noise'].append(self.noise_stats(result - pre_acn))
+            del acn_cube, pre_acn
 
         # Add PCA-zero. The PCA-zero template is modulated by 1/f.
         if self.pca0_amp > 0:
             self.message('Adding PCA-zero "picture frame" noise')
-            gamma = self.pink_noise(mode='pink')
-            zoom_factor = self.naxis2 * self.naxis3 / np.size(gamma)
+            gamma = self.pink_noise(mygen, mode='pink')
+            zoom_factor = self.ncols * self.ngrps / np.size(gamma)
             gamma = zoom(gamma, zoom_factor, order=1, mode='mirror')
-            gamma = np.reshape(gamma, (self.naxis3,self.naxis2))
-            for z in np.arange(self.naxis3):
-                for y in np.arange(self.naxis2):
-                    result[z,y,:] += self.pca0_amp*self.pca0[y,:]*gamma[z,y]
+            gamma = np.reshape(gamma, (self.ngrps, self.ncols))
+            pre_pca0 = copy(result)
+            for z in np.arange(self.ngrps):
+                for y in np.arange(self.ncols):
+                    result[z, y, :] += self.pca0_amp * self.pca0[y, :] * gamma[z, y]
 
-                # add in channel offsets
-                if self.pedestal > 0.:
-                  self.message('Adding pedestal drift')
-                  offsets=np.random.standard_normal((self.n_out,self.naxis3))
-                  for z in range(self.naxis3):
-                    x0=0
-                    for n in range(self.n_out):
-                      result[z,:,x0:x0+self.xsize]=result[z,:,x0:x0+self.xsize]+self.pedestal*offsets[n,z]
-                      x0=x0+self.xsize
+            # Save it
+            self.noise_sources['pca0_noise'].append(self.noise_stats(result - pre_pca0))
+            del pre_pca0
 
-                if self.dark_current > 0.:
-                  self.message('Adding dark current')
-                  np.random.seed(self.dc_seed)
-                  dark=result*0.
-                  w=self.ref_all
-                  for ind in range(self.naxis3):
-                    frame=np.random.poisson(self.dark_current,(self.naxis2,self.naxis1))
-                    if w[0] > 0:
-                      frame[:w[0],:]=0.
-                    if w[1] > 0:
-                      frame[-w[1]:,:]=0.
-                    if w[2] > 0:
-                      frame[:,0:w[2]]=0.
-                    if w[3] > 0:
-                      frame[:,-w[3]:]=0.
-                    if ind == 0:
-                      dark[ind,:,:]=frame
-                    else:
-                      dark[ind,:,:]=dark[ind-1,:,:]+frame  
-                  result=result+dark                  
+        # Add in channel offsets
+        if self.pedestal_drift > 0.:
+            self.message('Adding pedestal drift')
+            offsets = mygen.standard_normal((self.n_out, self.ngrps))
+            pre_drift = copy(result)
+            for z in range(self.ngrps):
+                x0 = 0
+                for n in range(self.n_out):
+                    result[z, :, x0:x0 + self.xsize] = result[z, :, x0:x0 + self.xsize] + self.pedestal_drift * offsets[n, z]
+                    x0 = x0 + self.xsize
 
-        # If the data cube has only 1 frame, reformat into a 2-dimensional
-        # image.
-        if self.naxis3 == 1:
+            # Save it
+            self.noise_sources['pedestal_drift'].append(self.noise_stats(result - pre_drift))
+            del pre_drift
+
+        # Add in dark current
+        if self.dark_current is not None:
+            self.message('Adding dark current')
+            pre_dark = copy(result)
+
+            # Generate dark current with Poisson distribution sampling
+            dark = darkgen.poisson(self.dark_current, (self.ngrps, self.nrows, self.ncols))
+
+            # Make dark current count cumulative
+            dark = np.cumsum(dark, axis=0)
+
+            # Zero out reference pixels
+            dark = add_refpix(dark)
+
+            # What's this for?
+            # for n1 in range(self.nrows):
+            #     for n2 in range(self.ncols):
+            #         values = darkgen.poisson(lam=self.dark_current[n1, n2], size=self.ngrps)
+            #         cvalues = np.cumsum(values)
+            #         result[:, n2, n1] = result[:, n2, n1] + cvalues
+
+            # Add dark current to data
+            result = result + np.transpose(dark, (0, 2, 1))
+
+            # Save it
+            self.noise_sources['dark_current'].append(list(np.nanmean(result - pre_dark, axis=(1, 2))))
+            del pre_dark
+
+        # If the data cube has only 1 frame, reformat into a 2-dimensional image
+        if self.ngrps == 1:
             self.message('Reformatting cube into image')
-            result = result[0,:,:]
+            result = result[0, :, :]
 
         if self.gain != 1:
-                  result=result/self.gain
+            result = result / self.gain
 
-        self.message('Exiting mknoise()')
-        
+        # Transpose to (frame, nrows, ncols)
+        result = np.transpose(result, (0, 2, 1))
+
+        self.nints += 1
+
         return result
+
+    @staticmethod
+    def noise_stats(data, func=np.nanmax, axis=(1, 2)):
+        """
+        Calculate some statistic for the given noise data
+
+        Parameters
+        ----------
+        data: array-like
+            The data to analyze
+        func: function
+            The function to use
+        axis: tuple, int
+            The axis over which to apply the function
+
+        Returns
+        -------
+        float
+            The calculated statistic
+        """
+        return list(func(data, axis=axis))
+
+
+def make_photon_yield(photon_yield, orders):
+    """
+    Generates a map of the photon yield for each order.
+    The shape of both arrays should be [order, nrows, ncols]
+
+    Parameters
+    ----------
+    photon_yield: array-like
+        An array for the calculated photon yield at each pixel
+    orders: sequence
+        An array of the median image of each order
+
+    Returns
+    -------
+    np.ndarray
+        The array containing the photon yield map for each order
+    """
+    # Get the shape and create empty arrays
+    dims = orders.shape
+    sum1 = np.zeros((dims[1], dims[2]), dtype=np.float32)
+    sum2 = np.zeros((dims[1], dims[2]), dtype=np.float32)
+
+    # Add the photon yield for each order
+    for n in range(dims[0]):
+        sum1 = sum1 + photon_yield[n, :, :] * orders[n, :, :]
+        sum2 = sum2 + orders[n, :, :]
+
+    # Take the ratio of the photon yield to the signal
+    pyimage = sum1 / sum2
+    pyimage[np.where(sum2 == 0.)] = 1.
+
+    return pyimage
