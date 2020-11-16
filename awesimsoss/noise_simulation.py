@@ -197,202 +197,48 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
     return newcube
 
 
-def add_nonlinearity(ramparr, coeffarr):
+def add_nonlinearity(cube, nonlinearity, offset=0):
     """
-    Apply non-linearity correction to individual groups in ramparr where dq
-    has not been flagged as saturated in the saturation step with dq_flag.
-
-    Reference:
-    http://www.stsci.edu/hst/wfc3/documents/handbooks/currentDHB/wfc3_Ch606.html
-    WFC3 Data Handbook, Chapter 6, WFC3-IR Error Sources, 6.5 Detector
-    Nonlinearity issues, 2.1 May 2011
-
-    Scorr = Smeasured(1+A+B*Smeasured+C*Smeasured^2+D*Smeasured^3+...)
+    Add pixel nonlinearity effects to the ramp using the procedure outlined in
+    /grp/jwst/wit/niriss/CDP-2/documentation/niriss_linearity.docx
 
     Parameters
     ----------
-    ramparr: array-like
-        4D array containing ramp data
-    dqarr: array-like
-        4D array containing DQ information
-    coeffarr: array-like
-        3D array containing pixel-by-pixel linearity coefficient values
-        for each term in the polynomial fit.
-    dq_flag: array-like
-        Integer value representing the saturation flag value that was
-        applied to dqarr by the saturation step
+    cube: sequence
+        The ramp with no non-linearity
+    nonlinearity: sequence
+        The non-linearity image to add to the ramp
+    offset: int
+        The non-linearity offset
 
     Returns
     -------
-    ramparr
-        Non-linearity added 4D ramp array
+    np.ndarray
+        The ramp with the added non-linearity
     """
-    # Retrieve the ramp data cube characteristics
-    ngroups, nrows, ncols = ramparr.shape
+    # Get the cube shape
+    shape = cube.shape
 
-    # Number of coeffs is equal to the number of planes in coeff cube
-    ncoeffs = coeffarr.shape[0]
+    # Transpose linearity coefficient array
+    coeffs = np.transpose(nonlinearity, (0, 2, 1))
+
+    # Reverse coefficients, x, and y dimensions
+    coeffs = coeffs[::-1, ::-1, ::-1]
 
     # Trim coeffs to subarray (nonlinearity ref file is FULL frame)
-    sl = SUB_SLICE['SUBSTRIP256' if nrows == 256 else 'SUBSTRIP96' if nrows == 96 else 'FULL']
-    coeffarr = coeffarr[:, sl, :]
+    sl = SUB_SLICE['SUBSTRIP256' if shape[1] == 256 else 'SUBSTRIP96' if shape[1] == 96 else 'FULL']
+    coeffs = coeffs[:, sl, :]
 
-    # Apply the linearity correction one group at a time
-    start = datetime.datetime.now()
-    for ngrp, group in enumerate(ramparr):
+    # Make a new array for the ramp + non-linearity and subtract offset
+    newcube = cube - offset
 
-        # Set up polynomial equations
-        coeffs = coeffarr.copy()
-        coeffs[-1] -= group
+    # Evaluate polynomial at each pixel
+    newcube = np.polyval(coeffs, newcube)
 
-        # Calculate the roots of the polynomial
-        roots = [[root(np.poly1d(coeffs[:, i, j]), [0, 0], jac=None, method='hybr') for i in range(nrows)] for j in range(ncols)]
+    # Put offset back in
+    newcube += offset
 
-        # Find largest positive solution
-        scorr = np.array([[roots[i][j].x for i in range(nrows)] for j in range(ncols)])[:, :, -1]
-
-        # Update ramp array
-        ramparr[ngrp, :, :] = scorr
-
-    del scorr
-    print('Time it:', (datetime.datetime.now() - start).strftime('%s'))
-
-    # def solve_for_x(y_val, coeffs):
-    #     """
-    #     Function to solve for the polynomial roots given the coefficients and y value
-    #
-    #     Parameters
-    #     ----------
-    #     y_val: float
-    #         The result of the evaluated polynomial
-    #     coeffs: np.ndarray
-    #         The array of coefficients
-    #
-    #     Returns
-    #     -------
-    #     x_val: float
-    #         The positive root of the polynomial equation
-    #     """
-    #     pc = coeffs.copy()
-    #     pc[-1] -= y_val
-    #     return np.roots(pc)[-1]
-    #
-    # # Apply the linearity correction one group at a time
-    # for ngrp, group in enumerate(ramparr):
-    #
-    #     scorr = np.zeros((nrows, ncols))
-    #     for i in range(nrows):
-    #         for j in range(ncols):
-    #             coeffs = coeffarr[:, i, j]
-    #             scorr[i, j] = solve_for_x(group[i, j], coeffs)
-    #
-    #     # Update ramp array
-    #     ramparr[ngrp, :, :] = scorr
-    #
-    # del scorr
-
-    return ramparr
-
-
-# def add_nonlinearity(ramparr, coeffarr):
-#     """
-#     Apply non-linearity correction to individual groups in ramparr where dq
-#     has not been flagged as saturated in the saturation step with dq_flag.
-#
-#     Reference:
-#     http://www.stsci.edu/hst/wfc3/documents/handbooks/currentDHB/wfc3_Ch606.html
-#     WFC3 Data Handbook, Chapter 6, WFC3-IR Error Sources, 6.5 Detector
-#     Nonlinearity issues, 2.1 May 2011
-#
-#     Scorr = Smeasured(1+A+B*Smeasured+C*Smeasured^2+D*Smeasured^3+...)
-#
-#     Parameters
-#     ----------
-#     ramparr: array-like
-#         4D array containing ramp data
-#     dqarr: array-like
-#         4D array containing DQ information
-#     coeffarr: array-like
-#         3D array containing pixel-by-pixel linearity coefficient values
-#         for each term in the polynomial fit.
-#     dq_flag: array-like
-#         Integer value representing the saturation flag value that was
-#         applied to dqarr by the saturation step
-#
-#     Returns
-#     -------
-#     ramparr
-#         Non-linearity added 4D ramp array
-#     """
-#     # Retrieve the ramp data cube characteristics
-#     ngroups, nrows, ncols = ramparr.shape
-#
-#     # Number of coeffs is equal to the number of planes in coeff cube
-#     ncoeffs = coeffarr.shape[0]
-#
-#     # Trim coeffs to subarray (nonlinearity ref file is FULL frame)
-#     sl = SUB_SLICE['SUBSTRIP256' if nrows == 256 else 'SUBSTRIP96' if nrows == 96 else 'FULL']
-#     coeffarr = coeffarr[:, sl, :]
-#
-#     # Apply the linearity correction one group at a time
-#     for plane in range(ngroups):
-#
-#         # Accumulate the polynomial terms into the corrected counts
-#         scorr = coeffarr[ncoeffs - 1] * ramparr[plane]
-#         for j in range(ncoeffs - 2, 0, -1):
-#             scorr = (scorr + coeffarr[j]) * ramparr[plane]
-#         scorr = coeffarr[0] + scorr
-#
-#         # Update ramp array
-#         ramparr[plane, :, :] = scorr
-#
-#     del scorr
-#
-#     return ramparr
-
-
-# def add_nonlinearity(cube, nonlinearity, offset=0):
-#     """
-#     Add pixel nonlinearity effects to the ramp using the procedure outlined in
-#     /grp/jwst/wit/niriss/CDP-2/documentation/niriss_linearity.docx
-#
-#     Parameters
-#     ----------
-#     cube: sequence
-#         The ramp with no non-linearity
-#     nonlinearity: sequence
-#         The non-linearity image to add to the ramp
-#     offset: int
-#         The non-linearity offset
-#
-#     Returns
-#     -------
-#     np.ndarray
-#         The ramp with the added non-linearity
-#     """
-#     # Get the cube shape
-#     shape = cube.shape
-#
-#     # Transpose linearity coefficient array
-#     coeffs = np.transpose(nonlinearity, (0, 2, 1))
-#
-#     # Reverse coefficients, x, and y dimensions
-#     coeffs = coeffs[::-1, ::-1, ::-1]
-#
-#     # Trim coeffs to subarray (nonlinearity ref file is FULL frame)
-#     sl = SUB_SLICE['SUBSTRIP256' if shape[1] == 256 else 'SUBSTRIP96' if shape[1] == 96 else 'FULL']
-#     coeffs = coeffs[:, sl, :]
-#
-#     # Make a new array for the ramp + non-linearity and subtract offset
-#     newcube = cube - offset
-#
-#     # Evaluate polynomial at each pixel
-#     newcube = np.polyval(coeffs, newcube)
-#
-#     # Put offset back in
-#     newcube += offset
-#
-#     return newcube
+    return newcube
 
 
 class HXRGNoise:
