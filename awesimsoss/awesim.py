@@ -79,7 +79,7 @@ class TSO(object):
     Generate NIRISS SOSS time series observations
     """
     def __init__(self, ngrps, nints, star=None, planet=None, tmodel=None, snr=700,
-                 filter='CLEAR', subarray='SUBSTRIP256', orders=[1, 2], nresets=1,
+                 filter='CLEAR', subarray='SUBSTRIP256', orders=[1, 2],
                  obs_date=None, target='New Target', title=None, verbose=True):
         """
         Initialize the TSO object and do all pre-calculations
@@ -102,8 +102,6 @@ class TSO(object):
             The name of the subarray to use, ['SUBSTRIP256', 'SUBSTRIP96', 'FULL']
         orders: int, list
             The orders to simulate, [1], [1, 2], [1, 2, 3]
-        nresets: int
-            The number of resets before each integration
         obs_date: str, datetime.datetime, astropy.time.Time
             The datetime of the start of the observation
         target: str (optional)
@@ -134,12 +132,19 @@ class TSO(object):
         # Set static values
         self._star = None
 
+        # Set NISRAPID values from PRD Datamodes
+        self.readpatt = 'NISRAPID'
+        self.groupgap = 0
+        self.nframes = self.nsample = 1
+        self.nresets = self.nresets1 = self.nresets2 = 1
+        self.dropframes1 = self.dropframes3 = 0
+
         # Set instance attributes for the exposure
         self.obs_date = obs_date or Time.now()
         self.ngrps = ngrps
         self.nints = nints
-        self.nresets = nresets
-        self.nframes = self.ngrps * self.nints
+        self.total_groups = self.ngrps * self.nints
+
         self.orders = orders
         self.filter = filter
         self.header = ''
@@ -338,14 +343,15 @@ class TSO(object):
         mod.meta.exposure.type = 'NIS_SOSS'
         mod.meta.exposure.nints = self.nints
         mod.meta.exposure.ngroups = self.ngrps
-        mod.meta.exposure.nframes = 1#self.nframes
-        mod.meta.exposure.readpatt = 'NISRAPID'
-        mod.meta.exposure.groupgap = 0
+        mod.meta.exposure.nframes = self.nframes
+        mod.meta.exposure.readpatt = self.readpatt
+        mod.meta.exposure.groupgap = self.groupgap
         mod.meta.exposure.frame_time = self.frame_time
         mod.meta.exposure.group_time = self.group_time
-        mod.meta.exposure.duration = self.duration.to(q.s).value 
-        mod.meta.exposure.nresets_at_start = self.nresets
-        mod.meta.exposure.nresets_between_ints = self.nresets
+        mod.meta.exposure.exposure_time = self.exposure_time
+        mod.meta.exposure.duration = self.duration
+        mod.meta.exposure.nresets_at_start = self.nresets1
+        mod.meta.exposure.nresets_between_ints = self.nresets2
         mod.meta.subarray.name = self.subarray
         mod.meta.subarray.xsize = data.shape[3]
         mod.meta.subarray.ysize = data.shape[2]
@@ -769,7 +775,7 @@ class TSO(object):
 
             # Get frame time based on the subarray
             self.frame_time = self.subarray_specs.get('tfrm')
-            self.group_time = self.subarray_specs.get('tgrp')
+            self.group_time = (self.groupgap + self.nframes) * self.frame_time
 
             # The indexes of valid groups, skipping resets
             grp_idx = np.concatenate([np.arange(self.nresets, self.nresets + self.ngrps) + n * (self.nresets + self.ngrps) for n in range(self.nints)])
@@ -784,7 +790,9 @@ class TSO(object):
             self.time = self.obs_date + (dt * grp_idx)
 
             # Exposure duration
-            self.duration = TimeDelta(self.time.max() - self.obs_date, format='sec')
+            # self.duration = TimeDelta(self.time.max() - self.obs_date, format='sec')
+            self.exposure_time = self.frame_time * ( (self.ngrps * self.nframes + (self.ngrps - 1) * self.groupgap + self.dropframes1) * self.nints)
+            self.duration = self.exposure_time + self.frame_time * (self.dropframes3 * self.nints + self.nresets1 + self.nresets2 * (self.nints - 1))
 
     def _reset_psfs(self):
         """Scale the psf for each detector column to the flux from the 1D spectrum"""
@@ -917,8 +925,8 @@ class TSO(object):
         nframes_per_chunk = self.ngrps * nints_per_chunk
 
         # Chunk the time arrays
-        time_chunks = [self.time[i:i + nframes_per_chunk] for i in range(0, self.nframes, nframes_per_chunk)]
-        inttime_chunks = [self.inttime[i:i + nframes_per_chunk] for i in range(0, self.nframes, nframes_per_chunk)]
+        time_chunks = [self.time[i:i + nframes_per_chunk] for i in range(0, self.total_groups, nframes_per_chunk)]
+        inttime_chunks = [self.inttime[i:i + nframes_per_chunk] for i in range(0, self.total_groups, nframes_per_chunk)]
         n_chunks = len(time_chunks)
 
         # Iterate over chunks
@@ -1005,7 +1013,7 @@ class TSO(object):
         if self.subarray == 'FULL':
             for order in self.orders:
                 order_name = 'tso_order{}_ideal'.format(order)
-                full = np.zeros((self.nframes, 2048, 2048))
+                full = np.zeros((self.total_groups, 2048, 2048))
                 full[:, -256:, :] = getattr(self, order_name)
                 setattr(self, order_name, full)
                 del full
