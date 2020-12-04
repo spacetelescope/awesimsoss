@@ -260,6 +260,7 @@ class TSO(object):
         linearity = gf.reassemble(self.refs['linearity'])[1].data
         superbias = fits.getdata(self.refs['superbias'])
         dark_current = gf.reassemble(self.refs['dark'])[1].data
+        saturation = fits.getdata(self.refs['saturation'])
 
         # Other quantities
         photon_yield = ju.jwst_photyield_ref(self.subarray)
@@ -297,7 +298,8 @@ class TSO(object):
 
             # Apply the non-linearity function
             pre_nonlin = copy(ramp)
-            ramp = ns.add_nonlinearity(ramp, linearity)
+            # ramp = ns.add_nonlinearity(ramp, linearity)
+            ramp = ns.unlinearize(ramp, linearity, saturation)
             nonlin.append(list(np.nanmean(ramp - pre_nonlin, axis=(1, 2))))
             del pre_nonlin
 
