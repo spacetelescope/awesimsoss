@@ -298,7 +298,6 @@ class TSO(object):
 
             # Apply the non-linearity function
             pre_nonlin = copy(ramp)
-            # ramp = ns.add_nonlinearity(ramp, linearity)
             ramp = ns.unlinearize(ramp, linearity, saturation)
             nonlin.append(list(np.nanmean(ramp - pre_nonlin, axis=(1, 2))))
             del pre_nonlin

@@ -21,7 +21,8 @@ class test_ModelTSO(unittest.TestCase):
 
     def test_run_no_planet(self):
         """A test of the ModelTSO class with no planet"""
-        tso = ModelTSO()
+        tso = ModelTSO(stellar_model='ATLAS')
+        tso = ModelTSO(stellar_model='PHOENIX')
 
     def test_run_with_planet(self):
         """A test of the ModelTSO class with a planet"""
