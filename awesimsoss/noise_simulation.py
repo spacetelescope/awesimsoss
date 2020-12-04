@@ -197,16 +197,17 @@ def add_signal(signals, cube, pyimage, frametime, gain, zodi, zodi_scale, photon
     return newcube
 
 
-def unlinearize(image, coeffs, sat, maxiter=10, accuracy=0.000001):
+def unlinearize(image, nonlinearity, sat, maxiter=10, accuracy=0.000001):
     """
     Add non linearity to the ramp images
+    Modified from Bryan Hilbert's code: https://github.com/spacetelescope/mirage/blob/master/mirage/ramp_generator/unlinearize.py
 
     Parameters
     ----------
     image: array-like
         The image to unlinearize
-    coeffs: array-like
-        The coefficients from the nomlinearity reference file
+    nonlinearity: array-like
+        The 3D coefficients from the nonlinearity reference file
     sat: array-like
         Saturation map for the nonlinear ramps
     maxiter: int
@@ -222,6 +223,17 @@ def unlinearize(image, coeffs, sat, maxiter=10, accuracy=0.000001):
     # Check if the sizes of the satmap or coeffs are different than the data
     if sat.shape != image.shape[-2:]:
         raise ValueError(("WARNING: image y,x shape is {}, but input saturation map shape is {}.".format(image.shape[-2:], sat.shape)))
+
+    # Get the image shape
+    shape = image.shape
+
+    # Transpose linearity coefficient array (x and y switched in ref file)
+    # Reverse coefficients, x, and y dimensions (all 3 are backwards in ref file)
+    # Trim coeffs to subarray (ref file is FULL frame)
+    coeffs = np.transpose(nonlinearity, (0, 2, 1))
+    coeffs = coeffs[::-1, ::-1, ::-1]
+    sl = SUB_SLICE['SUBSTRIP256' if shape[1] == 256 else 'SUBSTRIP96' if shape[1] == 96 else 'FULL']
+    coeffs = coeffs[:, sl, :]
 
     # REWORK SO THAT THE LINARIZED SATURATION MAP IS AN INPUT
     # RATHER THAN BEING CREATED HERE. THIS IS BECAUSE THE SUPERBIAS
@@ -251,67 +263,20 @@ def unlinearize(image, coeffs, sat, maxiter=10, accuracy=0.000001):
     val = nonLinFunc(image, coeffs, sat)
     val[i2] = 1.
 
-    if robberto:
-        x = image * val
-    else:
-        x[i1] = (image[i1] + image[i1] / val[i1]) / 2.
-        while i < maxiter:
-            i = i + 1
-            val = nonLinFunc(x, coeffs, sat)
-            val[i2] = 1.
-            dev[i1] = np.abs(image[i1] / val[i1] - 1.)
-            inds = np.where(dev[i1] > accuracy)
-            if inds[0].size < 1:
-                break
-            val1 = nonLinDeriv(x, coeffs, sat)
-            val1[i2] = 1.
-            x[i1] = x[i1] + (image[i1] - val[i1]) / val1[i1]
+    x[i1] = (image[i1] + image[i1] / val[i1]) / 2.
+    while i < maxiter:
+        i = i + 1
+        val = nonLinFunc(x, coeffs, sat)
+        val[i2] = 1.
+        dev[i1] = np.abs(image[i1] / val[i1] - 1.)
+        inds = np.where(dev[i1] > accuracy)
+        if inds[0].size < 1:
+            break
+        val1 = nonLinDeriv(x, coeffs, sat)
+        val1[i2] = 1.
+        x[i1] = x[i1] + (image[i1] - val[i1]) / val1[i1]
 
     return x
-
-
-def add_nonlinearity(cube, nonlinearity, offset=0):
-    """
-    Add pixel nonlinearity effects to the ramp using the procedure outlined in
-    /grp/jwst/wit/niriss/CDP-2/documentation/niriss_linearity.docx
-
-    Parameters
-    ----------
-    cube: sequence
-        The ramp with no non-linearity
-    nonlinearity: sequence
-        The non-linearity image to add to the ramp
-    offset: int
-        The non-linearity offset
-
-    Returns
-    -------
-    np.ndarray
-        The ramp with the added non-linearity
-    """
-    # Get the cube shape
-    shape = cube.shape
-
-    # Transpose linearity coefficient array
-    coeffs = np.transpose(nonlinearity, (0, 2, 1))
-
-    # Reverse coefficients, x, and y dimensions
-    coeffs = coeffs[::-1, ::-1, ::-1]
-
-    # Trim coeffs to subarray (nonlinearity ref file is FULL frame)
-    sl = SUB_SLICE['SUBSTRIP256' if shape[1] == 256 else 'SUBSTRIP96' if shape[1] == 96 else 'FULL']
-    coeffs = coeffs[:, sl, :]
-
-    # Make a new array for the ramp + non-linearity and subtract offset
-    newcube = cube - offset
-
-    # Evaluate polynomial at each pixel
-    newcube = np.polyval(coeffs, newcube)
-
-    # Put offset back in
-    newcube += offset
-
-    return newcube
 
 
 class HXRGNoise:

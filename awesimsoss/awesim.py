@@ -260,7 +260,7 @@ class TSO(object):
         linearity = gf.reassemble(self.refs['linearity'])[1].data
         superbias = fits.getdata(self.refs['superbias'])
         dark_current = gf.reassemble(self.refs['dark'])[1].data
-        saturation = fits.getdata(self.refs['saturation'])
+        saturation = fits.getdata(self.refs['saturation'])[self.row_slice, :]
 
         # Other quantities
         photon_yield = ju.jwst_photyield_ref(self.subarray)
