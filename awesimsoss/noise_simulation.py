@@ -115,19 +115,13 @@ been changed and a couple of the defaults have been changed as well.
 from copy import copy
 import datetime
 import math
-import os
-from pkg_resources import resource_filename
 import warnings
 
-from astropy.io import fits
-from astropy.stats.funcs import median_absolute_deviation as mad
-import astropy.table as at
 from hotsoss import utils
 import numpy as np
 from scipy.ndimage.interpolation import zoom
-from scipy.optimize import root
 
-from .jwst_utils import SUB_SLICE, SUB_DIMS, add_refpix
+from .jwst_utils import SUB_SLICE, add_refpix
 
 warnings.filterwarnings('ignore')
 
@@ -514,7 +508,7 @@ class HXRGNoise:
 
         return(result)
 
-    def mknoise(self, rd_noise=5.0, pedestal_drift=4, c_pink=3, u_pink=1, acn=0.5, gain=1., superbias=None, reference_pixel_noise_ratio=0.8, ktc_noise=29., bias_offset=20994.06, bias_amp=5358.87, dark_current=None, dc_seed=0, noise_seed=0):
+    def mknoise(self, rd_noise=5.0, pedestal_drift=4, c_pink=3, u_pink=1, acn=0.5, gain=1., superbias=None, reference_pixel_noise_ratio=0.8, ktc_noise=29., bias_offset=20994.06, bias_amp=5358.87, dark_current=None, dc_seed=0, noise_seed=0, skip=[]):
         """
         Generate a FITS cube containing only noise and the optional dark signal.
 
@@ -562,6 +556,8 @@ class HXRGNoise:
             Gain value in electrons/ADU
         noise_seed: float
             Seed value for the noise generation, to allow a simulation to be repeated
+        skip: sequence
+            The names of the noise sources to skip
 
         Returns
         -------
@@ -600,12 +596,16 @@ class HXRGNoise:
         darkgen = np.random.default_rng(rseed2)
 
         # Initialize the result cube
-        self.message('Initializing results cube')
         result = np.zeros((self.ngrps, self.ncols, self.nrows), dtype=np.float32)
 
-        if self.ngrps > 1:
+        # ==========================================================================
+        # bias_pattern =============================================================
+        # ==========================================================================
+        if 'bias_pattern' not in skip:
 
-            # Always inject bias pattern. Works for WINDOW and STRIPE (JML)
+            self.message('Adding bias_pattern')
+
+            # Inject the bias pattern. Works for WINDOW and STRIPE (JML)
             bias_pattern = self.pca0 * self.bias_amp + self.bias_offset
 
             # Add in some kTC noise. Since this should always come out
@@ -616,14 +616,23 @@ class HXRGNoise:
             for z in np.arange(self.ngrps):
                 result[z, :, :] += bias_pattern
 
-            # Save it
-            self.noise_sources['bias_pattern'].append(self.noise_stats(result - bias_pattern))
-            del bias_pattern
+        else:
 
+            self.message('Skipping bias_pattern')
+            bias_pattern = np.zeros_like(result)
+
+        # Save it
+        self.noise_sources['bias_pattern'].append(self.noise_stats(result - bias_pattern))
+        del bias_pattern
+
+        # ==========================================================================
+        # read_noise ===============================================================
+        # ==========================================================================
         # Make white read noise. This is the same for all pixels.
-        if self.rd_noise > 0:
-            self.message('Generating rd_noise')
-            pre_rdnoise = copy(result)
+        pre_rdnoise = copy(result)
+        if self.rd_noise > 0 and 'read_noise' not in skip:
+
+            self.message('Adding read_noise')
             w = self.ref_all
             r = self.reference_pixel_noise_ratio
             for z in np.arange(self.ngrps):
@@ -648,14 +657,21 @@ class HXRGNoise:
                 # Add the noise in to the result
                 result[z, :, :] += read_noise
 
-            # Save it
-            self.noise_sources['read_noise'].append(self.noise_stats(result - pre_rdnoise))
-            del read_noise, pre_rdnoise
+        else:
 
+            self.message('Skipping read_noise')
+
+        # Save it
+        self.noise_sources['read_noise'].append(self.noise_stats(result - pre_rdnoise))
+        del pre_rdnoise
+
+        # ==========================================================================
+        # corr_pink_noise ==========================================================
+        # ==========================================================================
         # Add correlated pink noise.
-        if self.c_pink > 0:
-            self.message('Adding c_pink noise')
-            pre_cpink = copy(result)
+        pre_cpink = copy(result)
+        if self.c_pink > 0 and 'corr_pink_noise' not in skip:
+            self.message('Adding corr_pink_noise noise')
             corr_pink = self.c_pink * self.pink_noise(mygen, 'pink')
             corr_pink = np.reshape(corr_pink, (self.ngrps, self.ncols + self.nfoh, self.xsize + self.nroh))[:, :self.ncols, :self.xsize]
             for op in np.arange(self.n_out):
@@ -671,15 +687,22 @@ class HXRGNoise:
                 else:
                     result[:, :, x0:x1] += corr_pink[:, :, ::-1]
 
-            # Save it
-            self.noise_sources['corr_pink_noise'].append(self.noise_stats(result - pre_cpink))
-            del corr_pink, pre_cpink
+        else:
 
+            self.message('Skipping corr_pink_noise')
+
+        # Save it
+        self.noise_sources['corr_pink_noise'].append(self.noise_stats(result - pre_cpink))
+        del pre_cpink
+
+        # ==========================================================================
+        # uncorr_pink_noise ========================================================
+        # ==========================================================================
         # Add uncorrelated pink noise. Because this pink noise is stationary and
         # different for each output, we don't need to flip it.
-        if self.u_pink > 0:
-            self.message('Adding u_pink noise')
-            pre_upink = copy(result)
+        pre_upink = copy(result)
+        if self.u_pink > 0 and 'uncorr_pink_noise' not in skip:
+            self.message('Adding uncorr_pink_noise noise')
             for op in np.arange(self.n_out):
                 x0 = op * self.xsize
                 x1 = x0 + self.xsize
@@ -687,14 +710,21 @@ class HXRGNoise:
                 uncorr_pink = np.reshape(uncorr_pink, (self.ngrps, self.ncols + self.nfoh, self.xsize + self.nroh))[:, :self.ncols, :self.xsize]
                 result[:, :, x0:x1] += uncorr_pink
 
-            # Save it
-            self.noise_sources['uncorr_pink_noise'].append(self.noise_stats(result - pre_upink))
-            del pre_upink
+        else:
 
+            self.message('Skipping uncorr_pink_noise')
+
+        # Save it
+        self.noise_sources['uncorr_pink_noise'].append(self.noise_stats(result - pre_upink))
+        del pre_upink
+
+        # ==========================================================================
+        # alt_col_noise ============================================================
+        # ==========================================================================
         # Add ACN
-        if self.acn > 0:
-            self.message('Adding acn noise')
-            pre_acn = copy(result)
+        pre_acn = copy(result)
+        if self.acn > 0 and 'alt_col_noise' not in skip:
+            self.message('Adding alt_col_noise noise')
             for op in np.arange(self.n_out):
 
                 # Generate new pink noise for each even and odd vector.
@@ -719,45 +749,66 @@ class HXRGNoise:
                 x1 = x0 + self.xsize
                 result[:, :, x0:x1] += acn_cube
 
-            # Save it
-            self.noise_sources['alt_col_noise'].append(self.noise_stats(result - pre_acn))
-            del acn_cube, pre_acn
+        else:
 
+            self.message('Skipping alt_col_noise')
+
+        # Save it
+        self.noise_sources['alt_col_noise'].append(self.noise_stats(result - pre_acn))
+        del pre_acn
+
+        # ==========================================================================
+        # pca0_noise ===============================================================
+        # ==========================================================================
         # Add PCA-zero. The PCA-zero template is modulated by 1/f.
-        if self.pca0_amp > 0:
-            self.message('Adding PCA-zero "picture frame" noise')
+        pre_pca0 = copy(result)
+        if self.pca0_amp > 0 and 'pca0_noise' not in skip:
+            self.message('Adding pca0_noise')
             gamma = self.pink_noise(mygen, mode='pink')
             zoom_factor = self.ncols * self.ngrps / np.size(gamma)
             gamma = zoom(gamma, zoom_factor, order=1, mode='mirror')
             gamma = np.reshape(gamma, (self.ngrps, self.ncols))
-            pre_pca0 = copy(result)
             for z in np.arange(self.ngrps):
                 for y in np.arange(self.ncols):
                     result[z, y, :] += self.pca0_amp * self.pca0[y, :] * gamma[z, y]
 
-            # Save it
-            self.noise_sources['pca0_noise'].append(self.noise_stats(result - pre_pca0))
-            del pre_pca0
+        else:
 
+            self.message('Skipping pca0_noise')
+
+        # Save it
+        self.noise_sources['pca0_noise'].append(self.noise_stats(result - pre_pca0))
+        del pre_pca0
+
+        # ==========================================================================
+        # pedestal_drift ===========================================================
+        # ==========================================================================
         # Add in channel offsets
-        if self.pedestal_drift > 0.:
-            self.message('Adding pedestal drift')
+        pre_drift = copy(result)
+        if self.pedestal_drift > 0. and 'pedestal_drift' not in skip:
+            self.message('Adding pedestal_drift')
             offsets = mygen.standard_normal((self.n_out, self.ngrps))
-            pre_drift = copy(result)
             for z in range(self.ngrps):
                 x0 = 0
                 for n in range(self.n_out):
-                    result[z, :, x0:x0 + self.xsize] = result[z, :, x0:x0 + self.xsize] + self.pedestal_drift * offsets[n, z]
-                    x0 = x0 + self.xsize
+                    result[z, :, x0:x0 + self.xsize] += self.pedestal_drift * offsets[n, z]
+                    x0 += self.xsize
 
-            # Save it
-            self.noise_sources['pedestal_drift'].append(self.noise_stats(result - pre_drift))
-            del pre_drift
+        else:
 
+            self.message('Skipping pedestal_drift')
+
+        # Save it
+        self.noise_sources['pedestal_drift'].append(self.noise_stats(result - pre_drift))
+        del pre_drift
+
+        # ==========================================================================
+        # dark_current =============================================================
+        # ==========================================================================
         # Add in dark current
-        if self.dark_current is not None:
-            self.message('Adding dark current')
-            pre_dark = copy(result)
+        pre_dark = copy(result)
+        if self.dark_current is not None and 'dark_current' not in skip:
+            self.message('Adding dark_current')
 
             # Generate dark current with Poisson distribution sampling
             dark = darkgen.poisson(self.dark_current, (self.ngrps, self.nrows, self.ncols))
@@ -768,31 +819,39 @@ class HXRGNoise:
             # Zero out reference pixels
             dark = add_refpix(dark)
 
-            # What's this for?
-            # for n1 in range(self.nrows):
-            #     for n2 in range(self.ncols):
-            #         values = darkgen.poisson(lam=self.dark_current[n1, n2], size=self.ngrps)
-            #         cvalues = np.cumsum(values)
-            #         result[:, n2, n1] = result[:, n2, n1] + cvalues
+            for n1 in range(self.nrows):
+                for n2 in range(self.ncols):
+                    values = darkgen.poisson(lam=self.dark_current[n1, n2], size=self.ngrps)
+                    cvalues = np.cumsum(values)
+                    result[:, n2, n1] += cvalues
 
             # Add dark current to data
-            result = result + np.transpose(dark, (0, 2, 1))
+            result += np.transpose(dark, (0, 2, 1))
 
-            # Save it
-            self.noise_sources['dark_current'].append(list(np.nanmean(result - pre_dark, axis=(1, 2))))
-            del pre_dark
+        else:
+
+            self.message('Skipping dark_current')
+
+        # Save it
+        self.noise_sources['dark_current'].append(list(np.nanmean(result - pre_dark, axis=(1, 2))))
+        del pre_dark
+
+        # ==========================================================================
+        # ==========================================================================
+        # ==========================================================================
 
         # If the data cube has only 1 frame, reformat into a 2-dimensional image
         if self.ngrps == 1:
             self.message('Reformatting cube into image')
             result = result[0, :, :]
 
-        if self.gain != 1:
-            result = result / self.gain
+        # Add gain
+        result /= self.gain
 
         # Transpose to (frame, nrows, ncols)
         result = np.transpose(result, (0, 2, 1))
 
+        # Add to integration count
         self.nints += 1
 
         return result
