@@ -20,7 +20,7 @@ awesimsoss
         :target: https://zenodo.org/badge/latestdoi/115032914
 
 .. note::
-   ``awesimsoss`` has been merged into ``mirage``, the `Multi Instrument Ramp Generator <https://github.com/spacetelescope/mirage>`_, as the ``soss_simulator`` module. 
+       ``awesimsoss`` has been merged into ``mirage``, the `Multi Instrument Ramp Generator <https://github.com/spacetelescope/mirage>`_, as the ``soss_simulator`` module. 
    
    To use, do:
 
