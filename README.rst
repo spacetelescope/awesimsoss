@@ -19,7 +19,23 @@ awesimsoss
 .. image:: https://zenodo.org/badge/115032914.svg
         :target: https://zenodo.org/badge/latestdoi/115032914
 
+`awesimsoss` has been merged into `mirage`, the `Multi Instrument Ramp Generator <https://github.com/spacetelescope/mirage>`_, as the `soss_simulator` module. 
 
+To use, do:
+
+
+.. code-block:: python
+
+   # Imports
+   from mirage.soss_simulator import SossSim
+   from hotsoss import STAR_DATA
+
+   # Initialize simulation
+   tso256_clear = SossSim(ngrps=3, nints=5, star=STAR_DATA)
+               
+   # Run it and make a plot
+   tso256_clear.create()
+   tso256_clear.plot()
 
 Advanced Webb Exposure SIMulator for SOSS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
